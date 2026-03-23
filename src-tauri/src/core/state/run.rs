@@ -395,21 +395,6 @@ impl SQLiteState {
         self.log_history("mode_change", Some(if enabled { "hitl" } else { "yolo" }))
             .await?;
 
-        // Notify workers via group chat (project messages)
-        if let (Some(project_id), Ok(route_id)) =
-            (self.get_project_id().await?, self.get_route_id().await)
-        {
-            let msg = if enabled {
-                "The user is now available. Feel free to message them if needed."
-            } else {
-                "The user is currently unavailable for messages. Do not attempt to contact them - do the work to the best of your abilities."
-            };
-            if let Ok(store) = crate::core::ProjectMessagesStore::open().await {
-                let _ = store
-                    .add_message(project_id, route_id, "chat", "system", msg, false)
-                    .await;
-            }
-        }
         Ok(())
     }
 

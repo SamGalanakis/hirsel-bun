@@ -16,7 +16,7 @@ import type {
   ShepherdImageInput,
 } from '../../lib/types';
 import { emit, on as onEvent } from '../../lib/events';
-import { useProject } from '../../stores';
+import { useProject, useWorkspace } from '../../stores';
 import { useShepherdChat, type ShepherdChatContext } from '../../hooks/use-shepherd-chat';
 import { Icon, Markdown, ToolCard, ToolCluster, type ToolInfo } from '../shared';
 const MAX_PASTED_IMAGES = 8;
@@ -37,6 +37,7 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export const ShepherdConsole: Component = () => {
   const project = useProject();
+  const workspace = useWorkspace();
   let messagesRef: HTMLDivElement | undefined;
   let inputRef: HTMLTextAreaElement | undefined;
   let menuBtnRef: HTMLButtonElement | undefined;
@@ -73,13 +74,7 @@ export const ShepherdConsole: Component = () => {
   // Chat hook
   const chat = useShepherdChat(buildContext, {
     historyDepth: 20,
-    onEditComplete: () => {
-      // Refresh board when Shepherd finishes editing
-      const projectId = project.selectedProjectId();
-      if (projectId) {
-        emit('board-refresh', projectId);
-      }
-    },
+    onEditComplete: () => undefined,
   });
 
   // Each project owns its own Shepherd conversation.
@@ -127,7 +122,7 @@ export const ShepherdConsole: Component = () => {
     onCleanup(() => document.removeEventListener('keydown', handler));
   });
 
-  // Listen for shepherd-focus-node events from SpecflowBoard
+  // Listen for focused-work-item events from the active project surface
   createEffect(() => {
     const cleanup = onEvent('shepherd-focus-node', (detail) => {
       chat.setFocusNode(detail.id, detail.name);
@@ -248,7 +243,7 @@ export const ShepherdConsole: Component = () => {
                   'bg-amber-500 animate-pulse': chat.connecting(),
                 }}
               />
-              {/* Focus node indicator */}
+              {/* Focused work item indicator */}
               <Show when={chat.context().focusNodeName}>
                 <div class="shepherd-focus-indicator max-w-[180px]">
                   <Icon name="crosshair" class="w-3 h-3" />
@@ -264,7 +259,15 @@ export const ShepherdConsole: Component = () => {
             </div>
 
             {/* Options menu */}
-            <div>
+            <div class="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => workspace.setShepherdMinimized(true)}
+                class="shepherd-options-btn"
+                title="Minimize chat"
+              >
+                <Icon name="panel-right-close" class="w-4 h-4" />
+              </button>
               <button
                 ref={menuBtnRef}
                 type="button"

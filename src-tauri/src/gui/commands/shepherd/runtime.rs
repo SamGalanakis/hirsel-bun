@@ -14,7 +14,7 @@ use super::types::{
     ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus, StartShepherdSessionRequest,
 };
 use crate::core::llm_provider;
-use crate::core::{Config, ProjectStore, RouteFiles, RouteStore, SQLiteState};
+use crate::core::{Config, ProjectStore, RouteFiles, RouteStore};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -91,17 +91,15 @@ impl ShepherdLashSink {
 
     fn tool_title_kind(name: &str) -> (String, Option<String>) {
         match name {
-            "board_routes" => ("Routes".to_string(), Some("search".to_string())),
-            "board_create_route" => ("Create Route".to_string(), Some("execute".to_string())),
-            "board_set_active_route" => ("Select Route".to_string(), Some("execute".to_string())),
-            "board_delete_route" => ("Delete Route".to_string(), Some("execute".to_string())),
-            "board_view" | "shepherd_get_board_tree" => {
-                ("Board View".to_string(), Some("search".to_string()))
-            }
-            "board_feature" | "board_task" | "board_check" | "board_delete"
-            | "board_requeue_node" => ("Board Edit".to_string(), Some("edit".to_string())),
-            "read_node" => ("Node Read".to_string(), Some("read".to_string())),
-            "apply_patch_node" => ("Node Edit".to_string(), Some("edit".to_string())),
+            "list_routes" => ("Routes".to_string(), Some("search".to_string())),
+            "fork_route" => ("Fork Route".to_string(), Some("execute".to_string())),
+            "select_route" => ("Select Route".to_string(), Some("execute".to_string())),
+            "archive_route" => ("Archive Route".to_string(), Some("execute".to_string())),
+            "get_route_work_tree" => ("Route Work Tree".to_string(), Some("search".to_string())),
+            "create_work_item" | "split_work_item" | "assign_work_item" | "reopen_work_item"
+            | "archive_work_item" => ("Work Item Edit".to_string(), Some("edit".to_string())),
+            "read_work_item" => ("Work Item Read".to_string(), Some("read".to_string())),
+            "apply_patch_work_item" => ("Work Item Edit".to_string(), Some("edit".to_string())),
             "read_project_focus_view" => ("Project Focus".to_string(), Some("read".to_string())),
             "update_project_focus_view" => {
                 ("Project Focus Update".to_string(), Some("edit".to_string()))
@@ -113,8 +111,10 @@ impl ShepherdLashSink {
                 "Retained Context Update".to_string(),
                 Some("edit".to_string()),
             ),
-            "shepherd_start_run" => ("Start Run".to_string(), Some("execute".to_string())),
-            "shepherd_get_project_run" => ("Run Status".to_string(), Some("search".to_string())),
+            "delegate_to_worker" => (
+                "Delegate To Worker".to_string(),
+                Some("execute".to_string()),
+            ),
             "delivery_validate_target" => {
                 ("Delivery Check".to_string(), Some("search".to_string()))
             }
@@ -134,6 +134,12 @@ impl ShepherdLashSink {
             "shepherd_get_workers" => ("Workers".to_string(), Some("search".to_string())),
             "shepherd_get_worker_events" => {
                 ("Worker Events".to_string(), Some("search".to_string()))
+            }
+            "shepherd_get_worker_concerns" => {
+                ("Worker Concerns".to_string(), Some("search".to_string()))
+            }
+            "shepherd_resolve_worker_concern" => {
+                ("Resolve Concern".to_string(), Some("execute".to_string()))
             }
             _ => (name.to_string(), None),
         }
@@ -271,11 +277,6 @@ impl EventSink for ShepherdLashSink {
 pub(super) fn build_scope(request: StartShepherdSessionRequest) -> ShepherdScope {
     match request {
         StartShepherdSessionRequest::General => ShepherdScope::General,
-        StartShepherdSessionRequest::Run { run_name } => ShepherdScope::Run {
-            run_name,
-            workspace_path: String::new(),
-            project_path: None,
-        },
         StartShepherdSessionRequest::Project { project_id } => ShepherdScope::Project {
             project_id,
             workspace_path: None,
@@ -296,7 +297,6 @@ pub(super) fn build_scope(request: StartShepherdSessionRequest) -> ShepherdScope
 fn scope_label(scope: &ShepherdScope) -> String {
     match scope {
         ShepherdScope::General => "general".to_string(),
-        ShepherdScope::Run { run_name, .. } => format!("run:{}", run_name),
         ShepherdScope::Project { project_id, .. } => format!("project:{}", project_id),
     }
 }
@@ -307,8 +307,8 @@ fn build_scope_guidance(
     cwd: &Path,
 ) -> String {
     let focus_line = match focus {
-        Some(f) => format!("Focus node: {} ({})", f.task_name, f.task_id),
-        None => "Focus node: none".to_string(),
+        Some(f) => format!("Focus item: {} ({})", f.task_name, f.task_id),
+        None => "Focus item: none".to_string(),
     };
 
     format!(
@@ -317,16 +317,20 @@ fn build_scope_guidance(
         {}\n\
         Workspace root: {}\n\n\
         ## Hirsel Constraints\n\n\
-        - For board edits/execution work, use tools; do not edit board files directly.\n\
+        - For route work-tree edits/execution work, use tools; do not edit hidden runtime state directly.\n\
         - For simple conversational questions, answer directly in plain language without REPL code.\n\
-        - For board node content edits, use only `read_node` and `apply_patch_node`.\n\
+        - For work-item content edits, use only `read_work_item` and `apply_patch_work_item`.\n\
         - The project focus view is a maintained artifact. Use `read_project_focus_view` before editing it.\n\
         - Only call `update_project_focus_view` when project meaning materially changed.\n\
-        - Focus view updates must replace the full HTML document, preserve stable structure when possible, and never include scripts or external assets.\n\
+        - Focus view updates must replace the full HTML document and preserve stable structure when possible.\n\
+        - The focus view is for illustrating the current situation to the user, not reiterating obvious shell context.\n\
+        - Do not waste focus-view space repeating the project title, route picker state, or generic chrome the user can already see.\n\
+        - Prefer synthesis, comparisons, diagrams, and “what matters now” framing over dashboard filler.\n\
+        - Inline Mermaid setup is allowed in the focus view. Do not add arbitrary third-party assets beyond Mermaid.\n\
         - Never claim work happened unless you actually executed tools.\n\
         - Never return raw tool payloads (JSON/Python dict/list) as final user-facing output.\n\
         - Summarize tool outcomes in plain language.\n\
-        - For create/setup/scaffold/build/implement requests, perform at least one mutating board operation before finishing.",
+        - For create/setup/scaffold/build/implement requests, perform at least one mutating route work-tree operation before finishing.",
         scope_label(scope),
         focus_line,
         cwd.display()
@@ -401,34 +405,12 @@ pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i6
     match scope {
         ShepherdScope::General => None,
         ShepherdScope::Project { project_id, .. } => Some(*project_id),
-        ShepherdScope::Run { run_name, .. } => {
-            let state = SQLiteState::new(run_name).await.ok()?;
-            state.get_project_id().await.ok().flatten()
-        }
     }
 }
 
 pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<PathBuf> {
     match scope {
         ShepherdScope::General => None,
-        ShepherdScope::Run {
-            run_name,
-            workspace_path,
-            project_path,
-        } => {
-            if !workspace_path.trim().is_empty() {
-                return Some(PathBuf::from(workspace_path));
-            }
-            if let Some(path) = project_path.as_ref().filter(|p| !p.trim().is_empty()) {
-                return Some(PathBuf::from(path));
-            }
-            if let Ok(state) = SQLiteState::new(run_name).await {
-                if let Ok(Some(path)) = state.get_project_path().await {
-                    return Some(PathBuf::from(path));
-                }
-            }
-            None
-        }
         ShepherdScope::Project {
             project_id,
             workspace_path,

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS routes (
     human_in_the_loop INTEGER NOT NULL DEFAULT 1,
     target_branch TEXT,
     runner TEXT,
+    archived_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(project_id, name)
@@ -63,6 +64,9 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     SCHEMA_INIT
         .get_or_try_init(|| async {
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
+            let _ = sqlx::query("ALTER TABLE routes ADD COLUMN archived_at TEXT")
+                .execute(pool)
+                .await;
             Ok::<(), sqlx::Error>(())
         })
         .await?;
@@ -82,6 +86,8 @@ pub enum RouteError {
     CannotDeleteMain,
     #[error("Cannot delete route with children")]
     HasChildren,
+    #[error("Cannot archive the last active route")]
+    CannotArchiveLastActive,
     #[error("Parent route not found: {0}")]
     ParentNotFound(i64),
     #[error("Project not found: {0}")]
@@ -135,9 +141,9 @@ impl RouteStore {
                 project_id, name, parent_route_id, parent_version_id,
                 default_repo_id,
                 worker_scale, time_limit_minutes, human_in_the_loop,
-                target_branch, runner,
+                target_branch, runner, archived_at,
                 created_at, updated_at
-            ) VALUES (?, 'main', NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)",
+            ) VALUES (?, 'main', NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?, ?)",
         )
         .bind(self.project_id)
         .bind(&req.worker_scale)
@@ -300,9 +306,9 @@ impl RouteStore {
                 project_id, name, parent_route_id, parent_version_id,
                 default_repo_id,
                 worker_scale, time_limit_minutes, human_in_the_loop,
-                target_branch, runner,
+                target_branch, runner, archived_at,
                 created_at, updated_at
-             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)",
+             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?)",
         )
         .bind(self.project_id)
         .bind(name)
@@ -462,7 +468,7 @@ impl RouteStore {
         let row = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
                     default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    target_branch, runner,
+                    target_branch, runner, archived_at,
                     created_at, updated_at
              FROM routes WHERE id = ? AND project_id = ?",
         )
@@ -482,9 +488,9 @@ impl RouteStore {
         let row = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
                     default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    target_branch, runner,
+                    target_branch, runner, archived_at,
                     created_at, updated_at
-             FROM routes WHERE lower(name) = lower(?) AND project_id = ?",
+             FROM routes WHERE lower(name) = lower(?) AND project_id = ? AND archived_at IS NULL",
         )
         .bind(name)
         .bind(self.project_id)
@@ -504,9 +510,35 @@ impl RouteStore {
         let rows = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
                     default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    target_branch, runner,
+                    target_branch, runner, archived_at,
                     created_at, updated_at
-             FROM routes WHERE project_id = ? ORDER BY created_at ASC",
+             FROM routes
+             WHERE project_id = ? AND archived_at IS NULL
+             ORDER BY created_at ASC",
+        )
+        .bind(self.project_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut routes = Vec::with_capacity(rows.len());
+        for row in rows {
+            routes.push(self.row_to_route(&row).await?);
+        }
+        Ok(routes)
+    }
+
+    /// List archived routes for this project.
+    pub async fn list_archived_routes(&self) -> RouteResult<Vec<Route>> {
+        let pool = self.pool().await;
+
+        let rows = sqlx::query(
+            "SELECT id, project_id, name, parent_route_id, parent_version_id,
+                    default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
+                    target_branch, runner, archived_at,
+                    created_at, updated_at
+             FROM routes
+             WHERE project_id = ? AND archived_at IS NOT NULL
+             ORDER BY archived_at DESC, created_at DESC",
         )
         .bind(self.project_id)
         .fetch_all(pool)
@@ -919,7 +951,42 @@ impl RouteStore {
             human_in_the_loop: row.get::<i64, _>("human_in_the_loop") != 0,
             target_branch: row.get("target_branch"),
             runner: row.get("runner"),
+            archived_at: row.get("archived_at"),
         })
+    }
+
+    /// Archive a route while preserving its history and files.
+    pub async fn archive_route(&self, id: i64) -> RouteResult<Route> {
+        let pool = self.pool().await;
+        let route = self.get_route(id).await?;
+
+        if route.archived_at.is_some() {
+            return Ok(route);
+        }
+
+        let active_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM routes WHERE project_id = ? AND archived_at IS NULL",
+        )
+        .bind(self.project_id)
+        .fetch_one(pool)
+        .await?;
+
+        if active_count <= 1 {
+            return Err(RouteError::CannotArchiveLastActive);
+        }
+
+        let now = utc_now();
+        sqlx::query(
+            "UPDATE routes SET archived_at = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+        )
+        .bind(&now)
+        .bind(&now)
+        .bind(id)
+        .bind(self.project_id)
+        .execute(pool)
+        .await?;
+
+        self.get_route(id).await
     }
 
     /// Delete a route
@@ -993,13 +1060,20 @@ impl RouteStore {
             .await
             .ok();
 
-        sqlx::query("DELETE FROM project_runs WHERE route_id = ?")
+        sqlx::query("DELETE FROM route_runtimes WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await
             .ok();
 
-        sqlx::query("DELETE FROM project_messages WHERE route_id = ?")
+        sqlx::query(
+            "DELETE FROM worker_concern_reads WHERE concern_id IN (SELECT id FROM worker_concerns WHERE route_id = ?)",
+        )
+            .bind(route_id)
+            .execute(pool)
+            .await
+            .ok();
+        sqlx::query("DELETE FROM worker_concerns WHERE route_id = ?")
             .bind(route_id)
             .execute(pool)
             .await

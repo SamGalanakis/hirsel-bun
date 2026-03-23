@@ -1,60 +1,57 @@
-# Hirsel Server Docker Image
-# Multi-stage build: compile from source, then copy to slim runtime image
+# syntax=docker/dockerfile:1
 
-# ==============================================================================
-# Stage 1: Build the Rust binary
-# ==============================================================================
-FROM rustlang/rust:nightly-bookworm AS builder
+# Hirsel backend image.
+#
+# This image builds and runs the headless `hirsel serve` binary only.
+# It intentionally does not bundle legacy ACP adapters or the Tauri GUI stack.
+
+FROM rust:1-bookworm AS builder
 
 WORKDIR /build
 
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     cmake \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy source files
-COPY src-tauri/Cargo.toml src-tauri/Cargo.lock ./src-tauri/
+# Copy only the server crate sources needed for a headless build.
+COPY src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/build.rs ./src-tauri/
 COPY src-tauri/src ./src-tauri/src
 
-# Create stub for optional tauri-plugin-mcp (not needed for server build)
-RUN mkdir -p tauri-plugin-mcp/src && \
-    echo '[package]\nname = "tauri-plugin-mcp"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\npath = "src/lib.rs"' > tauri-plugin-mcp/Cargo.toml && \
-    echo '' > tauri-plugin-mcp/src/lib.rs
+WORKDIR /build/src-tauri
 
-# Build server-only binary
-RUN cargo build --release --no-default-features --features server --manifest-path src-tauri/Cargo.toml
+RUN cargo build --release --no-default-features --features server
 
-# ==============================================================================
-# Stage 2: Runtime image
-# ==============================================================================
-FROM node:22-bookworm-slim
 
-# Install dependencies and ACP adapters
+FROM debian:bookworm-slim AS runtime
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
     ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g @zed-industries/claude-code-acp @zed-industries/codex-acp
+    curl \
+    git \
+    libssl3 \
+    openssh-client \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN useradd -m -s /bin/bash hirsel
+RUN useradd --create-home --home-dir /home/hirsel --shell /bin/sh hirsel \
+    && mkdir -p /data \
+    && chown -R hirsel:hirsel /data /home/hirsel
 
-# Copy binary from builder
-COPY --from=builder /build/src-tauri/target/release/hirsel /usr/local/bin/
-RUN chmod +x /usr/local/bin/hirsel
+COPY --from=builder /build/src-tauri/target/release/hirsel /usr/local/bin/hirsel
 
-# Create data directory
-RUN mkdir -p /home/hirsel/.hirsel && chown -R hirsel:hirsel /home/hirsel
+ENV HOME=/home/hirsel
+ENV HIRSEL_ROOT=/data
 
 USER hirsel
 WORKDIR /home/hirsel
 
+VOLUME ["/data"]
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+  CMD curl --fail --silent http://127.0.0.1:8080/health >/dev/null || exit 1
 
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["hirsel", "serve", "--port", "8080"]

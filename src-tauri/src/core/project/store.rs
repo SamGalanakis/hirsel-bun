@@ -89,12 +89,12 @@ DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS board_node_checked_by;
 DROP TABLE IF EXISTS board_node_blocked_by;
 DROP TABLE IF EXISTS board_nodes;
-DROP TABLE IF EXISTS project_runs;
+DROP TABLE IF EXISTS route_runtimes;
 DROP TABLE IF EXISTS board_versions;
 DROP TABLE IF EXISTS delivery_attempts;
 DROP TABLE IF EXISTS deliveries;
-DROP TABLE IF EXISTS project_messages;
-DROP TABLE IF EXISTS project_message_reads;
+DROP TABLE IF EXISTS worker_concerns;
+DROP TABLE IF EXISTS worker_concern_reads;
 DROP TABLE IF EXISTS project_focus_views;
 DROP TABLE IF EXISTS meta;
 "#;
@@ -352,7 +352,7 @@ impl ProjectStore {
             .bind(id)
             .execute(pool)
             .await;
-        let _ = sqlx::query("DELETE FROM project_runs WHERE project_id = ?")
+        let _ = sqlx::query("DELETE FROM route_runtimes WHERE project_id = ?")
             .bind(id)
             .execute(pool)
             .await;
@@ -364,11 +364,13 @@ impl ProjectStore {
             .bind(id)
             .execute(pool)
             .await;
-        let _ = sqlx::query("DELETE FROM project_messages WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM project_message_reads WHERE project_id = ?")
+        let _ = sqlx::query(
+            "DELETE FROM worker_concern_reads WHERE concern_id IN (SELECT id FROM worker_concerns WHERE project_id = ?)",
+        )
+        .bind(id)
+        .execute(pool)
+        .await;
+        let _ = sqlx::query("DELETE FROM worker_concerns WHERE project_id = ?")
             .bind(id)
             .execute(pool)
             .await;
@@ -378,7 +380,7 @@ impl ProjectStore {
             .await;
 
         if let Ok(shepherd_store) = crate::core::shepherd_chat::ShepherdChatStore::open().await {
-            let _ = shepherd_store.clear_project_messages(id).await;
+            let _ = shepherd_store.delete_project_messages(id).await;
         }
 
         let project_dir = crate::core::config::hirsel_dir()

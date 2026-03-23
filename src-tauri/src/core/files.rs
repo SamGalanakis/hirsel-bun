@@ -1,7 +1,7 @@
-//! File system utilities for hirsel run directories.
+//! File system utilities for Hirsel runtime directories.
 //!
 //! This module provides path accessors and file operations for the
-//! run directory structure, including spec files, tasks, chats, and logs.
+//! runtime directory structure, including spec files, tasks, and logs.
 //!
 //! ## Storage Abstraction
 //!
@@ -11,7 +11,7 @@
 //!
 //! ```rust,ignore
 //! // Local filesystem (default)
-//! let files = Files::new("/path/to/run");
+//! let files = Files::new("/path/to/runtime");
 //! let storage = create_default_local_storage();
 //! files.write_spec_async(&storage, "# My Spec").await?;
 //!
@@ -44,91 +44,81 @@ pub struct ParsedTask {
     pub name: String,
 }
 
-/// File system utilities for a hirsel run directory.
+/// File system utilities for a Hirsel runtime directory.
 ///
-/// Provides access to all standard paths within a run directory
-/// and operations for managing tasks, logs, and chats.
+/// Provides access to all standard paths within a runtime directory
+/// and operations for managing tasks and logs.
 #[derive(Debug, Clone)]
 pub struct Files {
-    run_dir: PathBuf,
+    runtime_dir: PathBuf,
 }
 
 impl Files {
-    /// Create a new Files instance for the given run directory.
-    pub fn new<P: AsRef<Path>>(run_dir: P) -> Self {
+    /// Create a new Files instance for the given runtime directory.
+    pub fn new<P: AsRef<Path>>(runtime_dir: P) -> Self {
         Self {
-            run_dir: run_dir.as_ref().to_path_buf(),
+            runtime_dir: runtime_dir.as_ref().to_path_buf(),
         }
     }
 
-    /// Get the run directory path.
-    pub fn run_dir(&self) -> &Path {
-        &self.run_dir
+    /// Get the runtime directory path.
+    pub fn runtime_dir(&self) -> &Path {
+        &self.runtime_dir
     }
 
-    /// Get the run name (extracted from the run directory path).
-    pub fn run_name(&self) -> Option<String> {
-        self.run_dir
+    /// Get the runtime name (extracted from the runtime directory path).
+    pub fn runtime_name(&self) -> Option<String> {
+        self.runtime_dir
             .file_name()
             .and_then(|name| name.to_str())
             .map(|s| s.to_string())
     }
 
-    /// Path to spec.md - the run specification file.
+    /// Path to `spec.md`, the runtime specification file.
     pub fn spec(&self) -> PathBuf {
-        self.run_dir.join("spec.md")
+        self.runtime_dir.join("spec.md")
     }
 
     /// Path to tasks.md - the markdown task table.
     pub fn tasks_md(&self) -> PathBuf {
-        self.run_dir.join("tasks.md")
+        self.runtime_dir.join("tasks.md")
     }
 
     /// Path to the tasks/ directory containing task detail files.
     pub fn tasks_dir(&self) -> PathBuf {
-        self.run_dir.join("tasks")
+        self.runtime_dir.join("tasks")
     }
 
     /// Path to log.md - the activity log file.
     pub fn log(&self) -> PathBuf {
-        self.run_dir.join("log.md")
+        self.runtime_dir.join("log.md")
     }
 
     /// Path to eval.md - the evaluation specification.
     pub fn eval_spec(&self) -> PathBuf {
-        self.run_dir.join("eval.md")
+        self.runtime_dir.join("eval.md")
     }
 
     /// Path to assets/ directory - contains images and other assets for spec/eval.
     pub fn assets(&self) -> PathBuf {
-        self.run_dir.join("assets")
+        self.runtime_dir.join("assets")
     }
 
     /// Path to tmp/eval_log.md - the evaluation log.
     pub fn eval_log(&self) -> PathBuf {
-        self.run_dir.join("tmp").join("eval_log.md")
+        self.runtime_dir.join("tmp").join("eval_log.md")
     }
 
     /// Path to work/ directory - contains git worktrees for workers.
     pub fn work(&self) -> PathBuf {
-        self.run_dir.join("work")
-    }
-
-    /// Path to chats/ directory - contains chat thread files.
-    pub fn chats_dir(&self) -> PathBuf {
-        self.run_dir.join("chats")
+        self.runtime_dir.join("work")
     }
 
     /// Path to a worker's log file in tmp/.
     pub fn worker_log(&self, worker_name: &str) -> PathBuf {
-        self.run_dir
+        self.runtime_dir
             .join("tmp")
             .join(format!("{}.log", worker_name))
-    }
-
-    /// Path to a chat thread file.
-    pub fn chat_file(&self, name: &str) -> PathBuf {
-        self.chats_dir().join(format!("{}.md", name))
     }
 
     /// Path to a task detail file.
@@ -138,21 +128,19 @@ impl Files {
 
     /// Path to the SQLite database file.
     pub fn db_path(&self) -> PathBuf {
-        self.run_dir.join("hirsel.db")
+        self.runtime_dir.join("hirsel.db")
     }
 
     /// Initialize all required directories for a run.
     ///
     /// Creates:
-    /// - run_dir
+    /// - runtime_dir
     /// - tasks/
-    /// - chats/
     /// - tmp/
     pub fn init_dirs(&self) -> io::Result<()> {
-        fs::create_dir_all(&self.run_dir)?;
+        fs::create_dir_all(&self.runtime_dir)?;
         fs::create_dir_all(self.tasks_dir())?;
-        fs::create_dir_all(self.chats_dir())?;
-        fs::create_dir_all(self.run_dir.join("tmp"))?;
+        fs::create_dir_all(self.runtime_dir.join("tmp"))?;
         Ok(())
     }
 
@@ -297,30 +285,9 @@ impl Files {
         }
     }
 
-    /// List all chat thread names (without .md extension).
-    pub fn list_chat_threads(&self) -> io::Result<Vec<String>> {
-        let chats_dir = self.chats_dir();
-        if !chats_dir.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut threads = Vec::new();
-        for entry in fs::read_dir(&chats_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.extension().map(|e| e == "md").unwrap_or(false) {
-                if let Some(stem) = path.file_stem() {
-                    threads.push(stem.to_string_lossy().to_string());
-                }
-            }
-        }
-        threads.sort();
-        Ok(threads)
-    }
-
     /// List all worker log files and return their names.
     pub fn list_worker_logs(&self) -> io::Result<Vec<String>> {
-        let tmp_dir = self.run_dir.join("tmp");
+        let tmp_dir = self.runtime_dir.join("tmp");
         if !tmp_dir.exists() {
             return Ok(Vec::new());
         }
@@ -349,8 +316,8 @@ impl Files {
     /// For a run named "myrun", this returns "runs/myrun".
     /// Use this when constructing paths for FileStorage operations.
     pub fn storage_prefix(&self) -> String {
-        // Extract run name from run_dir path
-        if let Some(name) = self.run_dir.file_name() {
+        // Extract run name from runtime_dir path
+        if let Some(name) = self.runtime_dir.file_name() {
             format!("runs/{}", name.to_string_lossy())
         } else {
             "runs".to_string()
@@ -435,7 +402,6 @@ impl Files {
     pub async fn init_dirs_async(&self, storage: &dyn FileStorage) -> StorageResult<()> {
         storage.create_dir(&self.storage_prefix()).await?;
         storage.create_dir(&self.storage_path("tasks")).await?;
-        storage.create_dir(&self.storage_path("chats")).await?;
         storage.create_dir(&self.storage_path("tmp")).await?;
         Ok(())
     }
@@ -592,7 +558,7 @@ pub enum DocsContent {
 impl Files {
     /// Path to the docs/ directory - contains project documentation.
     pub fn docs_dir(&self) -> PathBuf {
-        self.run_dir.join("docs")
+        self.runtime_dir.join("docs")
     }
 
     /// Initialize docs/ using FileStorage.
@@ -633,8 +599,8 @@ impl Files {
 /// Create a Files instance for the given run directory.
 ///
 /// This is a convenience function matching the Python API.
-pub fn get_files<P: AsRef<Path>>(run_dir: P) -> Files {
-    Files::new(run_dir)
+pub fn get_files<P: AsRef<Path>>(runtime_dir: P) -> Files {
+    Files::new(runtime_dir)
 }
 
 #[cfg(test)]
@@ -650,7 +616,6 @@ mod tests {
         assert_eq!(files.tasks_dir(), PathBuf::from("/test/run/tasks"));
         assert_eq!(files.log(), PathBuf::from("/test/run/log.md"));
         assert_eq!(files.work(), PathBuf::from("/test/run/work"));
-        assert_eq!(files.chats_dir(), PathBuf::from("/test/run/chats"));
         assert_eq!(files.db_path(), PathBuf::from("/test/run/hirsel.db"));
     }
 
@@ -660,15 +625,6 @@ mod tests {
         assert_eq!(
             files.worker_log("alpha"),
             PathBuf::from("/test/run/tmp/alpha.log")
-        );
-    }
-
-    #[test]
-    fn test_chat_file_path() {
-        let files = Files::new("/test/run");
-        assert_eq!(
-            files.chat_file("user"),
-            PathBuf::from("/test/run/chats/user.md")
         );
     }
 
@@ -688,9 +644,8 @@ mod tests {
 
         files.init_dirs().unwrap();
 
-        assert!(files.run_dir().exists());
+        assert!(files.runtime_dir().exists());
         assert!(files.tasks_dir().exists());
-        assert!(files.chats_dir().exists());
         assert!(temp.path().join("myrun/tmp").exists());
     }
 
@@ -841,20 +796,6 @@ mod tests {
 
         assert!(files.task_detail("task_a").exists());
         assert!(files.task_detail("task_b").exists());
-    }
-
-    #[test]
-    fn test_list_chat_threads() {
-        let temp = TempDir::new().unwrap();
-        let files = Files::new(temp.path());
-        fs::create_dir_all(files.chats_dir()).unwrap();
-
-        fs::write(files.chat_file("user"), "# User chat").unwrap();
-        fs::write(files.chat_file("group"), "# Group chat").unwrap();
-        fs::write(files.chat_file("alpha"), "# Alpha chat").unwrap();
-
-        let threads = files.list_chat_threads().unwrap();
-        assert_eq!(threads, vec!["alpha", "group", "user"]);
     }
 
     #[test]

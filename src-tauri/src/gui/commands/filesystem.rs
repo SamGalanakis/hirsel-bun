@@ -1,8 +1,11 @@
 //! Filesystem-related GUI commands
 //!
-//! Commands for file/folder picking and path autocompletion.
+//! Commands for file/folder picking, path autocompletion, and repository validation.
 
 use std::path::PathBuf;
+
+use super::types::RepoValidation;
+use crate::core::git;
 
 /// Open a native folder picker dialog
 ///
@@ -107,4 +110,120 @@ pub async fn suggest_paths(partial: String) -> Result<Vec<String>, String> {
     suggestions.truncate(10);
 
     Ok(suggestions)
+}
+
+/// Validate a repository path or URL.
+#[tracing::instrument]
+#[tauri::command]
+pub async fn validate_repo(path: String) -> Result<RepoValidation, String> {
+    let path = path.trim();
+
+    if path.is_empty() {
+        return Ok(RepoValidation {
+            valid: false,
+            error: Some("Path is required".to_string()),
+            is_remote: false,
+            branches: Vec::new(),
+            current_branch: None,
+            repo_url: String::new(),
+            url_branch: None,
+            url_branch_valid: false,
+            needs_dir_create: false,
+            needs_git_init: false,
+        });
+    }
+
+    if git::is_remote_url(path) {
+        let parsed = git::parse_github_url(path);
+        let repo_url = parsed.repo_url.clone();
+        return match git::list_remote_branches(&repo_url) {
+            Ok(branches) => Ok(RepoValidation {
+                valid: true,
+                error: None,
+                is_remote: true,
+                url_branch_valid: parsed
+                    .branch
+                    .as_ref()
+                    .map(|branch| branches.contains(branch))
+                    .unwrap_or(false),
+                branches,
+                current_branch: None,
+                repo_url,
+                url_branch: parsed.branch,
+                needs_dir_create: false,
+                needs_git_init: false,
+            }),
+            Err(error) => Ok(RepoValidation {
+                valid: false,
+                error: Some(format!("Failed to access repository: {}", error)),
+                is_remote: true,
+                branches: Vec::new(),
+                current_branch: None,
+                repo_url,
+                url_branch: parsed.branch,
+                url_branch_valid: false,
+                needs_dir_create: false,
+                needs_git_init: false,
+            }),
+        };
+    }
+
+    let local_path = std::path::Path::new(path);
+    if !local_path.exists() {
+        return Ok(RepoValidation {
+            valid: false,
+            error: None,
+            is_remote: false,
+            branches: Vec::new(),
+            current_branch: None,
+            repo_url: path.to_string(),
+            url_branch: None,
+            url_branch_valid: false,
+            needs_dir_create: true,
+            needs_git_init: true,
+        });
+    }
+
+    let git_dir = local_path.join(".git");
+    if !git_dir.exists() {
+        return Ok(RepoValidation {
+            valid: false,
+            error: None,
+            is_remote: false,
+            branches: Vec::new(),
+            current_branch: None,
+            repo_url: path.to_string(),
+            url_branch: None,
+            url_branch_valid: false,
+            needs_dir_create: false,
+            needs_git_init: true,
+        });
+    }
+
+    match git::list_branches(local_path) {
+        Ok(branches) => Ok(RepoValidation {
+            valid: true,
+            error: None,
+            is_remote: false,
+            branches,
+            current_branch: git::get_current_branch(local_path).ok(),
+            repo_url: path.to_string(),
+            url_branch: None,
+            url_branch_valid: false,
+            needs_dir_create: false,
+            needs_git_init: false,
+        }),
+        Err(error) => Ok(RepoValidation {
+            valid: false,
+            error: Some(format!("Failed to read repository: {}", error)),
+            is_remote: false,
+            branches: Vec::new(),
+            current_branch: None,
+            repo_url: path.to_string(),
+            url_branch: None,
+            url_branch_valid: false,
+            needs_dir_create: false,
+            needs_git_init: false,
+        }),
+    }
 }

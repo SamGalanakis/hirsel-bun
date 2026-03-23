@@ -15,10 +15,8 @@ import { BaseModal, Icon, StatusDot, WorkerAvatar } from '../shared';
 interface WorkerDetailModalProps {
   worker: WorkerDisplay;
   metricsAvailable: boolean;
-  runName: string;
   onClose: () => void;
   onAttach: () => void;
-  onOpenDM?: () => void;
 }
 
 export const WorkerDetailModal: Component<WorkerDetailModalProps> = (props) => {
@@ -171,12 +169,6 @@ export const WorkerDetailModal: Component<WorkerDetailModalProps> = (props) => {
           <button class="btn-ghost btn-sm" onClick={props.onClose}>
             Close
           </button>
-          <Show when={props.onOpenDM}>
-            <button class="btn-ghost btn-sm" onClick={props.onOpenDM}>
-              <Icon name="message-circle" class="w-4 h-4" />
-              Message
-            </button>
-          </Show>
           <button class="btn btn-sm" onClick={props.onAttach}>
             <Icon name="eye" class="w-4 h-4" />
             Spectate

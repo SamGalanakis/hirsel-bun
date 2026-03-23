@@ -12,16 +12,15 @@
 
 import { type Component, Show, For, createSignal, createEffect, createMemo, onMount, onCleanup } from 'solid-js';
 import { invoke } from '../../lib/invoke';
-import { useEscapeKey } from '../../hooks';
+import { useEscapeKey, useRouteWorkTree } from '../../hooks';
 import { useProject, useRoute, useDelivery } from '../../stores';
-import { useDelta } from '../../stores/delta-context';
 import { Icon, Markdown } from '../shared';
 import { amber, sage, terra } from '../../lib/theme-colors';
 import { EditorView, keymap } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { markdown } from '@codemirror/lang-markdown';
 import { defaultKeymap } from '@codemirror/commands';
-import type { BoardDeliveryStatus, DeliveryValidation, BoardNodeTree } from '../../lib/types';
+import type { BoardDeliveryStatus, DeliveryValidation, WorkItemTree } from '../../lib/types';
 
 type DeliveryAction = 'push' | 'pr' | 'merge';
 
@@ -30,10 +29,10 @@ interface DeliveryDialogProps {
 }
 
 export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
-  const delta = useDelta();
   const deliveryState = useDelivery();
   const project = useProject();
   const route = useRoute();
+  const { snapshot } = useRouteWorkTree();
 
   // Seed defaults from active route configuration
   const activeRoute = () => route.currentRoute();
@@ -161,9 +160,9 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   onCleanup(() => editorView?.destroy());
 
   // Helper to flatten live tree
-  const flattenTree = (nodes: BoardNodeTree[]): BoardNodeTree[] => {
-    const result: BoardNodeTree[] = [];
-    const flatten = (n: BoardNodeTree) => {
+  const flattenTree = (nodes: WorkItemTree[]): WorkItemTree[] => {
+    const result: WorkItemTree[] = [];
+    const flatten = (n: WorkItemTree) => {
       result.push(n);
       n.children.forEach(flatten);
     };
@@ -175,12 +174,12 @@ export const DeliveryDialog: Component<DeliveryDialogProps> = (props) => {
   createEffect(() => {
     if (summaryEdited()) return;
 
-    const completedNodes = flattenTree(delta.boardTree())
-      .filter((n) => n.source === 'user' && !n.parentId)
+    const completedNodes = flattenTree(snapshot()?.tree ?? [])
+      .filter((n) => !n.parentId)
       .filter((n) => ['done', 'validated', 'awaiting_check'].includes(n.status));
 
-    const lines = completedNodes.map((n) => `- ${n.name}`);
-    setSummary(lines.join('\n') || 'No completed tasks');
+    const lines = completedNodes.map((n) => `- ${n.title}`);
+    setSummary(lines.join('\n') || 'No completed work items');
   });
 
   // Validate target branch with debounce

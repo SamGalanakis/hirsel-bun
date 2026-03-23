@@ -13,7 +13,8 @@ import { Icon, Markdown, ThinkingBlock, ToolCard, ToolCluster, type ToolInfo } f
 
 export const WorkerOutputViewer: Component = () => {
   const [visible, setVisible] = createSignal(false);
-  const [runName, setRunName] = createSignal<string | null>(null);
+  const [projectId, setProjectId] = createSignal<number | null>(null);
+  const [routeId, setRouteId] = createSignal<number | null>(null);
   const [workerName, setWorkerName] = createSignal<string | null>(null);
   const [events, setEvents] = createStore<WorkerEvent[]>([]);
   const [workerStatus, setWorkerStatus] = createSignal<WorkerStatus | null>(null);
@@ -27,7 +28,8 @@ export const WorkerOutputViewer: Component = () => {
   // Listen for show-worker-output events
   createEffect(() => {
     const cleanup = on('show-worker-output', (detail) => {
-      setRunName(detail.runName);
+      setProjectId(detail.projectId);
+      setRouteId(detail.routeId);
       setWorkerName(detail.workerName);
       setVisible(true);
     });
@@ -37,12 +39,13 @@ export const WorkerOutputViewer: Component = () => {
 
   // Start/stop event stream when modal opens/closes
   createEffect(() => {
-    const name = runName();
+    const project = projectId();
+    const route = routeId();
     const worker = workerName();
     const isVisible = visible();
 
-    if (isVisible && name && worker) {
-      startStream(name, worker);
+    if (isVisible && project != null && route != null && worker) {
+      startStream(project, route, worker);
     } else {
       stopStream();
     }
@@ -62,7 +65,7 @@ export const WorkerOutputViewer: Component = () => {
     if (visible()) setVisible(false);
   });
 
-  const startStream = async (name: string, worker: string) => {
+  const startStream = async (project: number, route: number, worker: string) => {
     // Clear previous events
     setEvents([]);
     setWorkerStatus(null);
@@ -73,7 +76,11 @@ export const WorkerOutputViewer: Component = () => {
       const payload = event.payload;
 
       // Filter to our worker
-      if (payload.runName !== runName() || payload.workerName !== workerName()) {
+      if (
+        payload.projectId !== projectId() ||
+        payload.routeId !== routeId() ||
+        payload.workerName !== workerName()
+      ) {
         return;
       }
 
@@ -102,14 +109,19 @@ export const WorkerOutputViewer: Component = () => {
 
     // Start the stream
     try {
-      await invoke('start_worker_event_stream', { runName: name, workerName: worker });
+      await invoke('start_route_worker_event_stream', {
+        projectId: project,
+        routeId: route,
+        workerName: worker,
+      });
     } catch (e) {
       console.error('Failed to start worker event stream:', e);
     }
   };
 
   const stopStream = async () => {
-    const name = runName();
+    const project = projectId();
+    const route = routeId();
     const worker = workerName();
 
     if (unlisten) {
@@ -117,9 +129,13 @@ export const WorkerOutputViewer: Component = () => {
       unlisten = undefined;
     }
 
-    if (name && worker) {
+    if (project != null && route != null && worker) {
       try {
-        await invoke('stop_worker_event_stream', { runName: name, workerName: worker });
+        await invoke('stop_route_worker_event_stream', {
+          projectId: project,
+          routeId: route,
+          workerName: worker,
+        });
       } catch {
         // Ignore errors when stopping
       }
@@ -311,7 +327,7 @@ export const WorkerOutputViewer: Component = () => {
                     <span class="text-xs text-wool-500">{workerStatus()}</span>
                   </Show>
                 </div>
-                <p class="text-xs text-wool-500">{runName()}</p>
+                <p class="text-xs text-wool-500">route worker</p>
               </div>
             </div>
             <div class="flex items-center gap-2">

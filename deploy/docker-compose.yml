@@ -3,14 +3,14 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
-    init: true
     restart: unless-stopped
     ports:
       - "8080:8080"
     environment:
-      - HIRSEL_API_KEY=${HIRSEL_API_KEY}
+      HIRSEL_API_KEY: ${HIRSEL_API_KEY:?set in deploy/.env}
+      HIRSEL_ROOT: /data
     volumes:
-      - hirsel-data:/home/hirsel/.hirsel
+      - hirsel-data:/data
     stop_grace_period: 30s
 
 volumes:

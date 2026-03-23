@@ -19,16 +19,18 @@ impl SQLiteState {
         name: &str,
         work_dir: &str,
         location: &str,
+        capability_profile: Option<crate::core::CapabilityProfile>,
     ) -> StateResult<Option<Worker>> {
         let pool = self.pool().await;
         let result = sqlx::query(
-            "INSERT INTO workers (name, status, work_dir, location, created_at) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO workers (name, status, work_dir, location, created_at, capability_profile) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(name)
         .bind(WorkerStatus::Working.as_str())
         .bind(work_dir)
         .bind(location)
         .bind(utc_now())
+        .bind(capability_profile.map(|profile| profile.as_str()))
         .execute(&pool)
         .await;
 
@@ -48,7 +50,7 @@ impl SQLiteState {
     pub async fn get_worker(&self, name: &str) -> StateResult<Option<Worker>> {
         let pool = self.pool().await;
         let result = sqlx::query(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers WHERE name = ?",
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id, capability_profile FROM workers WHERE name = ?",
         )
         .bind(name)
         .fetch_optional(&pool)
@@ -82,6 +84,9 @@ impl SQLiteState {
             state_handle: row.get("state_handle"),
             assigned_task_id: row.get("assigned_task_id"),
             last_task_id: row.get("last_task_id"),
+            capability_profile: row
+                .get::<Option<String>, _>("capability_profile")
+                .and_then(|value| crate::core::CapabilityProfile::from_str(&value)),
         }))
     }
 
@@ -89,7 +94,7 @@ impl SQLiteState {
     pub async fn get_workers(&self) -> StateResult<Vec<Worker>> {
         let pool = self.pool().await;
         let rows = sqlx::query(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers ORDER BY id",
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id, capability_profile FROM workers ORDER BY id",
         )
         .fetch_all(&pool)
         .await?;
@@ -124,6 +129,9 @@ impl SQLiteState {
                 state_handle: row.get("state_handle"),
                 assigned_task_id: row.get("assigned_task_id"),
                 last_task_id: row.get("last_task_id"),
+                capability_profile: row
+                    .get::<Option<String>, _>("capability_profile")
+                    .and_then(|value| crate::core::CapabilityProfile::from_str(&value)),
             })
             .collect();
 
@@ -134,7 +142,7 @@ impl SQLiteState {
     pub async fn get_active_workers(&self) -> StateResult<Vec<Worker>> {
         let pool = self.pool().await;
         let rows = sqlx::query(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers WHERE status NOT IN (?, ?) ORDER BY id",
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id, capability_profile FROM workers WHERE status NOT IN (?, ?) ORDER BY id",
         )
         .bind(WorkerStatus::Awaiting.as_str())
         .bind(WorkerStatus::Error.as_str())
@@ -171,6 +179,9 @@ impl SQLiteState {
                 state_handle: row.get("state_handle"),
                 assigned_task_id: row.get("assigned_task_id"),
                 last_task_id: row.get("last_task_id"),
+                capability_profile: row
+                    .get::<Option<String>, _>("capability_profile")
+                    .and_then(|value| crate::core::CapabilityProfile::from_str(&value)),
             })
             .collect();
 
@@ -249,6 +260,15 @@ impl SQLiteState {
         if let Some(ref last_task_id) = updates.last_task_id {
             set_clauses.push("last_task_id = ?");
             params.push(last_task_id.clone().unwrap_or_default());
+        }
+        if let Some(ref capability_profile) = updates.capability_profile {
+            match capability_profile {
+                Some(profile) => {
+                    set_clauses.push("capability_profile = ?");
+                    params.push(profile.as_str().to_string());
+                }
+                None => set_clauses.push("capability_profile = NULL"),
+            }
         }
 
         if set_clauses.is_empty() {
@@ -349,7 +369,7 @@ impl SQLiteState {
     pub async fn get_hitl_waiting_workers(&self) -> StateResult<Vec<Worker>> {
         let pool = self.pool().await;
         let rows = sqlx::query(
-            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id FROM workers WHERE hitl_waiting = 1 ORDER BY id",
+            "SELECT id, name, pid, runner_id, runner_type, session_id, session_started_at, status, work_dir, waiting_thread, needs_restart, location, last_heartbeat, created_at, hitl_waiting, state_handle, assigned_task_id, last_task_id, capability_profile FROM workers WHERE hitl_waiting = 1 ORDER BY id",
         )
         .fetch_all(&pool)
         .await?;
@@ -384,6 +404,9 @@ impl SQLiteState {
                 state_handle: row.get("state_handle"),
                 assigned_task_id: row.get("assigned_task_id"),
                 last_task_id: row.get("last_task_id"),
+                capability_profile: row
+                    .get::<Option<String>, _>("capability_profile")
+                    .and_then(|value| crate::core::CapabilityProfile::from_str(&value)),
             })
             .collect();
 

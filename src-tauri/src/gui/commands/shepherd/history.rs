@@ -245,11 +245,8 @@ pub(super) async fn load_scope_messages(
 
     let mut messages = match scope {
         ShepherdScope::General => store.get_messages(None).await.str_err()?,
-        ShepherdScope::Run { run_name, .. } => {
-            store.get_messages(Some(run_name)).await.str_err()?
-        }
         ShepherdScope::Project { project_id, .. } => store
-            .get_board_messages(*project_id, limit)
+            .get_project_messages(*project_id, limit)
             .await
             .str_err()?,
     };
@@ -270,12 +267,8 @@ pub(super) async fn save_message(
     let store = ShepherdChatStore::open().await.str_err()?;
     match scope {
         ShepherdScope::General => store.save_message(None, role, chunks_json).await.str_err(),
-        ShepherdScope::Run { run_name, .. } => store
-            .save_message(Some(run_name), role, chunks_json)
-            .await
-            .str_err(),
         ShepherdScope::Project { project_id, .. } => store
-            .save_board_message(*project_id, role, chunks_json)
+            .save_project_message(*project_id, role, chunks_json)
             .await
             .str_err(),
     }
@@ -286,11 +279,8 @@ pub(super) async fn clear_scope_messages(scope: &ShepherdScope) -> Result<(), St
 
     match scope {
         ShepherdScope::General => store.clear_messages(None).await.str_err()?,
-        ShepherdScope::Run { run_name, .. } => {
-            store.clear_messages(Some(run_name)).await.str_err()?
-        }
         ShepherdScope::Project { project_id, .. } => {
-            store.clear_board_messages(*project_id).await.str_err()?
+            store.clear_project_messages(*project_id).await.str_err()?
         }
     }
 

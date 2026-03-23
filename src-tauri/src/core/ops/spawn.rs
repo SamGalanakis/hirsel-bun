@@ -1,4 +1,4 @@
-//! Worker spawning operations - spawn local workers for a run
+//! Worker spawning operations for a runtime workspace.
 //!
 //! These operations are shared between CLI and GUI for spawning workers.
 
@@ -15,13 +15,13 @@ use tracing::{info, warn};
 /// Configuration for spawning workers
 #[derive(Debug, Clone)]
 pub struct SpawnWorkersConfig {
-    /// Name of the run
-    pub run_name: String,
-    /// Path to the run directory
-    pub run_dir: PathBuf,
+    /// Name of the runtime
+    pub runtime_name: String,
+    /// Path to the runtime directory
+    pub runtime_dir: PathBuf,
     /// Agent command to run (e.g., ["codex"])
     pub agent_command: Vec<String>,
-    /// Whether this is a multi-worker run
+    /// Whether this is a multi-worker runtime
     pub is_multi_worker: bool,
     /// Name of the leader worker
     pub leader_name: Option<String>,
@@ -36,7 +36,7 @@ pub struct SpawnWorkersResult {
     pub spawned: Vec<String>,
     /// Failed spawns: (worker_name, error_message)
     pub failed: Vec<(String, String)>,
-    /// Whether spawning was stopped because the run was paused
+    /// Whether spawning was stopped because the runtime was paused
     pub paused: bool,
 }
 
@@ -44,18 +44,18 @@ pub struct SpawnWorkersResult {
 // Worker Spawning
 // =============================================================================
 
-/// Spawn local workers for a run
+/// Spawn local workers for a runtime
 ///
 /// Iterates through workers and spawns each one. Handles:
 /// - Leader designation (first worker in multi-worker mode)
 /// - Teammates list for each worker
-/// - Run paused detection (stops spawning if run is paused)
+/// - Runtime paused detection (stops spawning if the runtime is paused)
 ///
 /// # Arguments
 ///
-/// * `config` - Configuration specifying run details and agent command
+/// * `config` - Configuration specifying runtime details and agent command
 /// * `worker_dirs` - List of (worker_name, work_dir) tuples
-/// * `state` - The SQLite state for the run
+/// * `state` - The SQLite state for the runtime
 ///
 /// # Returns
 ///
@@ -89,10 +89,10 @@ pub async fn spawn_local_workers(
         };
 
         let spawn_config = WorkerSpawnConfig {
-            run_name: config.run_name.clone(),
+            runtime_name: config.runtime_name.clone(),
             worker_name: worker_name.clone(),
             work_dir: work_dir.clone(),
-            run_dir: config.run_dir.clone(),
+            runtime_dir: config.runtime_dir.clone(),
             agent_command: config.agent_command.clone(),
             is_leader,
             leader_name: config.leader_name.clone(),
@@ -140,15 +140,15 @@ mod tests {
     #[test]
     fn test_spawn_workers_config() {
         let config = SpawnWorkersConfig {
-            run_name: "test-run".to_string(),
-            run_dir: PathBuf::from("/runs/test-run"),
+            runtime_name: "test-run".to_string(),
+            runtime_dir: PathBuf::from("/runs/test-run"),
             agent_command: vec!["codex".to_string()],
             is_multi_worker: true,
             leader_name: Some("alpha".to_string()),
             all_worker_names: vec!["alpha".to_string(), "beta".to_string()],
         };
 
-        assert_eq!(config.run_name, "test-run");
+        assert_eq!(config.runtime_name, "test-run");
         assert_eq!(config.agent_command, vec!["codex".to_string()]);
         assert!(config.is_multi_worker);
         assert_eq!(config.leader_name, Some("alpha".to_string()));

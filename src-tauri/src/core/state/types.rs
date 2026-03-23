@@ -5,18 +5,20 @@
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
+use crate::core::CapabilityProfile;
+
 // =============================================================================
 // Status Enums
 // =============================================================================
 
-/// Run status - the overall state of a hirsel run
+/// Runtime status for a hirsel execution workspace.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Draft,     // Configured but not started (no workers spawned)
     Working,   // Workers actively running
     Paused,    // Manually paused by user
-    Failed,    // Run failed (see failure_reason for why)
+    Failed,    // Runtime failed (see failure_reason for why)
     Eval,      // Evaluation in progress
     Done,      // All work complete, eval passed (or no eval)
     Delivered, // Changes delivered to branch
@@ -58,7 +60,7 @@ impl Status {
         }
     }
 
-    /// Check if this status represents a completed run (terminal state)
+    /// Check if this status represents a completed runtime (terminal state)
     pub fn is_terminal(&self) -> bool {
         matches!(self, Status::Done | Status::Delivered | Status::Failed)
     }
@@ -400,6 +402,7 @@ pub struct Worker {
     // Direct task assignment fields
     pub assigned_task_id: Option<String>, // Currently assigned task
     pub last_task_id: Option<String>,     // Last completed task (for tree distance)
+    pub capability_profile: Option<CapabilityProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -537,4 +540,6 @@ pub struct WorkerUpdate {
     pub assigned_task_id: Option<Option<String>>,
     /// Last completed task (for tree distance). Use Some(Some(id)) to set, Some(None) to clear.
     pub last_task_id: Option<Option<String>>,
+    /// Capability profile. Use Some(Some(profile)) to set, Some(None) to clear.
+    pub capability_profile: Option<Option<CapabilityProfile>>,
 }

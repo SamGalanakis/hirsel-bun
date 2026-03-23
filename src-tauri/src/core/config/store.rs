@@ -57,7 +57,6 @@ pub struct PartialConfig {
     pub agent: Option<AgentConfig>,
     pub eval_timeout: Option<u32>,
     pub auto_learn: Option<bool>,
-    pub user_message_pause: Option<String>,
     pub human_in_the_loop: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
@@ -178,9 +177,6 @@ impl ConfigStore {
                 "auto_learn" => {
                     partial.auto_learn = Some(value == "true");
                 }
-                "user_message_pause" => {
-                    partial.user_message_pause = Some(value);
-                }
                 "human_in_the_loop" => {
                     partial.human_in_the_loop = Some(value == "true");
                 }
@@ -296,8 +292,6 @@ impl ConfigStore {
             if config.auto_learn { "true" } else { "false" },
         )
         .await?;
-        self.set("user_message_pause", &config.user_message_pause)
-            .await?;
         self.set(
             "human_in_the_loop",
             if config.human_in_the_loop {
@@ -352,6 +346,7 @@ impl ConfigStore {
         let _ = self.delete("allow_local_workers").await;
         let _ = self.delete("default_profile").await;
         let _ = self.delete("profiles").await;
+        let _ = self.delete("user_message_pause").await;
 
         // Preferred IDE
         match &config.preferred_ide {

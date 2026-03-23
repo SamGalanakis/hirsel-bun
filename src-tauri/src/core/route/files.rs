@@ -107,15 +107,15 @@ impl RouteFiles {
         Ok(())
     }
 
-    pub async fn for_run(run_name: &str) -> Result<Self, String> {
-        let state = SQLiteState::new(run_name)
+    pub async fn for_run(runtime_name: &str) -> Result<Self, String> {
+        let state = SQLiteState::new(runtime_name)
             .await
             .map_err(|e| format!("Failed to open run state: {}", e))?;
         let project_id = state
             .get_project_id()
             .await
             .map_err(|e| format!("Failed to get project_id: {}", e))?
-            .ok_or_else(|| format!("Run '{}' is not linked to a project", run_name))?;
+            .ok_or_else(|| format!("Run '{}' is not linked to a project", runtime_name))?;
         let route_id = state
             .get_route_id()
             .await

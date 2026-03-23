@@ -14,7 +14,7 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config::{self, Config};
-use crate::core::delta::{list_working_project_runs, BoardDeliveryStatus, Delivery, DeltaState};
+use crate::core::delta::{list_working_route_runtimes, BoardDeliveryStatus, Delivery, DeltaState};
 use crate::core::lifecycle::{
     LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
 };
@@ -65,13 +65,13 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
         }
 
         // Process working project runs (track active state)
-        if let Ok(project_runs) = list_working_project_runs().await {
-            for (_project_id, _route_id, _run_name) in project_runs {
+        if let Ok(route_runtimes) = list_working_route_runtimes().await {
+            for (_project_id, _route_id, _runtime_name) in route_runtimes {
                 has_active_runs = true;
                 last_active = Instant::now();
 
-                // Board runs are processed by the first loop (list_runs → process_active_run)
-                // once dispatch_board bootstraps their per-run DB via start_run
+                // Route runtimes are processed by the first loop (list_runs → process_active_run)
+                // once dispatch_board bootstraps their per-runtime DB via start_run
             }
         }
 
@@ -103,9 +103,9 @@ pub async fn run_polling_loop(state: Arc<AppState>, config: DaemonConfig) {
 /// 2. Processes TimeCheck event which returns lifecycle actions
 /// 3. Handles actions like SpawnWorker via the orchestrator
 #[tracing::instrument]
-async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
-    let run_dir = config::run_dir(run_name);
-    let files = Files::new(&run_dir);
+async fn process_active_run(runtime_name: &str) -> anyhow::Result<()> {
+    let runtime_dir = config::runtime_dir(runtime_name);
+    let files = Files::new(&runtime_dir);
     let db_path = files.db_path();
 
     if !db_path.exists() {
@@ -117,12 +117,14 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 
     // Create lifecycle manager
     let lifecycle =
-        match LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command.clone()).await {
+        match LocalLifecycleManager::new(runtime_name, runtime_dir.clone(), agent_command.clone())
+            .await
+        {
             Ok(lm) => lm,
             Err(e) => {
                 tracing::warn!(
                     "[Daemon] Failed to create lifecycle manager for '{}': {}",
-                    run_name,
+                    runtime_name,
                     e
                 );
                 return Ok(());
@@ -135,7 +137,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
         Err(e) => {
             tracing::warn!(
                 "[Daemon] Failed to get run status for '{}': {} - assuming Draft",
-                run_name,
+                runtime_name,
                 e
             );
             Status::Draft
@@ -273,16 +275,16 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                         if !actions.is_empty() {
                             tracing::info!(
                                 "[Daemon] Scaling evaluation for '{}': {} actions",
-                                run_name,
+                                runtime_name,
                                 actions.len()
                             );
                         }
-                        handle_lifecycle_actions(run_name, &run_dir, actions).await;
+                        handle_lifecycle_actions(runtime_name, &runtime_dir, actions).await;
                     }
                     Err(e) => {
                         tracing::warn!(
                             "[Daemon] Failed to evaluate scaling for '{}': {}",
-                            run_name,
+                            runtime_name,
                             e
                         );
                     }
@@ -293,16 +295,16 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
             match lifecycle.process_event(LifecycleEvent::TimeCheck).await {
                 Ok(actions) => {
                     for action in &actions {
-                        tracing::debug!("[Daemon] Run '{}' action: {:?}", run_name, action);
+                        tracing::debug!("[Daemon] Run '{}' action: {:?}", runtime_name, action);
                     }
 
                     // Handle actions that require spawning via orchestrator
-                    handle_lifecycle_actions(run_name, &run_dir, actions).await;
+                    handle_lifecycle_actions(runtime_name, &runtime_dir, actions).await;
                 }
                 Err(e) => {
                     tracing::warn!(
                         "[Daemon] Failed to process TimeCheck for '{}': {}",
-                        run_name,
+                        runtime_name,
                         e
                     );
                 }
@@ -314,7 +316,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                 if let Err(e) = lifecycle.handle_time_expired().await {
                     tracing::warn!(
                         "[Daemon] Failed to handle time expired for '{}': {}",
-                        run_name,
+                        runtime_name,
                         e
                     );
                 }
@@ -326,7 +328,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                     if !crate::core::runner::local::LocalRunner::is_pid_alive(pid) {
                         tracing::warn!(
                             "[Daemon] Eval process (pid={}) for run '{}' is no longer alive - marking as failed",
-                            pid, run_name
+                            pid, runtime_name
                         );
                         if let Err(e) = lifecycle
                             .state()
@@ -339,32 +341,36 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                         {
                             tracing::error!(
                                 "[Daemon] Failed to mark crashed eval as failed for '{}': {}",
-                                run_name,
+                                runtime_name,
                                 e
                             );
                         }
 
                         // Re-trigger eval
                         let agent_command = crate::cli::config::get_agent_command();
-                        if let Ok(lm) =
-                            LocalLifecycleManager::new(run_name, run_dir.clone(), agent_command)
-                                .await
+                        if let Ok(lm) = LocalLifecycleManager::new(
+                            runtime_name,
+                            runtime_dir.clone(),
+                            agent_command,
+                        )
+                        .await
                         {
                             // Set back to Working so maybe_trigger_eval can fire
                             if let Err(e) = lm.state().set_status(Status::Working).await {
                                 tracing::error!(
                                     "[Daemon] Failed to reset status for eval re-trigger on '{}': {}",
-                                    run_name, e
+                                    runtime_name, e
                                 );
                             }
                             match lm.process_event(LifecycleEvent::TimeCheck).await {
                                 Ok(actions) => {
-                                    handle_lifecycle_actions(run_name, &run_dir, actions).await;
+                                    handle_lifecycle_actions(runtime_name, &runtime_dir, actions)
+                                        .await;
                                 }
                                 Err(e) => {
                                     tracing::warn!(
                                         "[Daemon] Failed to re-trigger eval for '{}': {}",
-                                        run_name,
+                                        runtime_name,
                                         e
                                     );
                                 }
@@ -374,8 +380,8 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
                 }
             }
 
-            if let Err(e) = maybe_process_scribe(run_name, &files).await {
-                tracing::debug!("[Daemon] Scribe processing for '{}': {}", run_name, e);
+            if let Err(e) = maybe_process_scribe(runtime_name, &files).await {
+                tracing::debug!("[Daemon] Scribe processing for '{}': {}", runtime_name, e);
             }
         }
         _ => {}
@@ -386,7 +392,7 @@ async fn process_active_run(run_name: &str) -> anyhow::Result<()> {
 
 /// Check and process scribe batches if the batch window has expired.
 #[tracing::instrument(skip(_files))]
-async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<()> {
+async fn maybe_process_scribe(runtime_name: &str, _files: &Files) -> anyhow::Result<()> {
     let config = Config::load().map(|(c, _)| c).unwrap_or_else(|e| {
         tracing::warn!(
             "[Daemon] Failed to load config for scribe, using defaults: {}",
@@ -400,25 +406,25 @@ async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<
     }
 
     let should_process = {
-        let state = SQLiteState::new(run_name).await?;
+        let state = SQLiteState::new(runtime_name).await?;
         scribe::should_process_batch(&state, &config).await
     };
 
     if should_process {
-        let run_name = run_name.to_string();
+        let runtime_name = runtime_name.to_string();
         tokio::spawn(async move {
-            match scribe::process_scribe_batch(&run_name).await {
+            match scribe::process_scribe_batch(&runtime_name).await {
                 Ok(result) => {
                     tracing::info!(
                         "[Daemon] Scribe batch processed for '{}': {} submissions",
-                        run_name,
+                        runtime_name,
                         result.submissions_processed
                     );
                 }
                 Err(e) => {
                     tracing::warn!(
                         "[Daemon] Scribe processing failed for '{}': {}",
-                        run_name,
+                        runtime_name,
                         e
                     );
                 }
@@ -435,8 +441,8 @@ async fn maybe_process_scribe(run_name: &str, _files: &Files) -> anyhow::Result<
 /// based on the run's configuration.
 #[tracing::instrument(skip(actions))]
 async fn handle_lifecycle_actions(
-    run_name: &str,
-    run_dir: &std::path::Path,
+    runtime_name: &str,
+    runtime_dir: &std::path::Path,
     actions: Vec<LifecycleAction>,
 ) {
     if actions.is_empty() {
@@ -453,7 +459,7 @@ async fn handle_lifecycle_actions(
         Err(e) => {
             tracing::error!(
                 "[Daemon] Failed to create orchestrator for '{}': {} - dropping {} lifecycle actions",
-                run_name,
+                runtime_name,
                 e,
                 actions.len()
             );
@@ -471,26 +477,26 @@ async fn handle_lifecycle_actions(
                 tracing::info!(
                     "[Daemon] Spawning worker '{}' for run '{}' via orchestrator (task: {:?})",
                     worker_name,
-                    run_name,
+                    runtime_name,
                     assigned_task_id
                 );
 
                 match orchestrator
-                    .spawn_single_worker(run_name, &worker_name, &work_dir, None)
+                    .spawn_single_worker(runtime_name, &worker_name, &work_dir, None)
                     .await
                 {
                     Ok(()) => {
                         tracing::info!(
                             "[Daemon] Successfully spawned worker '{}' for run '{}'",
                             worker_name,
-                            run_name
+                            runtime_name
                         );
                     }
                     Err(e) => {
                         tracing::warn!(
                             "[Daemon] Failed to spawn worker '{}' for run '{}': {}",
                             worker_name,
-                            run_name,
+                            runtime_name,
                             e
                         );
                     }
@@ -506,7 +512,7 @@ async fn handle_lifecycle_actions(
                 tracing::info!(
                     "[Daemon] Resuming worker '{}' for run '{}' via orchestrator (has_state: {})",
                     worker_name,
-                    run_name,
+                    runtime_name,
                     state_handle
                         .as_ref()
                         .map(|h| h.has_state())
@@ -520,7 +526,7 @@ async fn handle_lifecycle_actions(
                 // 4. Spawn worker via runner
                 match orchestrator
                     .resume_worker(
-                        run_name,
+                        runtime_name,
                         &worker_name,
                         &work_dir,
                         resume_session_id.as_deref(),
@@ -532,14 +538,14 @@ async fn handle_lifecycle_actions(
                         tracing::info!(
                             "[Daemon] Successfully resumed worker '{}' for run '{}'",
                             worker_name,
-                            run_name
+                            runtime_name
                         );
                     }
                     Err(e) => {
                         tracing::warn!(
                             "[Daemon] Failed to resume worker '{}' for run '{}': {}",
                             worker_name,
-                            run_name,
+                            runtime_name,
                             e
                         );
                     }
@@ -548,10 +554,14 @@ async fn handle_lifecycle_actions(
 
             LifecycleAction::WorkersResumed(workers) => {
                 // Workers to resume - spawn each one via orchestrator
-                let state = match SQLiteState::new(run_name).await {
+                let state = match SQLiteState::new(runtime_name).await {
                     Ok(s) => s,
                     Err(e) => {
-                        tracing::warn!("[Daemon] Failed to open state for '{}': {}", run_name, e);
+                        tracing::warn!(
+                            "[Daemon] Failed to open state for '{}': {}",
+                            runtime_name,
+                            e
+                        );
                         continue;
                     }
                 };
@@ -584,11 +594,11 @@ async fn handle_lifecycle_actions(
                         .as_ref()
                         .filter(|s| !s.is_empty())
                         .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|| run_dir.join("work").join(&worker_name));
+                        .unwrap_or_else(|| runtime_dir.join("work").join(&worker_name));
 
                     match orchestrator
                         .spawn_single_worker(
-                            run_name,
+                            runtime_name,
                             &worker_name,
                             &work_dir,
                             worker.session_id.as_deref(),
@@ -599,14 +609,14 @@ async fn handle_lifecycle_actions(
                             tracing::info!(
                                 "[Daemon] Successfully resumed worker '{}' for run '{}'",
                                 worker_name,
-                                run_name
+                                runtime_name
                             );
                         }
                         Err(e) => {
                             tracing::warn!(
                                 "[Daemon] Failed to resume worker '{}' for run '{}': {}",
                                 worker_name,
-                                run_name,
+                                runtime_name,
                                 e
                             );
                         }
@@ -616,13 +626,13 @@ async fn handle_lifecycle_actions(
 
             // Other actions are handled directly by the lifecycle manager
             LifecycleAction::EvalTriggered => {
-                tracing::info!("[Daemon] Eval triggered for run '{}'", run_name);
+                tracing::info!("[Daemon] Eval triggered for run '{}'", runtime_name);
             }
             LifecycleAction::RunFailed { reason } => {
-                tracing::info!("[Daemon] Run '{}' failed: {:?}", run_name, reason);
+                tracing::info!("[Daemon] Run '{}' failed: {:?}", runtime_name, reason);
             }
             LifecycleAction::RunCompleted => {
-                tracing::info!("[Daemon] Run '{}' completed", run_name);
+                tracing::info!("[Daemon] Run '{}' completed", runtime_name);
             }
             _ => {}
         }
@@ -671,11 +681,11 @@ async fn process_single_delivery(delivery: &Delivery, _config: &Config) -> anyho
 
     // Get the project run to find the work directory
     let project_run = state
-        .get_project_run()
+        .get_route_runtime()
         .await?
         .ok_or_else(|| anyhow::anyhow!("No project run found"))?;
 
-    let run_path = config::run_dir(&project_run.run_name);
+    let run_path = config::runtime_dir(&project_run.runtime_name);
     let work_dir = run_path.join("work").join("staging");
 
     if !work_dir.exists() {

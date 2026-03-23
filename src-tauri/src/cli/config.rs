@@ -47,7 +47,7 @@ pub fn get_agent_command() -> Vec<String> {
         .ok()
         .and_then(|p| p.to_str().map(String::from))
         .unwrap_or_else(|| "hirsel".to_string());
-    vec![hirsel_path, "__worker-run".to_string()]
+    vec![hirsel_path, "__worker-runtime".to_string()]
 }
 
 #[cfg(test)]

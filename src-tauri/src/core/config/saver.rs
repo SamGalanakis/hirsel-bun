@@ -28,10 +28,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     output.push_str(&format!("eval_timeout = {}\n", config.eval_timeout));
     output.push_str(&format!("auto_learn = {}\n", config.auto_learn));
     output.push_str(&format!(
-        "user_message_pause = \"{}\"\n",
-        config.user_message_pause
-    ));
-    output.push_str(&format!(
         "human_in_the_loop = {}\n",
         config.human_in_the_loop
     ));

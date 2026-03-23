@@ -34,8 +34,8 @@ pub enum Commands {
     Serve(ServeArgs),
 
     /// Run worker subprocess (internal, called by spawn_worker)
-    #[command(name = "__worker-run", hide = true)]
-    WorkerRun(InternalWorkerRunArgs),
+    #[command(name = "__worker-runtime", hide = true)]
+    WorkerRuntime(InternalWorkerRuntimeArgs),
 
     /// Run eval MCP server (internal, called by eval agent)
     #[command(name = "__eval-mcp", hide = true)]
@@ -47,15 +47,11 @@ pub enum Commands {
 
     /// Run eval agent (internal, spawned by lifecycle manager)
     #[command(name = "__eval-run", hide = true)]
-    EvalRun(InternalEvalRunArgs),
+    EvalRuntime(InternalEvalRuntimeArgs),
 
     /// Run scribe processing (internal, spawned by daemon)
     #[command(name = "__scribe", hide = true)]
     Scribe(RunNameArg),
-
-    /// Run board MCP server for Shepherd (internal)
-    #[command(name = "__board-mcp", hide = true)]
-    BoardMcp,
 
     /// Run as daemon (internal, auto-started by the desktop app)
     #[cfg(feature = "server")]
@@ -71,19 +67,19 @@ pub struct ServeArgs {
     pub port: u16,
 }
 
-/// Simple run name argument
+/// Simple runtime name argument
 #[derive(Args, Debug)]
 pub struct RunNameArg {
-    /// Name of the run
-    pub run_name: String,
+    /// Name of the runtime
+    pub runtime_name: String,
 }
 
-/// Arguments for internal worker run command
+/// Arguments for internal worker runtime command
 #[derive(Args, Debug)]
-pub struct InternalWorkerRunArgs {
-    /// Run name
+pub struct InternalWorkerRuntimeArgs {
+    /// Runtime name
     #[arg(long)]
-    pub run: String,
+    pub runtime: String,
 
     /// Worker name
     #[arg(long)]
@@ -93,9 +89,9 @@ pub struct InternalWorkerRunArgs {
     #[arg(long)]
     pub work_dir: String,
 
-    /// Run directory
+    /// Runtime directory
     #[arg(long)]
-    pub run_dir: String,
+    pub runtime_dir: String,
 
     /// Agent command (JSON array)
     #[arg(long)]
@@ -126,16 +122,16 @@ pub struct InternalWorkerRunArgs {
     pub plan_task: bool,
 }
 
-/// Arguments for internal eval run command
+/// Arguments for internal eval runtime command
 #[derive(Args, Debug)]
-pub struct InternalEvalRunArgs {
-    /// Run name
+pub struct InternalEvalRuntimeArgs {
+    /// Runtime name
     #[arg(long)]
-    pub run: String,
+    pub runtime: String,
 
-    /// Run directory
+    /// Runtime directory
     #[arg(long)]
-    pub run_dir: String,
+    pub runtime_dir: String,
 
     /// Agent command (JSON array)
     #[arg(long)]
@@ -145,7 +141,7 @@ pub struct InternalEvalRunArgs {
 /// Arguments for `hirsel __daemon` (internal)
 #[derive(Args, Debug)]
 pub struct DaemonArgs {
-    /// Idle timeout in seconds (daemon exits if no active runs for this long)
+    /// Idle timeout in seconds (daemon exits if no active runtimes for this long)
     #[arg(long, default_value = "300")]
     pub idle_timeout: u64,
 
@@ -172,10 +168,6 @@ pub enum WorkerCommands {
     /// Task management commands
     #[command(subcommand)]
     Task(TaskSubcommands),
-
-    /// Messaging commands
-    #[command(subcommand)]
-    Msg(MsgSubcommands),
 }
 
 /// Worker task subcommands
@@ -189,22 +181,6 @@ pub enum TaskSubcommands {
 
     /// Mark current or specified task as done
     Done(WorkerTaskDoneArgs),
-}
-
-/// Worker message subcommands
-#[derive(Subcommand, Debug)]
-pub enum MsgSubcommands {
-    /// Send a message to a thread
-    Send(WorkerMsgSendArgs),
-
-    /// Read messages from a thread
-    Read(WorkerMsgReadArgs),
-
-    /// List available threads
-    List,
-
-    /// Check inbox for new messages
-    Inbox,
 }
 
 /// Arguments for worker task add
@@ -230,23 +206,6 @@ pub struct WorkerTaskAddArgs {
 pub struct WorkerTaskDoneArgs {
     /// Task ID (uses currently claimed task if not specified)
     pub task_id: Option<String>,
-}
-
-/// Arguments for worker msg send
-#[derive(Args, Debug)]
-pub struct WorkerMsgSendArgs {
-    /// Thread name: "user" for DM to human, "group" for team chat
-    pub thread: String,
-
-    /// Message content
-    pub message: String,
-}
-
-/// Arguments for worker msg read
-#[derive(Args, Debug)]
-pub struct WorkerMsgReadArgs {
-    /// Thread name (reads all if not specified)
-    pub thread: Option<String>,
 }
 
 /// Parse and return the main CLI arguments.
@@ -282,20 +241,6 @@ mod tests {
             assert_eq!(args.port, 9090);
         } else {
             panic!("Expected Serve command");
-        }
-    }
-
-    #[test]
-    fn test_worker_cli_msg_send() {
-        let cli =
-            WorkerCli::try_parse_from(["hirsel-worker", "msg", "send", "group", "Hello team!"])
-                .unwrap();
-
-        if let WorkerCommands::Msg(MsgSubcommands::Send(args)) = cli.command {
-            assert_eq!(args.thread, "group");
-            assert_eq!(args.message, "Hello team!");
-        } else {
-            panic!("Expected Msg Send command");
         }
     }
 

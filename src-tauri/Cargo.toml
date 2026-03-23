@@ -89,7 +89,7 @@ aes-gcm = "0.10"
 hex = "0.4"
 base64 = "0.22"
 octocrab = "0.49"
-lash = { git = "https://github.com/SamGalanakis/lash", rev = "dc5f5017693cb8e792e6bcd2e16d21557745048a", package = "lash" }
+lash = { git = "https://github.com/SamGalanakis/lash", rev = "1310709c087fa6e5996fe0b87d72145bf4691d18", package = "lash" }
 
 # S3 storage (feature-gated)
 aws-sdk-s3 = { version = "1", optional = true }

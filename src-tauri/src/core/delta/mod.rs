@@ -22,7 +22,7 @@ pub mod types;
 pub use dispatch::{DeltaDispatchResult, DeltaDispatchService, DispatchError};
 pub use export::{DeltaExporter, ExportError, ExportResult, SyncResult};
 pub use state::{
-    bump_generation, get_generation, list_working_project_runs, update_project_run_status_by_name,
-    DeltaState, DeltaStateError, DeltaStateResult,
+    bump_generation, get_generation, list_working_route_runtimes,
+    update_route_runtime_status_by_name, DeltaState, DeltaStateError, DeltaStateResult,
 };
 pub use types::*;

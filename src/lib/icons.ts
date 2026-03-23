@@ -69,8 +69,8 @@ export const ACTION_ICON_NAMES: Record<string, string> = {
   run_done: 'check',
   run_delivered: 'package',
   run_timed_out: 'clock',
-  message_sent: 'arrow-right',
-  message_received: 'arrow-left',
+  concern_reported: 'alert-circle',
+  concern_resolved: 'check',
   default: 'circle',
 };
 

@@ -40,10 +40,6 @@ struct ErrorResponse {
 
 type Result<T> = std::result::Result<T, OrchestratorError>;
 
-const fn default_route_id() -> i64 {
-    1
-}
-
 // =============================================================================
 // Health
 // =============================================================================
@@ -147,12 +143,12 @@ pub async fn download_files(
     use flate2::Compression;
     use tar::Builder;
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
-    let work_dir = run_dir.join("work");
+    let work_dir = runtime_dir.join("work");
     if !work_dir.exists() {
         return Err(OrchestratorError::Other(
             "Work directory not found. Upload files first.".into(),
@@ -279,192 +275,6 @@ pub async fn get_worker_events(
         .get_worker_events(&name, &worker, params.after_id, params.limit)
         .await?;
     Ok(Json(events))
-}
-
-// =============================================================================
-// Project Messages (Sheepfold)
-//
-// These endpoints are for workers to access project-level messages.
-// Workers use these routes through the backend HTTP API.
-// =============================================================================
-
-use crate::core::{ProjectMessage, ProjectMessagesStore};
-
-#[derive(Debug, Deserialize)]
-pub struct ProjectMessageRequest {
-    pub thread: String,
-    pub sender: String,
-    pub content: String,
-    #[serde(default)]
-    pub waiting: bool,
-    #[serde(default = "default_route_id")]
-    pub route_id: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectMessageResponse {
-    pub id: i64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectMessagesResponse {
-    pub messages: Vec<ProjectMessage>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ProjectThreadsResponse {
-    pub threads: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct MarkProjectMessagesReadRequest {
-    pub reader: String,
-}
-
-pub async fn add_project_message(
-    Path(project_id): Path<i64>,
-    Json(body): Json<ProjectMessageRequest>,
-) -> Result<Json<ProjectMessageResponse>> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
-    let msg = store
-        .add_message(
-            project_id,
-            body.route_id,
-            &body.thread,
-            &body.sender,
-            &body.content,
-            body.waiting,
-        )
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to add message: {}", e)))?;
-    Ok(Json(ProjectMessageResponse { id: msg.id }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ProjectMessagesQuery {
-    pub limit: Option<i64>,
-    #[serde(default = "default_route_id")]
-    pub route_id: i64,
-}
-
-pub async fn get_project_messages(
-    Path((project_id, thread)): Path<(i64, String)>,
-    Query(query): Query<ProjectMessagesQuery>,
-) -> Result<Json<ProjectMessagesResponse>> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
-    let messages = store
-        .get_messages(project_id, query.route_id, &thread, query.limit)
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to get messages: {}", e)))?;
-    Ok(Json(ProjectMessagesResponse { messages }))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UnreadMessagesQuery {
-    #[serde(default = "default_route_id")]
-    pub route_id: i64,
-}
-
-pub async fn get_unread_project_messages(
-    Path((project_id, thread, reader)): Path<(i64, String, String)>,
-    Query(query): Query<UnreadMessagesQuery>,
-) -> Result<Json<ProjectMessagesResponse>> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
-
-    // Get threads to find unread count
-    let threads = store
-        .get_threads(project_id, query.route_id, &reader)
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to get threads: {}", e)))?;
-
-    let thread_info = threads.iter().find(|t| t.thread == thread);
-    let unread_count = thread_info.map(|t| t.unread_count).unwrap_or(0);
-
-    if unread_count == 0 {
-        return Ok(Json(ProjectMessagesResponse { messages: vec![] }));
-    }
-
-    let messages = store
-        .get_messages(project_id, query.route_id, &thread, Some(unread_count))
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to get messages: {}", e)))?;
-
-    // Filter out messages from the reader
-    let filtered: Vec<_> = messages
-        .into_iter()
-        .filter(|m| m.sender != reader)
-        .collect();
-    Ok(Json(ProjectMessagesResponse { messages: filtered }))
-}
-
-pub async fn get_all_unread_project_messages(
-    Path((project_id, reader)): Path<(i64, String)>,
-    Query(query): Query<UnreadMessagesQuery>,
-) -> Result<Json<ProjectMessagesResponse>> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
-
-    let threads = store
-        .get_threads(project_id, query.route_id, &reader)
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to get threads: {}", e)))?;
-
-    let mut all_unread = Vec::new();
-    for thread_info in threads {
-        if thread_info.unread_count > 0 {
-            let messages = store
-                .get_messages(
-                    project_id,
-                    query.route_id,
-                    &thread_info.thread,
-                    Some(thread_info.unread_count),
-                )
-                .await
-                .map_err(|e| OrchestratorError::Other(format!("Failed to get messages: {}", e)))?;
-            all_unread.extend(messages.into_iter().filter(|m| m.sender != reader));
-        }
-    }
-    Ok(Json(ProjectMessagesResponse {
-        messages: all_unread,
-    }))
-}
-
-pub async fn mark_project_messages_read(
-    Path((project_id, thread)): Path<(i64, String)>,
-    Query(query): Query<UnreadMessagesQuery>,
-    Json(body): Json<MarkProjectMessagesReadRequest>,
-) -> Result<StatusCode> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
-    store
-        .mark_messages_read(project_id, query.route_id, &thread, &body.reader)
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to mark read: {}", e)))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-pub async fn get_project_threads(
-    Path(project_id): Path<i64>,
-    Query(query): Query<UnreadMessagesQuery>,
-) -> Result<Json<ProjectThreadsResponse>> {
-    let store = ProjectMessagesStore::open()
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to open project messages: {}", e)))?;
-    let threads = store
-        .get_threads(project_id, query.route_id, "")
-        .await
-        .map_err(|e| OrchestratorError::Other(format!("Failed to get threads: {}", e)))?;
-    Ok(Json(ProjectThreadsResponse {
-        threads: threads.into_iter().map(|t| t.thread).collect(),
-    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -995,15 +805,15 @@ pub struct ProjectIdResponse {
 
 /// Get the project_id for a board-linked run
 ///
-/// GET /api/runs/{name}/config/project_id
+/// GET /api/runtimes/{name}/config/project_id
 ///
 /// Workers use this to determine which project they're working on
 /// so they can add nodes to the correct project.
 pub async fn get_project_id(Path(name): Path<String>) -> Result<Json<ProjectIdResponse>> {
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1028,7 +838,7 @@ pub struct AddNodeRequest {
 
 /// Add a node from a worker
 ///
-/// POST /api/runs/{name}/nodes
+/// POST /api/runtimes/{name}/nodes
 ///
 /// Workers call this to add tasks to the board tree during execution.
 /// The node is created with source='worker'.
@@ -1039,8 +849,8 @@ pub async fn add_node(
     use crate::core::delta::{DeltaState, NodeKind};
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1088,13 +898,13 @@ pub async fn add_node(
 
 /// Get all nodes for a run
 ///
-/// GET /api/runs/{name}/nodes
+/// GET /api/runtimes/{name}/nodes
 pub async fn get_nodes(Path(name): Path<String>) -> Result<Json<NodesResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1121,13 +931,13 @@ pub struct NodesResponse {
 
 /// Get claimable nodes for a run
 ///
-/// GET /api/runs/{name}/nodes/claimable
+/// GET /api/runtimes/{name}/nodes/claimable
 pub async fn get_claimable_nodes(Path(name): Path<String>) -> Result<Json<NodesResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1154,7 +964,7 @@ pub struct ClaimNodeRequest {
 
 /// Claim a node for a worker
 ///
-/// POST /api/runs/{name}/nodes/{id}/claim
+/// POST /api/runtimes/{name}/nodes/{id}/claim
 pub async fn claim_node(
     Path((name, node_id)): Path<(String, String)>,
     Json(body): Json<ClaimNodeRequest>,
@@ -1162,8 +972,8 @@ pub async fn claim_node(
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1190,7 +1000,7 @@ pub struct CompleteNodeRequest {
 
 /// Complete a node
 ///
-/// POST /api/runs/{name}/nodes/{id}/complete
+/// POST /api/runtimes/{name}/nodes/{id}/complete
 pub async fn complete_node(
     Path((name, node_id)): Path<(String, String)>,
     Json(body): Json<CompleteNodeRequest>,
@@ -1198,8 +1008,8 @@ pub async fn complete_node(
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1223,13 +1033,13 @@ pub async fn complete_node(
 
 /// Unclaim a node
 ///
-/// POST /api/runs/{name}/nodes/{id}/unclaim
+/// POST /api/runtimes/{name}/nodes/{id}/unclaim
 pub async fn unclaim_node(Path((name, node_id)): Path<(String, String)>) -> Result<StatusCode> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1256,15 +1066,15 @@ pub struct NodeBlockedResponse {
 
 /// Check if a node is blocked
 ///
-/// GET /api/runs/{name}/nodes/{id}/blocked
+/// GET /api/runtimes/{name}/nodes/{id}/blocked
 pub async fn is_node_blocked(
     Path((name, node_id)): Path<(String, String)>,
 ) -> Result<Json<NodeBlockedResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1291,7 +1101,7 @@ pub struct CheckPassRequest {
 
 /// Mark a check node as passed
 ///
-/// POST /api/runs/{name}/nodes/{id}/check-pass
+/// POST /api/runtimes/{name}/nodes/{id}/check-pass
 pub async fn node_check_pass(
     Path((name, check_id)): Path<(String, String)>,
     Json(body): Json<CheckPassRequest>,
@@ -1299,8 +1109,8 @@ pub async fn node_check_pass(
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1333,7 +1143,7 @@ pub struct CheckFailResponse {
 
 /// Mark a check node as failed, creating a repair node
 ///
-/// POST /api/runs/{name}/nodes/{id}/check-fail
+/// POST /api/runtimes/{name}/nodes/{id}/check-fail
 pub async fn node_check_fail(
     Path((name, check_id)): Path<(String, String)>,
     Json(body): Json<CheckFailRequest>,
@@ -1341,8 +1151,8 @@ pub async fn node_check_fail(
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1371,7 +1181,7 @@ pub struct SetTokensRequest {
 
 /// Set tokens used on a node
 ///
-/// POST /api/runs/{name}/nodes/{id}/tokens
+/// POST /api/runtimes/{name}/nodes/{id}/tokens
 pub async fn set_node_tokens(
     Path((name, node_id)): Path<(String, String)>,
     Json(body): Json<SetTokensRequest>,
@@ -1379,8 +1189,8 @@ pub async fn set_node_tokens(
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 
@@ -1407,15 +1217,15 @@ pub struct ValidatedNodesResponse {
 
 /// Get all node IDs validated by an eval node
 ///
-/// GET /api/runs/{name}/nodes/{id}/validated
+/// GET /api/runtimes/{name}/nodes/{id}/validated
 pub async fn get_validated_nodes(
     Path((name, eval_id)): Path<(String, String)>,
 ) -> Result<Json<ValidatedNodesResponse>> {
     use crate::core::delta::DeltaState;
     use crate::core::{config, state::SQLiteState};
 
-    let run_dir = config::run_dir(&name);
-    if !run_dir.exists() {
+    let runtime_dir = config::runtime_dir(&name);
+    if !runtime_dir.exists() {
         return Err(OrchestratorError::RunNotFound(name));
     }
 

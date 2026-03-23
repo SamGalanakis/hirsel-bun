@@ -33,16 +33,16 @@ async fn route_remote_url(project_id: i64, route_id: i64) -> Option<String> {
 #[tracing::instrument]
 #[tauri::command]
 pub async fn get_delivery_state(
-    run_name: String,
+    runtime_name: String,
     target_branch: String,
 ) -> Result<DeliveryState, String> {
     // Get branch_off_commit from run state
-    let branch_off_commit = match SQLiteState::new(&run_name).await {
+    let branch_off_commit = match SQLiteState::new(&runtime_name).await {
         Ok(state) => state.get_branch_off_commit().await.ok().flatten(),
         Err(_) => None,
     };
 
-    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
 
     orchestrator
         .get_delivery_state(&target_branch, branch_off_commit.as_deref())
@@ -53,8 +53,11 @@ pub async fn get_delivery_state(
 /// Check merge state for a run
 #[tracing::instrument]
 #[tauri::command]
-pub async fn check_merge_state(run_name: String, target_branch: String) -> Result<String, String> {
-    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
+pub async fn check_merge_state(
+    runtime_name: String,
+    target_branch: String,
+) -> Result<String, String> {
+    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
 
     let state = orchestrator.check_merge_state(&target_branch).str_err()?;
 
@@ -65,10 +68,10 @@ pub async fn check_merge_state(run_name: String, target_branch: String) -> Resul
 #[tracing::instrument]
 #[tauri::command]
 pub async fn get_conflicting_files(
-    run_name: String,
+    runtime_name: String,
     target_branch: String,
 ) -> Result<Vec<String>, String> {
-    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
 
     orchestrator.get_conflicting_files(&target_branch).str_err()
 }
@@ -77,11 +80,11 @@ pub async fn get_conflicting_files(
 #[tracing::instrument]
 #[tauri::command]
 pub async fn check_staleness(
-    run_name: String,
+    runtime_name: String,
     target_branch: String,
     branch_off_commit: String,
 ) -> Result<u32, String> {
-    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
 
     orchestrator
         .check_staleness(&target_branch, &branch_off_commit)
@@ -91,8 +94,8 @@ pub async fn check_staleness(
 /// Tier 1: Push branch to remote
 #[tracing::instrument]
 #[tauri::command]
-pub async fn push_run_branch(run_name: String) -> Result<PushResult, String> {
-    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
+pub async fn push_run_branch(runtime_name: String) -> Result<PushResult, String> {
+    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
 
     orchestrator.push_branch(None, None).str_err()
 }
@@ -101,12 +104,12 @@ pub async fn push_run_branch(run_name: String) -> Result<PushResult, String> {
 #[tracing::instrument]
 #[tauri::command]
 pub async fn create_run_pr(
-    run_name: String,
+    runtime_name: String,
     target_branch: String,
     title: String,
     body: String,
 ) -> Result<PrInfo, String> {
-    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
 
     orchestrator
         .create_pr(&target_branch, &title, &body)
@@ -118,14 +121,14 @@ pub async fn create_run_pr(
 #[tracing::instrument]
 #[tauri::command]
 pub async fn auto_merge_run(
-    run_name: String,
+    runtime_name: String,
     target_branch: String,
     title: String,
     body: String,
 ) -> Result<MergeResult, String> {
     let config = Config::load().map(|(c, _)| c).unwrap_or_default();
 
-    let orchestrator = DeliveryOrchestrator::from_run_name(&run_name, None).str_err()?;
+    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
 
     orchestrator
         .auto_merge_with_resolution(&target_branch, &title, &body, config, None)
@@ -137,28 +140,28 @@ pub async fn auto_merge_run(
 #[tracing::instrument]
 #[tauri::command]
 pub async fn generate_pr_title(
-    run_name: String,
+    runtime_name: String,
     summary: Option<String>,
 ) -> Result<String, String> {
-    Ok(pr_title(&run_name, summary.as_deref()))
+    Ok(pr_title(&runtime_name, summary.as_deref()))
 }
 
 /// Generate PR body from run
 #[tracing::instrument]
 #[tauri::command]
 pub async fn generate_pr_body(
-    run_name: String,
+    runtime_name: String,
     task_ids: Vec<String>,
     eval_ids: Vec<String>,
 ) -> Result<String, String> {
-    Ok(pr_body(&run_name, &task_ids, &eval_ids))
+    Ok(pr_body(&runtime_name, &task_ids, &eval_ids))
 }
 
 /// Generate delivery branch name
 #[tracing::instrument]
 #[tauri::command]
-pub async fn get_delivery_branch_name(run_name: String) -> Result<String, String> {
-    Ok(delivery_branch_name(&run_name))
+pub async fn get_delivery_branch_name(runtime_name: String) -> Result<String, String> {
+    Ok(delivery_branch_name(&runtime_name))
 }
 
 // =============================================================================
@@ -207,12 +210,14 @@ pub async fn validate_delivery_target(
     let state = DeltaState::with_route(project_id, route_id);
 
     let project_run = state
-        .get_project_run()
+        .get_route_runtime()
         .await
         .str_err()?
         .ok_or("No project run found")?;
 
-    let run_path = hirsel_dir().join("runs").join(&project_run.run_name);
+    let run_path = hirsel_dir()
+        .join("runtimes")
+        .join(&project_run.runtime_name);
     let work_dir = run_path.join("work").join("staging");
 
     if !work_dir.exists() {
@@ -385,12 +390,14 @@ pub async fn start_board_delivery(
 
     // Get the project run to find the work directory
     let project_run = state
-        .get_project_run()
+        .get_route_runtime()
         .await
         .str_err()?
         .ok_or("No project run found")?;
 
-    let run_path = hirsel_dir().join("runs").join(&project_run.run_name);
+    let run_path = hirsel_dir()
+        .join("runtimes")
+        .join(&project_run.runtime_name);
     let work_dir = run_path.join("work").join("staging");
 
     if !work_dir.exists() {
@@ -427,7 +434,7 @@ pub async fn start_board_delivery(
     let delivery_branch = if is_local {
         None // push HEAD:<target_branch> directly
     } else {
-        Some(delivery_branch_name(&project_run.run_name))
+        Some(delivery_branch_name(&project_run.runtime_name))
     };
 
     let push_target = if is_local {
@@ -507,12 +514,14 @@ pub async fn complete_board_delivery(
 
     // Get the project run to find the work directory
     let project_run = state
-        .get_project_run()
+        .get_route_runtime()
         .await
         .str_err()?
         .ok_or("No project run found")?;
 
-    let run_path = hirsel_dir().join("runs").join(&project_run.run_name);
+    let run_path = hirsel_dir()
+        .join("runtimes")
+        .join(&project_run.runtime_name);
     let work_dir = run_path.join("work").join("staging");
 
     if !work_dir.exists() {

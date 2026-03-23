@@ -3,8 +3,8 @@
 //! This module provides the configuration system for hirsel, including:
 //! - Agent configuration (command, type detection)
 //! - Authentication configuration (env vars, API keys, OAuth)
-//! - Worker scaling configuration
-//! - Remote worker configuration
+//! - Worker scaling and runner configuration
+//! - Backend connection configuration
 //! - Main Config struct with all settings
 
 mod agent;
@@ -45,7 +45,9 @@ pub use agent::AgentConfig;
 pub use git::{GitConfig, GitProvider};
 pub use llm::{LlmConfig, LlmProvider};
 pub use orchestrator::BackendConfig;
-pub use paths::{global_db_path, hirsel_dir, project_assets_dir, run_dir, run_exists, runs_dir};
+pub use paths::{
+    global_db_path, hirsel_dir, project_assets_dir, runtime_dir, runtime_exists, runtimes_dir,
+};
 pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
 pub use store::{ConfigStore, ConfigStoreError, PartialConfig};
 pub use types::AgentType;
@@ -66,7 +68,7 @@ pub fn get_context_window(model: &str) -> u32 {
 /// Configuration error type
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    #[error("No run selected. Set HIRSEL_RUN env var.")]
+    #[error("No run selected. Set HIRSEL_RUNTIME env var.")]
     NoRunSelected,
 
     #[error("Invalid TOML in config file {path}: {message}")]
@@ -108,10 +110,6 @@ fn default_eval_timeout() -> u32 {
     1800
 }
 
-fn default_user_message_pause() -> String {
-    "sender".to_string()
-}
-
 fn default_human_in_the_loop() -> bool {
     true
 }
@@ -147,9 +145,6 @@ pub struct Config {
 
     #[serde(default)]
     pub auto_learn: bool,
-
-    #[serde(default = "default_user_message_pause")]
-    pub user_message_pause: String,
 
     #[serde(default = "default_human_in_the_loop")]
     pub human_in_the_loop: bool,
@@ -209,7 +204,6 @@ impl Default for Config {
             agent: AgentConfig::default(),
             eval_timeout: default_eval_timeout(),
             auto_learn: true,
-            user_message_pause: default_user_message_pause(),
             human_in_the_loop: default_human_in_the_loop(),
             context_warning_threshold: default_context_warning_threshold(),
             coordinator_port: default_coordinator_port(),
@@ -238,7 +232,7 @@ impl Config {
     ///
     /// Environment variables:
     /// - `HIRSEL_ROOT`: Override the hirsel root directory (default: ~/.hirsel)
-    /// - `HIRSEL_RUN`: Set the current run name
+    /// - `HIRSEL_RUNTIME`: Set the current run name
     pub fn load() -> Result<(Self, Vec<String>), ConfigError> {
         let mut config = Self::default();
         let mut warnings = Vec::new();
@@ -280,8 +274,8 @@ impl Config {
         }
 
         // 3. Apply environment overrides (always win)
-        if let Ok(run) = env::var("HIRSEL_RUN") {
-            config.run = Some(run);
+        if let Ok(runtime_name) = env::var("HIRSEL_RUNTIME") {
+            config.run = Some(runtime_name);
         }
         Ok((config, warnings))
     }
@@ -296,9 +290,6 @@ impl Config {
         }
         if let Some(auto_learn) = partial.auto_learn {
             self.auto_learn = auto_learn;
-        }
-        if let Some(user_message_pause) = partial.user_message_pause {
-            self.user_message_pause = user_message_pause;
         }
         if let Some(human_in_the_loop) = partial.human_in_the_loop {
             self.human_in_the_loop = human_in_the_loop;
@@ -343,16 +334,16 @@ impl Config {
             config.root = PathBuf::from(root);
         }
 
-        if let Ok(run) = env::var("HIRSEL_RUN") {
-            config.run = Some(run);
+        if let Ok(runtime_name) = env::var("HIRSEL_RUNTIME") {
+            config.run = Some(runtime_name);
         }
 
         config
     }
 
-    /// Path to runs directory
-    pub fn runs_dir(&self) -> PathBuf {
-        self.root.join("runs")
+    /// Path to route runtime workspaces.
+    pub fn runtimes_dir(&self) -> PathBuf {
+        self.root.join("runtimes")
     }
 
     /// Path to staging root directory
@@ -360,25 +351,25 @@ impl Config {
         PathBuf::from("/tmp/hirsel-staging")
     }
 
-    /// Path to staging directory for a specific run
+    /// Path to staging directory for a specific runtime
     pub fn staging_dir(&self, name: &str) -> PathBuf {
         self.staging_root().join(name)
     }
 
-    /// Path to current run directory
-    pub fn run_dir(&self) -> Result<PathBuf, ConfigError> {
+    /// Path to the currently selected runtime directory
+    pub fn runtime_dir(&self) -> Result<PathBuf, ConfigError> {
         let run = self.run.as_ref().ok_or(ConfigError::NoRunSelected)?;
-        Ok(self.runs_dir().join(run))
+        Ok(self.runtimes_dir().join(run))
     }
 
     /// Path to database file
     pub fn db_path(&self) -> Result<PathBuf, ConfigError> {
-        Ok(self.run_dir()?.join("hirsel.db"))
+        Ok(self.runtime_dir()?.join("hirsel.db"))
     }
 
     /// Path to work directory
     pub fn work_dir(&self) -> Result<PathBuf, ConfigError> {
-        Ok(self.run_dir()?.join("work"))
+        Ok(self.runtime_dir()?.join("work"))
     }
 
     /// Path to config file
@@ -392,7 +383,7 @@ impl Config {
     }
 
     /// Validate run name
-    pub fn validate_run_name(name: &str) -> Result<(), ConfigError> {
+    pub fn validate_runtime_name(name: &str) -> Result<(), ConfigError> {
         let name = name.trim();
         if name.is_empty() {
             return Err(ConfigError::EmptyRunName);
@@ -581,8 +572,8 @@ pub mod testing {
             }
 
             // Create runs directory
-            let runs_dir = temp_dir.path().join("runs");
-            fs::create_dir_all(&runs_dir).expect("Failed to create runs dir");
+            let runtimes_dir = temp_dir.path().join("runtimes");
+            fs::create_dir_all(&runtimes_dir).expect("Failed to create runs dir");
 
             // Save previous HIRSEL_ROOT and set new one
             let prev_root = std::env::var("HIRSEL_ROOT").ok();
@@ -609,12 +600,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_validate_run_name() {
-        assert!(Config::validate_run_name("myrun").is_ok());
-        assert!(Config::validate_run_name("my-run").is_ok());
-        assert!(Config::validate_run_name("").is_err());
-        assert!(Config::validate_run_name("my/run").is_err());
-        assert!(Config::validate_run_name("my\\run").is_err());
+    fn test_validate_runtime_name() {
+        assert!(Config::validate_runtime_name("myrun").is_ok());
+        assert!(Config::validate_runtime_name("my-run").is_ok());
+        assert!(Config::validate_runtime_name("").is_err());
+        assert!(Config::validate_runtime_name("my/run").is_err());
+        assert!(Config::validate_runtime_name("my\\run").is_err());
     }
 
     #[test]

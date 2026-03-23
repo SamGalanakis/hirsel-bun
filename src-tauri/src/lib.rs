@@ -15,6 +15,7 @@ pub mod core;
 pub mod daemon;
 #[cfg(feature = "gui")]
 pub mod gui;
+mod lash_tools;
 pub mod version;
 pub mod worker;
 
@@ -90,8 +91,7 @@ fn init_tracing() {}
 
 // Re-export commonly used types
 pub use cli::{
-    parse_cli, parse_worker_cli, Cli, Commands, MsgSubcommands, TaskSubcommands, WorkerCli,
-    WorkerCommands,
+    parse_cli, parse_worker_cli, Cli, Commands, TaskSubcommands, WorkerCli, WorkerCommands,
 };
 pub use core::state;
 pub use core::Files;
@@ -134,15 +134,15 @@ pub fn run_cli() -> i32 {
 /// Execute a CLI command
 fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
-        Commands::WorkerRun(args) => {
+        Commands::WorkerRuntime(args) => {
             // Internal command for worker subprocess
             use std::path::PathBuf;
 
             // Set env vars for child processes (MCP server, agent)
             // These are passed as CLI args to avoid duplication, but child processes need env vars
-            std::env::set_var("HIRSEL_RUN", &args.run);
+            std::env::set_var("HIRSEL_RUNTIME", &args.runtime);
             std::env::set_var("HIRSEL_WORKER", &args.worker);
-            std::env::set_var("HIRSEL_RUN_DIR", &args.run_dir);
+            std::env::set_var("HIRSEL_RUNTIME_DIR", &args.runtime_dir);
 
             let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
                 .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
@@ -154,10 +154,10 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
             });
 
             let config = worker::WorkerRunConfig {
-                run_name: args.run,
+                runtime_name: args.runtime,
                 worker_name: args.worker,
                 work_dir: PathBuf::from(args.work_dir),
-                run_dir: PathBuf::from(args.run_dir),
+                runtime_dir: PathBuf::from(args.runtime_dir),
                 agent_command,
                 is_leader: args.is_leader,
                 leader_name: args.leader_name,
@@ -210,7 +210,7 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
             // Internal command for worker MCP server
             worker::run_mcp_server().map_err(|e| format!("Worker MCP error: {}", e))?;
         }
-        Commands::EvalRun(args) => {
+        Commands::EvalRuntime(args) => {
             // Internal command to run eval agent
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
@@ -218,8 +218,8 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
                 tokio::task::LocalSet::new()
                     .run_until(async {
                         core::eval::run_eval_from_args(
-                            &args.run,
-                            &args.run_dir,
+                            &args.runtime,
+                            &args.runtime_dir,
                             &args.agent_command,
                         )
                         .await
@@ -234,19 +234,10 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
             rt.block_on(async {
                 tokio::task::LocalSet::new()
-                    .run_until(async { cli::scribe::execute(&args.run_name).await })
+                    .run_until(async { cli::scribe::execute(&args.runtime_name).await })
                     .await
             })
             .map_err(|e| format!("Scribe error: {}", e))?;
-        }
-        Commands::BoardMcp => {
-            // Run board MCP server for Shepherd
-            let project_id: i64 = std::env::var("HIRSEL_PROJECT_ID")
-                .map_err(|_| "HIRSEL_PROJECT_ID environment variable required")?
-                .parse()
-                .map_err(|_| "Invalid HIRSEL_PROJECT_ID")?;
-            core::board::mcp::run_board_mcp_server(project_id)
-                .map_err(|e| format!("Board MCP error: {}", e))?;
         }
         #[cfg(feature = "server")]
         Commands::Serve(args) => {
@@ -385,7 +376,10 @@ fn cleanup_orphaned_dev_processes() {
     tracing::info!("[DEV] Cleaning up orphaned worker helper processes from previous sessions");
 
     // Kill old hidden helper commands from previous hot-reload sessions.
-    match Command::new("pkill").args(["-f", "__worker-run"]).output() {
+    match Command::new("pkill")
+        .args(["-f", "__worker-runtime"])
+        .output()
+    {
         Ok(output) => {
             if output.status.success() {
                 tracing::info!("[DEV] Killed orphaned worker helper processes");

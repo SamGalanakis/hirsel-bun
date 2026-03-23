@@ -17,7 +17,8 @@ use crate::core::api_types::{
     WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
-use crate::core::delta::{DeltaState, NodeKind, ProjectRunStatus};
+use crate::core::credentials::{load_forwarded_credentials, CredentialStore};
+use crate::core::delta::{DeltaState, NodeKind, RouteRuntimeStatus};
 use crate::core::draft::create_workspace_provider;
 use crate::core::names::{get_available_names, slugify};
 use crate::core::ops::{
@@ -45,12 +46,16 @@ impl LocalOrchestrator {
     }
 
     /// Get state for a run, opening the SQLite database
-    async fn get_state(&self, run_name: &str) -> OrchestratorResult<SQLiteState> {
-        let db_path = self.config.runs_dir().join(run_name).join("hirsel.db");
+    async fn get_state(&self, runtime_name: &str) -> OrchestratorResult<SQLiteState> {
+        let db_path = self
+            .config
+            .runtimes_dir()
+            .join(runtime_name)
+            .join("hirsel.db");
         if !db_path.exists() {
-            return Err(OrchestratorError::RunNotFound(run_name.to_string()));
+            return Err(OrchestratorError::RunNotFound(runtime_name.to_string()));
         }
-        SQLiteState::new(run_name)
+        SQLiteState::new(runtime_name)
             .await
             .map_err(|e| OrchestratorError::State(e.to_string()))
     }
@@ -100,6 +105,7 @@ impl LocalOrchestrator {
             turns: Some(session_metrics.turns),
             current_task,
             sheep_config: SheepConfig::from_name(&w.name, is_leader),
+            capability_profile: w.capability_profile,
         }
     }
 
@@ -132,41 +138,40 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_runs(&self) -> OrchestratorResult<Vec<RunSummary>> {
-        // Use project_runs table as source of truth (one run per project)
-        let project_runs = DeltaState::list_all_project_runs()
+        // Use route_runtimes table as source of truth (one run per project)
+        let route_runtimes = DeltaState::list_all_route_runtimes()
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to list project runs: {}", e)))?;
 
-        let runs_dir = self.config.runs_dir();
+        let runtimes_dir = self.config.runtimes_dir();
         let mut runs = Vec::new();
 
-        for (project_run, project_name) in project_runs {
-            let run_name = &project_run.run_name;
+        for (project_run, project_name) in route_runtimes {
+            let runtime_name = &project_run.runtime_name;
             let project_id = project_run.project_id;
             let route_id = project_run.route_id;
 
             // Convert project run status to API status
             let status = match project_run.status {
-                ProjectRunStatus::Working => crate::core::api_types::RunStatus::Working,
-                ProjectRunStatus::Paused => crate::core::api_types::RunStatus::Paused,
-                ProjectRunStatus::Failed => crate::core::api_types::RunStatus::Failed,
+                RouteRuntimeStatus::Working => crate::core::api_types::RunStatus::Working,
+                RouteRuntimeStatus::Paused => crate::core::api_types::RunStatus::Paused,
+                RouteRuntimeStatus::Failed => crate::core::api_types::RunStatus::Failed,
             };
 
             // Get task counts from board nodes (lightweight count query)
             let delta_state = DeltaState::with_route(project_id, route_id);
             let (tasks_done, tasks_total) = delta_state.get_node_counts().await.unwrap_or((0, 0));
 
-            // Get worker counts and other data from per-run DB if available
-            let db_path = runs_dir.join(run_name).join("hirsel.db");
+            // Get worker counts and other data from the per-runtime DB if available
+            let db_path = runtimes_dir.join(runtime_name).join("hirsel.db");
             let (
                 workers_active,
                 workers_total,
                 workers_desired,
                 elapsed_minutes,
                 time_limit_minutes,
-                has_unread_messages,
             ) = if db_path.exists() {
-                if let Ok(state) = SQLiteState::new(run_name).await {
+                if let Ok(state) = SQLiteState::new(runtime_name).await {
                     if let Ok(summary) = state.get_run_summary().await {
                         (
                             summary.workers_active,
@@ -174,20 +179,19 @@ impl Orchestrator for LocalOrchestrator {
                             summary.workers_desired,
                             summary.elapsed_minutes,
                             summary.time_limit_minutes.map(|m| m as u32),
-                            summary.unread_count > 0,
                         )
                     } else {
-                        (0, 0, 0, 0.0, None, false)
+                        (0, 0, 0, 0.0, None)
                     }
                 } else {
-                    (0, 0, 0, 0.0, None, false)
+                    (0, 0, 0, 0.0, None)
                 }
             } else {
-                (0, 0, 0, 0.0, None, false)
+                (0, 0, 0, 0.0, None)
             };
 
             runs.push(RunSummary {
-                name: run_name.clone(),
+                name: runtime_name.clone(),
                 status,
                 tasks_done,
                 tasks_total,
@@ -196,7 +200,6 @@ impl Orchestrator for LocalOrchestrator {
                 workers_desired,
                 elapsed_minutes,
                 time_limit_minutes,
-                has_unread_messages,
                 created_at: project_run.created_at,
                 project_id: Some(project_id),
                 project_name: Some(project_name),
@@ -342,11 +345,11 @@ impl Orchestrator for LocalOrchestrator {
         use crate::cli::config::get_agent_command;
         use crate::core::lifecycle::{LifecycleManager, LocalLifecycleManager};
 
-        let run_dir = config::run_dir(name);
+        let runtime_dir = config::runtime_dir(name);
         let agent_command = get_agent_command();
 
         // Create lifecycle manager and delegate
-        let lifecycle = LocalLifecycleManager::new(name, run_dir, agent_command)
+        let lifecycle = LocalLifecycleManager::new(name, runtime_dir, agent_command)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
@@ -366,11 +369,11 @@ impl Orchestrator for LocalOrchestrator {
         use crate::cli::config::get_agent_command;
         use crate::core::lifecycle::{LifecycleAction, LifecycleManager, LocalLifecycleManager};
 
-        let run_dir = config::run_dir(name);
+        let runtime_dir = config::runtime_dir(name);
         let agent_command = get_agent_command();
 
         // Create lifecycle manager and delegate
-        let lifecycle = LocalLifecycleManager::new(name, run_dir.clone(), agent_command)
+        let lifecycle = LocalLifecycleManager::new(name, runtime_dir.clone(), agent_command)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
 
@@ -437,7 +440,7 @@ impl Orchestrator for LocalOrchestrator {
     async fn deliver_run(&self, name: &str, branch: Option<String>) -> OrchestratorResult<String> {
         use crate::core::git;
 
-        let run_dir = config::run_dir(name);
+        let runtime_dir = config::runtime_dir(name);
         let state = self.get_state(name).await?;
 
         // Validate run is in a deliverable state
@@ -463,11 +466,11 @@ impl Orchestrator for LocalOrchestrator {
             })?;
 
         // Find work directory
-        let work_dir = run_dir.join("work").join("staging");
+        let work_dir = runtime_dir.join("work").join("staging");
         let work_dir = if work_dir.exists() {
             work_dir
         } else {
-            let fallback = run_dir.join("work");
+            let fallback = runtime_dir.join("work");
             if fallback.exists() {
                 fallback
             } else {
@@ -598,7 +601,7 @@ impl Orchestrator for LocalOrchestrator {
         use crate::core::state::WorkerUpdate;
         use crate::core::workers::{is_pid_alive, spawn_worker, WorkerSpawnConfig};
 
-        let run_dir = config::run_dir(run);
+        let runtime_dir = config::runtime_dir(run);
         let state = self.get_state(run).await?;
 
         // Find the worker by name
@@ -637,7 +640,7 @@ impl Orchestrator for LocalOrchestrator {
             .work_dir
             .as_ref()
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| run_dir.join("work").join(&worker_data.name));
+            .unwrap_or_else(|| runtime_dir.join("work").join(&worker_data.name));
 
         // Determine if multi-worker mode
         let is_multi_worker = workers.len() > 1;
@@ -651,10 +654,10 @@ impl Orchestrator for LocalOrchestrator {
         // Spawn the worker
         let agent_command = get_agent_command();
         let config = WorkerSpawnConfig {
-            run_name: run.to_string(),
+            runtime_name: run.to_string(),
             worker_name: worker_data.name.clone(),
             work_dir,
-            run_dir: run_dir.clone(),
+            runtime_dir: runtime_dir.clone(),
             agent_command,
             is_leader: worker_data.id == 1,
             leader_name,
@@ -769,14 +772,13 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn get_config(&self) -> OrchestratorResult<ConfigResponse> {
-        let runs_dir = self.config.runs_dir().to_string_lossy().to_string();
+        let runtimes_dir = self.config.runtimes_dir().to_string_lossy().to_string();
 
         Ok(ConfigResponse {
-            runs_dir,
+            runtimes_dir,
             agent_command: self.config.agent.command.clone(),
             eval_timeout: self.config.eval_timeout,
             auto_learn: self.config.auto_learn,
-            user_message_pause: self.config.user_message_pause.clone(),
             human_in_the_loop: self.config.human_in_the_loop,
             context_warning_threshold: self.config.context_warning_threshold,
             coordinator_port: self.config.coordinator_port,
@@ -792,7 +794,6 @@ impl Orchestrator for LocalOrchestrator {
             backend: self.config.backend.clone().into(),
             git: {
                 use crate::core::api_types::{GitConfigResponse, GitProviderResponse};
-                use crate::core::credentials::CredentialStore;
 
                 // Check which providers have tokens configured
                 let mut configured = Vec::new();
@@ -807,6 +808,10 @@ impl Orchestrator for LocalOrchestrator {
                     configured_providers: configured,
                 }
             },
+            tavily_configured: match CredentialStore::open().await {
+                Ok(store) => store.load("tavily_api_key").await.is_ok(),
+                Err(_) => std::env::var("TAVILY_API_KEY").is_ok(),
+            },
             storage: (&self.config.storage).into(),
         })
     }
@@ -820,18 +825,18 @@ impl Orchestrator for LocalOrchestrator {
 
     async fn init_workspace(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         request: super::InitWorkspaceRequest,
     ) -> super::OrchestratorResult<super::InitWorkspaceResponse> {
         use crate::core::state::SQLiteState;
 
-        let run_dir = config::run_dir(run_name);
-        if !run_dir.exists() {
-            return Err(OrchestratorError::RunNotFound(run_name.to_string()));
+        let runtime_dir = config::runtime_dir(runtime_name);
+        if !runtime_dir.exists() {
+            return Err(OrchestratorError::RunNotFound(runtime_name.to_string()));
         }
 
         // Open state to check status and update starting_point
-        let state = SQLiteState::new(run_name)
+        let state = SQLiteState::new(runtime_name)
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to open state: {}", e)))?;
 
@@ -847,7 +852,7 @@ impl Orchestrator for LocalOrchestrator {
         // Initialize workspace
         let workspace = create_workspace_provider();
         let workspace_info = workspace
-            .init(run_name, &request.starting_point)
+            .init(runtime_name, &request.starting_point)
             .await
             .map_err(|e| {
                 OrchestratorError::Other(format!("Failed to initialize workspace: {}", e))
@@ -880,7 +885,7 @@ impl Orchestrator for LocalOrchestrator {
 
         tracing::info!(
             "Initialized workspace for run '{}' from {:?}",
-            run_name,
+            runtime_name,
             request.starting_point
         );
 
@@ -894,40 +899,40 @@ impl Orchestrator for LocalOrchestrator {
         use crate::cli::config::get_agent_command;
 
         // 1. Slugify and validate run name
-        let run_name = slugify(&request.name);
-        if run_name.len() > 50 {
+        let runtime_name = slugify(&request.name);
+        if runtime_name.len() > 50 {
             return Err(OrchestratorError::InvalidOperation(format!(
                 "Run name too long (max 50 chars): {}...",
-                &run_name[..50]
+                &runtime_name[..50]
             )));
         }
 
         // 2. Get run directory and check for conflicts
-        let run_dir = config::run_dir(&run_name);
-        if run_dir.exists() {
-            let db_path = run_dir.join("hirsel.db");
+        let runtime_dir = config::runtime_dir(&runtime_name);
+        if runtime_dir.exists() {
+            let db_path = runtime_dir.join("hirsel.db");
             if db_path.exists() {
-                if let Ok(existing_state) = SQLiteState::new(&run_name).await {
+                if let Ok(existing_state) = SQLiteState::new(&runtime_name).await {
                     if let Ok(status) = existing_state.status().await {
                         if status == Status::Working || status == Status::Eval {
                             return Err(OrchestratorError::InvalidOperation(format!(
                                 "Run '{}' already exists and is active",
-                                run_name
+                                runtime_name
                             )));
                         }
                     }
                 }
             }
             // Clean up old run
-            let _ = std::fs::remove_dir_all(&run_dir);
+            let _ = std::fs::remove_dir_all(&runtime_dir);
         }
 
         // 3. Create run directory and initialize files
-        std::fs::create_dir_all(&run_dir).map_err(|e| {
+        std::fs::create_dir_all(&runtime_dir).map_err(|e| {
             OrchestratorError::Other(format!("Failed to create run directory: {}", e))
         })?;
 
-        let files = Files::new(run_dir.clone());
+        let files = Files::new(runtime_dir.clone());
         files
             .init_dirs()
             .map_err(|e| OrchestratorError::Other(format!("Failed to init dirs: {}", e)))?;
@@ -981,7 +986,7 @@ impl Orchestrator for LocalOrchestrator {
         // 4. Initialize workspace from starting point
         let workspace = create_workspace_provider();
         let workspace_info = workspace
-            .init(&run_name, &starting_point)
+            .init(&runtime_name, &starting_point)
             .await
             .map_err(|e| {
                 OrchestratorError::Other(format!("Failed to initialize workspace: {}", e))
@@ -990,7 +995,7 @@ impl Orchestrator for LocalOrchestrator {
         let project_path = workspace_info.path;
 
         // 5. Initialize SQLite state
-        let state = SQLiteState::new(&run_name)
+        let state = SQLiteState::new(&runtime_name)
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to create state: {}", e)))?;
         state
@@ -1154,13 +1159,12 @@ impl Orchestrator for LocalOrchestrator {
             }
         }
 
-        // 7. Set up workspace clones and chats using shared ops
+        // 7. Set up workspace clones using shared ops
         let setup_config = RunSetupConfig {
-            run_name: run_name.clone(),
+            runtime_name: runtime_name.clone(),
             project_path: project_path.clone(),
-            run_dir: run_dir.clone(),
+            runtime_dir: runtime_dir.clone(),
             worker_names: worker_names.clone(),
-            additional_chat_workers: Vec::new(),
             is_multi_worker,
             leader_name: leader_name.clone(),
         };
@@ -1178,10 +1182,7 @@ impl Orchestrator for LocalOrchestrator {
         {
             let agent_command = get_agent_command();
 
-            // Collect API keys from environment for worker subprocesses and containers.
-            let env_vars: HashMap<String, String> = std::env::vars()
-                .filter(|(k, _)| k.starts_with("OPENAI_") || k.starts_with("CODEX_"))
-                .collect();
+            let forwarded_credentials = load_forwarded_credentials().await;
 
             for (i, (worker_name, work_dir)) in setup_result.worker_dirs.iter().enumerate() {
                 let is_leader = i == 0 && is_multi_worker;
@@ -1215,17 +1216,17 @@ impl Orchestrator for LocalOrchestrator {
                 };
 
                 let spawn_config = RunnerSpawnConfig {
-                    run_name: run_name.clone(),
+                    runtime_name: runtime_name.clone(),
                     worker_name: worker_name.clone(),
                     work_dir: work_dir.clone(),
-                    run_dir: run_dir.clone(),
+                    runtime_dir: runtime_dir.clone(),
                     agent_command: agent_command.clone(),
                     is_leader,
                     leader_name: leader_name.clone(),
                     teammates,
                     resume_session_id: None,
-                    env_vars: Some(env_vars.clone()),
-                    credentials: None,
+                    env_vars: None,
+                    credentials: Some(forwarded_credentials.clone()),
                     assigned_task_id: assigned_task_id.clone(),
                     is_plan_task,
                 };
@@ -1278,20 +1279,20 @@ impl Orchestrator for LocalOrchestrator {
         }
 
         // 10. Return run detail
-        self.get_run(&run_name).await
+        self.get_run(&runtime_name).await
     }
 
     async fn spawn_single_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,
     ) -> OrchestratorResult<()> {
         use crate::cli::config::get_agent_command;
 
-        let run_dir = config::run_dir(run_name);
-        let state = self.get_state(run_name).await?;
+        let runtime_dir = config::runtime_dir(runtime_name);
+        let state = self.get_state(runtime_name).await?;
 
         // Check if run is paused
         let status = state.status().await?;
@@ -1341,10 +1342,7 @@ impl Orchestrator for LocalOrchestrator {
         // Build spawn config
         let agent_command = get_agent_command();
 
-        // Collect API keys from environment for worker subprocesses and containers.
-        let env_vars: HashMap<String, String> = std::env::vars()
-            .filter(|(k, _)| k.starts_with("OPENAI_") || k.starts_with("CODEX_"))
-            .collect();
+        let forwarded_credentials = load_forwarded_credentials().await;
 
         // Get assigned task from worker record (set by evaluate_scaling before spawn)
         let assigned_task_id = state
@@ -1374,17 +1372,17 @@ impl Orchestrator for LocalOrchestrator {
         };
 
         let spawn_config = RunnerSpawnConfig {
-            run_name: run_name.to_string(),
+            runtime_name: runtime_name.to_string(),
             worker_name: worker_name.to_string(),
             work_dir: work_dir.to_path_buf(),
-            run_dir: run_dir.clone(),
+            runtime_dir: runtime_dir.clone(),
             agent_command,
             is_leader: false, // Scaled/resumed workers are never leader
             leader_name,
             teammates,
             resume_session_id: resume_session_id.map(String::from),
-            env_vars: Some(env_vars),
-            credentials: None,
+            env_vars: None,
+            credentials: Some(forwarded_credentials),
             assigned_task_id,
             is_plan_task,
         };
@@ -1441,7 +1439,7 @@ impl Orchestrator for LocalOrchestrator {
 
     async fn resume_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,
@@ -1451,8 +1449,8 @@ impl Orchestrator for LocalOrchestrator {
         use crate::core::runner::WorkerHandle;
         use crate::core::snapshot::{create_archive_strategy, host_session_path, ArchiveHandle};
 
-        let run_dir = config::run_dir(run_name);
-        let state = self.get_state(run_name).await?;
+        let runtime_dir = config::runtime_dir(runtime_name);
+        let state = self.get_state(runtime_name).await?;
 
         // Check if run is paused
         let status = state.status().await?;
@@ -1562,7 +1560,8 @@ impl Orchestrator for LocalOrchestrator {
                                     agent_snapshot.session_id
                                 );
 
-                                let target_session_dir = host_session_path(&run_dir, worker_name);
+                                let target_session_dir =
+                                    host_session_path(&runtime_dir, worker_name);
                                 let archive_handle = ArchiveHandle {
                                     strategy_type: strategy.strategy_type().to_string(),
                                     storage_id: agent_snapshot.storage_id.clone(),
@@ -1651,10 +1650,7 @@ impl Orchestrator for LocalOrchestrator {
         // 6. Spawn worker
         let agent_command = get_agent_command();
 
-        // Collect API keys from environment for worker subprocesses and containers.
-        let env_vars: HashMap<String, String> = std::env::vars()
-            .filter(|(k, _)| k.starts_with("OPENAI_") || k.starts_with("CODEX_"))
-            .collect();
+        let forwarded_credentials = load_forwarded_credentials().await;
 
         // Get assigned task from worker record
         let assigned_task_id = worker.assigned_task_id.clone();
@@ -1677,17 +1673,17 @@ impl Orchestrator for LocalOrchestrator {
         };
 
         let spawn_config = RunnerSpawnConfig {
-            run_name: run_name.to_string(),
+            runtime_name: runtime_name.to_string(),
             worker_name: worker_name.to_string(),
             work_dir: work_dir.to_path_buf(),
-            run_dir: run_dir.clone(),
+            runtime_dir: runtime_dir.clone(),
             agent_command,
             is_leader: false, // Resumed workers are never leader
             leader_name,
             teammates,
             resume_session_id: resume_session_id.map(String::from),
-            env_vars: Some(env_vars),
-            credentials: None,
+            env_vars: None,
+            credentials: Some(forwarded_credentials),
             assigned_task_id,
             is_plan_task,
         };
@@ -1788,13 +1784,13 @@ impl Orchestrator for LocalOrchestrator {
     async fn delete_project(&self, id: i64) -> OrchestratorResult<()> {
         // Get all runs for this project
         let runs = self.list_runs().await?;
-        let project_runs: Vec<_> = runs
+        let route_runtimes: Vec<_> = runs
             .into_iter()
             .filter(|r| r.project_id == Some(id))
             .collect();
 
         // Delete all runs
-        for run in project_runs {
+        for run in route_runtimes {
             self.delete_run(&run.name).await?;
         }
 
@@ -1802,14 +1798,10 @@ impl Orchestrator for LocalOrchestrator {
         let store = crate::core::project::ProjectStore::open().await?;
         store.delete_project(id).await?;
 
-        // Clear shepherd chat messages for this project
-        let shepherd_store = crate::core::shepherd_chat::ShepherdChatStore::open().await?;
-        shepherd_store.clear_project_messages(id).await?;
-
         Ok(())
     }
 
-    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
+    async fn list_route_runtimes(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
         let all_runs = self.list_runs().await?;
         Ok(all_runs
             .into_iter()

@@ -17,16 +17,16 @@ use crate::core::ops::init_git_repo;
 
 /// Local filesystem workspace provider
 ///
-/// Stores workspaces in ~/.hirsel/runs/{run_name}/workspace/
+/// Stores workspaces in ~/.hirsel/runtimes/{runtime_name}/workspace/
 pub struct LocalWorkspaceProvider {
     base_dir: PathBuf,
 }
 
 impl LocalWorkspaceProvider {
-    /// Create a new LocalWorkspaceProvider with the default runs directory
+    /// Create a new LocalWorkspaceProvider with the default runtimes directory
     pub fn new() -> Self {
         Self {
-            base_dir: config::runs_dir(),
+            base_dir: config::runtimes_dir(),
         }
     }
 
@@ -105,15 +105,15 @@ impl Default for LocalWorkspaceProvider {
 impl WorkspaceProvider for LocalWorkspaceProvider {
     async fn init(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         starting_point: &StartingPoint,
     ) -> HirselResult<WorkspaceInfo> {
-        let workspace_dir = self.workspace_path(run_name);
+        let workspace_dir = self.workspace_path(runtime_name);
         fs::create_dir_all(&workspace_dir)?;
 
         info!(
             "Initializing workspace for run '{}' at {:?}",
-            run_name, workspace_dir
+            runtime_name, workspace_dir
         );
 
         match starting_point {
@@ -161,12 +161,12 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
         })
     }
 
-    fn workspace_path(&self, run_name: &str) -> PathBuf {
-        self.base_dir.join(run_name).join("workspace")
+    fn workspace_path(&self, runtime_name: &str) -> PathBuf {
+        self.base_dir.join(runtime_name).join("workspace")
     }
 
-    async fn read_file(&self, run_name: &str, path: &str) -> HirselResult<Vec<u8>> {
-        let full_path = self.workspace_path(run_name).join(path);
+    async fn read_file(&self, runtime_name: &str, path: &str) -> HirselResult<Vec<u8>> {
+        let full_path = self.workspace_path(runtime_name).join(path);
         fs::read(&full_path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 HirselError::FileNotFound(path.to_string())
@@ -176,8 +176,8 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
         })
     }
 
-    async fn write_file(&self, run_name: &str, path: &str, content: &[u8]) -> HirselResult<()> {
-        let full_path = self.workspace_path(run_name).join(path);
+    async fn write_file(&self, runtime_name: &str, path: &str, content: &[u8]) -> HirselResult<()> {
+        let full_path = self.workspace_path(runtime_name).join(path);
         if let Some(parent) = full_path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -185,8 +185,8 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
         Ok(())
     }
 
-    async fn list_files(&self, run_name: &str, path: &str) -> HirselResult<Vec<FileEntry>> {
-        let dir = self.workspace_path(run_name).join(path);
+    async fn list_files(&self, runtime_name: &str, path: &str) -> HirselResult<Vec<FileEntry>> {
+        let dir = self.workspace_path(runtime_name).join(path);
         if !dir.exists() {
             return Ok(Vec::new());
         }
@@ -220,12 +220,12 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
         Ok(entries)
     }
 
-    async fn exists(&self, run_name: &str) -> bool {
-        self.workspace_path(run_name).exists()
+    async fn exists(&self, runtime_name: &str) -> bool {
+        self.workspace_path(runtime_name).exists()
     }
 
-    async fn delete(&self, run_name: &str) -> HirselResult<()> {
-        let path = self.workspace_path(run_name);
+    async fn delete(&self, runtime_name: &str) -> HirselResult<()> {
+        let path = self.workspace_path(runtime_name);
         if path.exists() {
             fs::remove_dir_all(&path)?;
         }

@@ -80,8 +80,8 @@ impl WorkerStateHandle {
 
 /// Snapshot of a worker's work directory.
 ///
-/// Used to persist and restore the work directory for ephemeral runners
-/// (Fly with S3 strategy) across pause/resume cycles.
+/// Used to persist and restore the work directory for storage-backed
+/// ephemeral runners across pause/resume cycles.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkDirSnapshot {
     /// Type of strategy that created this snapshot (e.g., "s3", "persistent_disk").

@@ -1,13 +1,11 @@
-//! Run setup operations - workspace creation, worker registration, and configuration
+//! Runtime setup operations - workspace creation, worker registration, and configuration
 //!
-//! These operations are shared between CLI and GUI for setting up runs.
+//! These operations are shared between CLI and GUI for setting up runtimes.
 
 use std::path::PathBuf;
 
-use crate::core::chats::{create_default_group_chat, create_worker_chat, ChatError};
 use crate::core::git::{create_worker_clone, create_workspace, GitError};
 use crate::core::state::SQLiteState;
-use crate::core::Files;
 
 use super::OpsError;
 
@@ -15,35 +13,30 @@ use super::OpsError;
 // Configuration Types
 // =============================================================================
 
-/// Configuration for setting up a run's workspace and workers
+/// Configuration for setting up a runtime workspace and its workers.
 #[derive(Debug, Clone)]
 pub struct RunSetupConfig {
-    /// Name of the run
-    pub run_name: String,
+    /// Name of the runtime
+    pub runtime_name: String,
     /// Path to the project repository
     pub project_path: PathBuf,
-    /// Path to the run directory (~/.hirsel/runs/<run_name>)
-    pub run_dir: PathBuf,
+    /// Path to the runtime directory (~/.hirsel/runtimes/<runtime_name>)
+    pub runtime_dir: PathBuf,
     /// Names of workers to create clones for (local workers)
     pub worker_names: Vec<String>,
-    /// Additional workers that need chats but not clones
-    /// These workers are included in group chat and get individual chats
-    pub additional_chat_workers: Vec<String>,
-    /// Whether this is a multi-worker run (affects workspace layout)
+    /// Whether this is a multi-worker runtime (affects workspace layout)
     pub is_multi_worker: bool,
     /// Name of the leader worker (first worker in multi-worker mode)
     pub leader_name: Option<String>,
 }
 
-/// Result of setting up a run's workspace
+/// Result of setting up a runtime workspace.
 #[derive(Debug, Clone)]
 pub struct RunSetupResult {
     /// Path to the main workspace directory (staging area)
     pub workspace_dir: PathBuf,
     /// Worker directories: (worker_name, worker_dir_path)
     pub worker_dirs: Vec<(String, PathBuf)>,
-    /// Path to the chats directory
-    pub chats_dir: PathBuf,
 }
 
 // =============================================================================
@@ -55,16 +48,6 @@ impl From<GitError> for OpsError {
         OpsError::Git(e.to_string())
     }
 }
-
-impl From<ChatError> for OpsError {
-    fn from(e: ChatError) -> Self {
-        OpsError::OperationFailed(format!("Chat error: {}", e))
-    }
-}
-
-// =============================================================================
-// Multi-Worker Configuration
-// =============================================================================
 
 /// Determine multi-worker configuration from worker count and scale
 ///
@@ -101,13 +84,12 @@ pub fn compute_multi_worker_config(
 // Workspace Setup
 // =============================================================================
 
-/// Set up workspace, worker clones, and chats for a run
+/// Set up workspace and worker clones for a run
 ///
 /// This operation:
 /// 1. Creates the main workspace (staging) from the project
 /// 2. Creates worker clone directories (in multi-worker mode) or uses workspace directly
-/// 3. Creates chat files (group chat if multi-worker, worker chats)
-/// 4. Creates chat files for the worker group
+/// 3. Returns the created worker workspaces
 ///
 /// # Arguments
 ///
@@ -118,14 +100,14 @@ pub fn compute_multi_worker_config(
 /// * `Ok(RunSetupResult)` - Paths to created directories
 /// * `Err(OpsError)` - If any operation failed
 pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, OpsError> {
-    // Get runs directory (parent of run_dir)
-    let runs_dir = config
-        .run_dir
+    // Get runs directory (parent of runtime_dir)
+    let runtimes_dir = config
+        .runtime_dir
         .parent()
-        .ok_or_else(|| OpsError::InvalidState("Invalid run_dir path".to_string()))?;
+        .ok_or_else(|| OpsError::InvalidState("Invalid runtime_dir path".to_string()))?;
 
     // Create workspace with staging branch
-    let workspace_dir = create_workspace(&config.run_name, &config.project_path, runs_dir)?;
+    let workspace_dir = create_workspace(&config.runtime_name, &config.project_path, runtimes_dir)?;
 
     // Create worker clones/worktrees
     let mut worker_dirs: Vec<(String, PathBuf)> = Vec::new();
@@ -133,11 +115,11 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
     for worker_name in &config.worker_names {
         let worker_dir = if config.is_multi_worker {
             create_worker_clone(
-                &config.run_name,
+                &config.runtime_name,
                 &config.project_path,
                 worker_name,
                 Some(&workspace_dir),
-                runs_dir,
+                runtimes_dir,
             )?
         } else {
             // Single worker uses workspace directly
@@ -147,28 +129,9 @@ pub fn setup_run_workspace(config: &RunSetupConfig) -> Result<RunSetupResult, Op
         worker_dirs.push((worker_name.clone(), worker_dir));
     }
 
-    // Create chats
-    let files = Files::new(&config.run_dir);
-    let chats_dir = files.chats_dir();
-
-    // Combine all workers for chat creation (local + additional)
-    let mut all_workers: Vec<String> = config.worker_names.clone();
-    all_workers.extend(config.additional_chat_workers.clone());
-
-    // Create group chat if multi-worker
-    if config.is_multi_worker {
-        create_default_group_chat(&chats_dir, &all_workers, config.leader_name.as_deref())?;
-    }
-
-    // Create individual worker chats for all workers
-    for worker_name in &all_workers {
-        create_worker_chat(&chats_dir, worker_name)?;
-    }
-
     Ok(RunSetupResult {
         workspace_dir,
         worker_dirs,
-        chats_dir,
     })
 }
 
@@ -197,7 +160,12 @@ pub async fn register_workers(
 ) -> Result<(), OpsError> {
     for (worker_name, work_dir) in worker_dirs {
         state
-            .add_worker(worker_name, work_dir.to_str().unwrap_or("."), location)
+            .add_worker(
+                worker_name,
+                work_dir.to_str().unwrap_or("."),
+                location,
+                None,
+            )
             .await?;
     }
     Ok(())

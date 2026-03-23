@@ -75,10 +75,10 @@ export const ShortcutsTab: Component<ShortcutsTabProps> = (props) => {
         {renderShortcutList(getShortcutsByCategory('navigation'))}
       </div>
 
-      {/* Run Controls */}
+      {/* Workspace */}
       <div class="space-y-2">
-        <h4 class="text-sm font-medium text-wool-200">Run Controls</h4>
-        {renderShortcutList(getShortcutsByCategory('run-controls'))}
+        <h4 class="text-sm font-medium text-wool-200">Workspace</h4>
+        {renderShortcutList(getShortcutsByCategory('workspace'))}
       </div>
 
       {/* Other */}

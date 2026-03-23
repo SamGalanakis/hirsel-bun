@@ -2,8 +2,8 @@
 
 use crate::core::draft::StartingPoint;
 use crate::core::route::{
-    CreateRouteRepoRequest, CreateRouteRequest, Route, RouteFiles, RouteRepo, RouteStore,
-    RouteTree, UpdateRouteRepoRequest,
+    CreateRouteRepoRequest, CreateRouteRequest, Route, RouteRepo, RouteStore, RouteTree,
+    UpdateRouteRepoRequest,
 };
 
 use super::ResultExt;
@@ -14,6 +14,14 @@ use super::ResultExt;
 pub async fn list_routes(project_id: i64) -> Result<Vec<Route>, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
     store.list_routes().await.str_err()
+}
+
+/// List archived routes for a project
+#[tracing::instrument]
+#[tauri::command]
+pub async fn list_archived_routes(project_id: i64) -> Result<Vec<Route>, String> {
+    let store = RouteStore::new(project_id).await.str_err()?;
+    store.list_archived_routes().await.str_err()
 }
 
 /// Get a route by ID
@@ -147,27 +155,24 @@ pub async fn create_route(
     store.create_route(&req).await.str_err()
 }
 
-/// Delete a route
+/// Archive a route
 #[tracing::instrument]
 #[tauri::command]
-pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> {
+pub async fn archive_route(project_id: i64, route_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
     let project_store = crate::core::project::ProjectStore::open().await.str_err()?;
     let project = project_store.get_project(project_id).await.str_err()?;
 
-    let route = store.get_route(route_id).await.str_err()?;
-    store.delete_route(route_id).await.str_err()?;
-
-    let route_files = RouteFiles::new(project_id, &route.name);
-    if let Err(e) = route_files.delete() {
-        tracing::warn!("Failed to delete route directory: {}", e);
-    }
+    let archived = store.archive_route(route_id).await.str_err()?;
 
     if project.active_route_id == Some(route_id) {
-        let _ = get_active_route(project_id).await?;
+        let remaining = store.list_routes().await.str_err()?;
+        if let Some(next_route) = remaining.into_iter().find(|route| route.id != route_id) {
+            set_active_route(project_id, next_route.id).await?;
+        }
     }
 
-    Ok(())
+    Ok(archived)
 }
 
 /// Set the active route for a project
@@ -175,7 +180,10 @@ pub async fn delete_route(project_id: i64, route_id: i64) -> Result<(), String> 
 #[tauri::command]
 pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), String> {
     let store = RouteStore::new(project_id).await.str_err()?;
-    let _ = store.get_route(route_id).await.str_err()?;
+    let route = store.get_route(route_id).await.str_err()?;
+    if route.archived_at.is_some() {
+        return Err("Cannot select an archived route".to_string());
+    }
 
     let pool = crate::core::db::global_pool().await;
     sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")

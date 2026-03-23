@@ -48,11 +48,10 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         orchestrator,
         config,
     });
-    // Build the router using shared route builders
-    // Remote server gets: shared routes + config routes + board routes
+    // Build the router using shared route builders.
+    // Remote server gets the shared runtime routes plus backend config/auth routes.
     let app = shared_routes::build_shared_routes()
         .merge(shared_routes::build_config_routes())
-        .merge(shared_routes::build_board_routes())
         .with_state(state)
         // Apply auth middleware
         .layer(axum::middleware::from_fn_with_state(

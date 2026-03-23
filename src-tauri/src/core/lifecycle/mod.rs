@@ -1,7 +1,7 @@
-//! Centralized lifecycle management for hirsel runs.
+//! Centralized lifecycle management for hirsel runtimes.
 //!
 //! This module consolidates all lifecycle logic into a single interface:
-//! - Run status transitions (Working → Paused → Working, Working → Eval → Done, etc.)
+//! - Runtime status transitions (Working → Paused → Working, Working → Eval → Done, etc.)
 //! - Worker status management (pause/resume/kill)
 //! - Eval triggering when all workers become inactive
 //! - Time limit enforcement
@@ -102,7 +102,7 @@ pub enum LifecycleAction {
     /// No action was taken.
     None,
 
-    /// Run status changed.
+    /// Runtime status changed.
     RunStatusChanged(Status),
 
     /// Workers were paused.
@@ -146,10 +146,10 @@ pub enum LifecycleAction {
     /// Eval was triggered.
     EvalTriggered,
 
-    /// Run completed successfully.
+    /// Runtime completed successfully.
     RunCompleted,
 
-    /// Run failed.
+    /// Runtime failed.
     RunFailed { reason: FailureReason },
 
     /// Time limit warning sent.
@@ -159,19 +159,23 @@ pub enum LifecycleAction {
 /// Context for lifecycle operations.
 #[derive(Debug, Clone)]
 pub struct LifecycleContext {
-    /// Name of the run.
-    pub run_name: String,
-    /// Path to the run directory.
-    pub run_dir: PathBuf,
+    /// Name of the runtime.
+    pub runtime_name: String,
+    /// Path to the runtime directory.
+    pub runtime_dir: PathBuf,
     /// Agent command for spawning workers.
     pub agent_command: Vec<String>,
 }
 
 impl LifecycleContext {
-    pub fn new(run_name: impl Into<String>, run_dir: PathBuf, agent_command: Vec<String>) -> Self {
+    pub fn new(
+        runtime_name: impl Into<String>,
+        runtime_dir: PathBuf,
+        agent_command: Vec<String>,
+    ) -> Self {
         Self {
-            run_name: run_name.into(),
-            run_dir,
+            runtime_name: runtime_name.into(),
+            runtime_dir,
             agent_command,
         }
     }
@@ -191,24 +195,24 @@ pub trait LifecycleManager {
     /// Events trigger state checks and appropriate actions.
     async fn process_event(&self, event: LifecycleEvent) -> LifecycleResult<Vec<LifecycleAction>>;
 
-    /// Pause the run, killing all active workers.
+    /// Pause the runtime, killing all active workers.
     ///
     /// Workers will be marked as Paused and can be resumed later.
     async fn pause_run(&self, reason: &str) -> LifecycleResult<Vec<String>>;
 
-    /// Resume the run, respawning paused workers.
+    /// Resume the runtime, respawning paused workers.
     ///
     /// Returns a list of ResumeWorker actions for the daemon to process.
     async fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>>;
 
     /// Handle a worker signaling it's done with work.
     ///
-    /// This may trigger eval or mark the run as done if all workers are inactive.
+    /// This may trigger eval or mark the runtime as done if all workers are inactive.
     async fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>>;
 
     /// Handle time limit expiration.
     ///
-    /// Kills all workers and sets run to Failed with TimeLimit reason.
+    /// Kills all workers and sets the runtime to Failed with TimeLimit reason.
     async fn handle_time_expired(&self) -> LifecycleResult<()>;
 
     /// Check if all workers are inactive (awaiting or error).
@@ -216,7 +220,7 @@ pub trait LifecycleManager {
 
     /// Check if eval should be triggered.
     ///
-    /// Returns true if all workers are inactive and run is in Working status.
+    /// Returns true if all workers are inactive and the runtime is in Working status.
     async fn should_trigger_eval(&self) -> LifecycleResult<bool>;
 
     /// Check if worker scaling is possible.

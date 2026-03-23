@@ -195,7 +195,7 @@ pub async fn create_worker(
     work_dir: &str,
     location: &str,
 ) -> StateResult<Option<Worker>> {
-    state.add_worker(name, work_dir, location).await
+    state.add_worker(name, work_dir, location, None).await
 }
 
 /// Pause all workers

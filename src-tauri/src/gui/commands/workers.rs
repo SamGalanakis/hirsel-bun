@@ -1,129 +1,25 @@
-//! Worker-related commands
-//!
-//! Commands for managing workers: listing, attaching, detaching, opening terminal, and restarting.
+//! Route-scoped worker commands.
 
+use std::path::PathBuf;
+
+use crate::cli::config::get_agent_command;
 use crate::core::api_types::{SheepConfig, Worker, WorkerLocation};
-use crate::core::config;
-use crate::core::orchestrator::create_orchestrator;
+use crate::core::credentials::load_forwarded_credentials;
+use crate::core::delta::DeltaState;
+use crate::core::git::create_worker_clone;
+use crate::core::state::{Status, WorkerStatus, WorkerUpdate};
+use crate::core::{
+    create_orchestrator, create_runner, ensure_route_runtime, get_available_name,
+    get_route_runtime_name, CapabilityProfile, RunnerSpawnConfig,
+};
 
-use super::{get_run_state, ResultExt};
+use super::ResultExt;
 
-/// Get all workers for a run
-/// Uses the orchestrator to support both local and remote modes
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_workers(run_name: String) -> Result<Vec<Worker>, String> {
-    let orch = create_orchestrator().str_err()?;
-    orch.list_workers(&run_name).await.str_err()
-}
-
-/// Attach a new worker to a run
-///
-/// Creates a new worker with the given name, sets up its working directory,
-/// and spawns the worker process.
-#[tracing::instrument]
-#[tauri::command]
-pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Worker, String> {
-    use crate::cli::config::get_agent_command;
-    use crate::core::git::create_worker_clone;
-    use crate::core::workers::{spawn_worker, WorkerSpawnConfig};
-    use crate::core::Files;
-
-    let run_dir = config::run_dir(&run_name);
-    let state = get_run_state(&run_name).await?;
-
-    // Check if worker already exists
-    if state
-        .get_worker(&worker_name)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
-    {
-        return Err(format!("Worker '{}' already exists", worker_name));
-    }
-
-    // Get project path
-    let project_path_str = state
-        .get_project_path()
-        .await
-        .context("Failed to get project path")?
-        .ok_or_else(|| "No project path configured".to_string())?;
-    let project_path = std::path::PathBuf::from(&project_path_str);
-
-    // Get existing workers to determine if multi-worker
-    let workers = state.get_workers().await.context("Failed to get workers")?;
-    let is_multi_worker = !workers.is_empty();
-
-    // Create worker clone/worktree
-    let staging_dir = run_dir.join("work").join("staging");
-    let runs_dir = config::runs_dir();
-    let worker_dir = create_worker_clone(
-        &run_name,
-        &project_path,
-        &worker_name,
-        Some(&staging_dir),
-        &runs_dir,
-    )
-    .context("Failed to create worker clone")?;
-
-    // Add worker to state
-    state
-        .add_worker(&worker_name, worker_dir.to_str().unwrap_or("."), "local")
-        .await
-        .context("Failed to add worker")?;
-
-    // Create worker chat file
-    let files = Files::new(&run_dir);
-    let chat_file = files.chats_dir().join(format!("{}.md", worker_name));
-    let _ = std::fs::write(&chat_file, format!("# {} Chat\n\n", worker_name));
-
-    // Get leader info
-    let leader_name = workers.first().map(|w| w.name.clone());
-    let teammates: Vec<String> = workers.iter().map(|w| w.name.clone()).collect();
-
-    // Spawn the worker
-    let agent_command = get_agent_command();
-    let config = WorkerSpawnConfig {
-        run_name: run_name.clone(),
-        worker_name: worker_name.clone(),
-        work_dir: worker_dir.clone(),
-        run_dir: run_dir.clone(),
-        agent_command,
-        is_leader: false,
-        leader_name,
-        teammates: if is_multi_worker {
-            Some(teammates)
-        } else {
-            None
-        },
-        resume_session_id: None,
-        env_vars: None,
-        credentials: None,
-        assigned_task_id: None,
-        is_plan_task: false,
-    };
-
-    match spawn_worker(config, &state).await {
-        Ok(result) => {
-            tracing::info!("Attached worker {} (PID {})", worker_name, result.pid);
-        }
-        Err(e) => {
-            return Err(format!("Failed to spawn worker: {}", e));
-        }
-    }
-
-    // Return the created worker
-    let worker = state
-        .get_worker(&worker_name)
-        .await
-        .context("Failed to get worker")?
-        .ok_or_else(|| "Worker not found after creation".to_string())?;
-
-    Ok(Worker {
+fn worker_to_api(worker: crate::core::state::Worker) -> Worker {
+    Worker {
         id: worker.id as u32,
         name: worker.name.clone(),
-        pid: worker.pid.map(|p| p as u32),
+        pid: worker.pid.map(|pid| pid as u32),
         session_id: worker.session_id,
         status: worker.status.into(),
         work_dir: worker.work_dir,
@@ -141,32 +37,199 @@ pub async fn attach_worker(run_name: String, worker_name: String) -> Result<Work
         turns: None,
         current_task: None,
         sheep_config: SheepConfig::from_name(&worker.name, false),
-    })
+        capability_profile: worker.capability_profile,
+    }
 }
 
-/// Open an external terminal attached to a worker's tmux session
-///
-/// This opens a new terminal window running `tmux attach-session` for the worker.
-#[tracing::instrument]
-#[tauri::command]
-pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Result<(), String> {
-    use std::process::Command;
+pub(crate) async fn resolve_route_runtime_name(
+    project_id: i64,
+    route_id: i64,
+) -> Result<Option<String>, String> {
+    get_route_runtime_name(project_id, route_id).await
+}
 
-    let state = get_run_state(&run_name).await?;
+fn staging_dir(runtime_dir: &PathBuf) -> PathBuf {
+    runtime_dir.join("work").join("staging")
+}
 
-    // Verify worker exists
-    let workers = state.get_workers().await.context("Failed to get workers")?;
+pub(crate) async fn delegate_route_worker(
+    project_id: i64,
+    route_id: i64,
+    item_id: &str,
+    capability_profile: CapabilityProfile,
+    worker_name: Option<String>,
+) -> Result<Worker, String> {
+    let runtime = ensure_route_runtime(project_id, route_id).await?;
+    let delta = DeltaState::with_route(project_id, route_id);
+    let used_names = runtime
+        .state
+        .get_workers()
+        .await
+        .str_err()?
+        .into_iter()
+        .map(|worker| worker.name)
+        .collect::<Vec<_>>();
+    let worker_name = worker_name.unwrap_or_else(|| get_available_name(&used_names));
 
-    if !workers.iter().any(|w| w.name == worker_name) {
-        return Err(format!("Worker '{}' not found", worker_name));
+    let existing_worker = runtime.state.get_worker(&worker_name).await.str_err()?;
+    if let Some(ref existing) = existing_worker {
+        if existing.pid.is_some() && existing.status == WorkerStatus::Working {
+            return Err(format!("Worker '{}' is already active", worker_name));
+        }
     }
 
-    // Check if tmux session exists
-    let session_name = format!("hirsel-{}-{}", run_name, worker_name);
+    delta.claim_node(item_id, &worker_name).await.str_err()?;
+    delta
+        .assign_work_item(
+            item_id,
+            Some("worker"),
+            Some(&worker_name),
+            Some(capability_profile),
+        )
+        .await
+        .str_err()?;
+
+    let worker_dir = if existing_worker.is_some() {
+        runtime
+            .state
+            .get_worker(&worker_name)
+            .await
+            .str_err()?
+            .and_then(|worker| worker.work_dir.map(PathBuf::from))
+            .unwrap_or_else(|| staging_dir(&runtime.runtime_dir))
+    } else if used_names.is_empty() {
+        staging_dir(&runtime.runtime_dir)
+    } else {
+        let project_path = runtime
+            .state
+            .get_project_path()
+            .await
+            .str_err()?
+            .ok_or_else(|| "Route runtime has no project path".to_string())?;
+        create_worker_clone(
+            &runtime.runtime_name,
+            &PathBuf::from(project_path),
+            &worker_name,
+            Some(&staging_dir(&runtime.runtime_dir)),
+            &crate::core::config::runtimes_dir(),
+        )
+        .map_err(|error| error.to_string())?
+    };
+
+    if existing_worker.is_none() {
+        let runner_name = runtime
+            .state
+            .get_runner_for_worker(&worker_name)
+            .await
+            .str_err()?;
+        runtime
+            .state
+            .add_worker(
+                &worker_name,
+                worker_dir.to_str().unwrap_or("."),
+                &runner_name,
+                Some(capability_profile),
+            )
+            .await
+            .str_err()?;
+    } else {
+        runtime
+            .state
+            .update_worker(
+                &worker_name,
+                WorkerUpdate {
+                    capability_profile: Some(Some(capability_profile)),
+                    assigned_task_id: Some(Some(item_id.to_string())),
+                    ..Default::default()
+                },
+            )
+            .await
+            .str_err()?;
+    }
+
+    if runtime.state.status().await.str_err()? != Status::Working {
+        runtime.state.set_status(Status::Working).await.str_err()?;
+    }
+
+    let runner_config = runtime
+        .state
+        .get_runner_config_for_worker(&worker_name)
+        .await
+        .str_err()?;
+    let runner = create_runner(&runner_config);
+    let result = runner
+        .spawn(&RunnerSpawnConfig {
+            runtime_name: runtime.runtime_name.clone(),
+            worker_name: worker_name.clone(),
+            work_dir: worker_dir.clone(),
+            runtime_dir: runtime.runtime_dir.clone(),
+            agent_command: get_agent_command(),
+            is_leader: false,
+            leader_name: None,
+            teammates: None,
+            resume_session_id: None,
+            env_vars: None,
+            credentials: Some(load_forwarded_credentials().await),
+            assigned_task_id: Some(item_id.to_string()),
+            is_plan_task: false,
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+
+    runtime
+        .state
+        .update_worker(
+            &worker_name,
+            WorkerUpdate {
+                pid: result.pid.map(|pid| Some(pid as i64)),
+                runner_id: Some(result.handle.runner_id),
+                runner_type: Some(result.handle.runner_type),
+                status: Some(crate::core::state::WorkerStatus::Working),
+                assigned_task_id: Some(Some(item_id.to_string())),
+                capability_profile: Some(Some(capability_profile)),
+                ..Default::default()
+            },
+        )
+        .await
+        .str_err()?;
+
+    let worker = runtime
+        .state
+        .get_worker(&worker_name)
+        .await
+        .str_err()?
+        .ok_or_else(|| format!("Worker '{}' not found after spawn", worker_name))?;
+    Ok(worker_to_api(worker))
+}
+
+#[tracing::instrument]
+#[tauri::command]
+pub async fn get_route_workers(project_id: i64, route_id: i64) -> Result<Vec<Worker>, String> {
+    let Some(runtime_name) = resolve_route_runtime_name(project_id, route_id).await? else {
+        return Ok(Vec::new());
+    };
+
+    let orch = create_orchestrator().str_err()?;
+    orch.list_workers(&runtime_name).await.str_err()
+}
+
+#[tracing::instrument]
+#[tauri::command]
+pub async fn open_route_worker_terminal(
+    project_id: i64,
+    route_id: i64,
+    worker_name: String,
+) -> Result<(), String> {
+    use std::process::Command;
+
+    let runtime_name = resolve_route_runtime_name(project_id, route_id)
+        .await?
+        .ok_or_else(|| "No route runtime exists yet".to_string())?;
+    let session_name = format!("hirsel-{}-{}", runtime_name, worker_name);
     let session_exists = Command::new("tmux")
         .args(["has-session", "-t", &session_name])
         .status()
-        .map(|s| s.success())
+        .map(|status| status.success())
         .unwrap_or(false);
 
     if !session_exists {
@@ -176,10 +239,7 @@ pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Resu
         ));
     }
 
-    // Try to open a terminal with tmux attach
-    // Try common terminal emulators in order of preference
     let attach_cmd = format!("tmux attach-session -t {}", session_name);
-
     let terminals = [
         ("alacritty", vec!["-e", "sh", "-c", &attach_cmd]),
         ("kitty", vec!["sh", "-c", &attach_cmd]),
@@ -190,16 +250,15 @@ pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Resu
         ("x-terminal-emulator", vec!["-e", "sh", "-c", &attach_cmd]),
     ];
 
-    for (term, args) in &terminals {
+    for (terminal, args) in terminals {
         if Command::new("which")
-            .arg(term)
+            .arg(terminal)
             .output()
-            .map(|o| o.status.success())
+            .map(|output| output.status.success())
             .unwrap_or(false)
         {
-            match Command::new(term).args(args).spawn() {
-                Ok(_) => return Ok(()),
-                Err(_) => continue,
+            if Command::new(terminal).args(args).spawn().is_ok() {
+                return Ok(());
             }
         }
     }
@@ -210,70 +269,18 @@ pub async fn open_worker_terminal(run_name: String, worker_name: String) -> Resu
     ))
 }
 
-/// Detach/stop a worker
-///
-/// Stops the worker process and marks it as paused.
 #[tracing::instrument]
 #[tauri::command]
-pub async fn detach_worker(run_name: String, worker_id: u32) -> Result<(), String> {
-    use crate::core::state::WorkerUpdate;
-    use crate::core::workers::is_pid_alive;
-
-    let state = get_run_state(&run_name).await?;
-
-    // Find the worker by ID
-    let workers = state.get_workers().await.context("Failed to get workers")?;
-
-    let worker = workers
-        .iter()
-        .find(|w| w.id as u32 == worker_id)
-        .ok_or_else(|| format!("Worker with ID {} not found", worker_id))?;
-
-    // Kill the process if it's running
-    if let Some(pid) = worker.pid {
-        if is_pid_alive(pid as u32) {
-            #[cfg(unix)]
-            unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
-            }
-            tracing::info!("Stopped worker {} (PID {})", worker.name, pid);
-        }
-    }
-
-    // Mark as paused
-    state
-        .update_worker(
-            &worker.name,
-            WorkerUpdate {
-                pid: Some(None),
-                status: Some(crate::core::state::WorkerStatus::Paused),
-                ..Default::default()
-            },
-        )
-        .await
-        .context("Failed to update worker")?;
-
-    tracing::info!("Detached worker {} from run {}", worker.name, run_name);
-    Ok(())
-}
-
-/// Restart a worker
-///
-/// Stops the current worker process and spawns a new one.
-/// Uses the orchestrator to support both local and remote modes
-#[tracing::instrument]
-#[tauri::command]
-pub async fn restart_worker(run_name: String, worker_id: u32) -> Result<(), String> {
+pub async fn restart_route_worker(
+    project_id: i64,
+    route_id: i64,
+    worker_name: String,
+) -> Result<(), String> {
+    let runtime_name = resolve_route_runtime_name(project_id, route_id)
+        .await?
+        .ok_or_else(|| "No route runtime exists yet".to_string())?;
     let orch = create_orchestrator().str_err()?;
-
-    // Get workers to find the worker name from the ID
-    let workers = orch.list_workers(&run_name).await.str_err()?;
-
-    let worker = workers
-        .iter()
-        .find(|w| w.id == worker_id)
-        .ok_or_else(|| format!("Worker with ID {} not found", worker_id))?;
-
-    // Call restart_worker with the worker name
-    orch.restart_worker(&run_name, &worker.name).await.str_err()
+    orch.restart_worker(&runtime_name, &worker_name)
+        .await
+        .str_err()
 }

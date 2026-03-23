@@ -1,7 +1,0 @@
-[Error] Error: Unrecognized extension value in extension set ([object Object]). This sometimes happens because multiple instances of @codemirror/state are loaded, breaking instanceof checks.
-	handleError (chunk-33JTHASM.js:1027)
-	runUpdates (chunk-33JTHASM.js:850)
-	writeSignal (chunk-33JTHASM.js:690)
-	handleDoubleClick (SpecBoard.tsx:477)
-	handleNode (chunk-T5GFOCUH.js:912)
-	eventHandler (chunk-T5GFOCUH.js:933)

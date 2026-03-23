@@ -1,7 +1,7 @@
 //! SQLite state management for Hirsel runs
 //!
 //! This module provides the core state management functionality for tracking
-//! runs, tasks, workers, evals, and messages.
+//! runs, tasks, workers, evals, worker events, and scribe submissions.
 //!
 //! All methods are async using sqlx for true non-blocking database access.
 
@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS workers (
     state_handle TEXT,
     -- Direct task assignment fields
     assigned_task_id TEXT,    -- Currently assigned task
-    last_task_id TEXT         -- Last completed task (for tree distance)
+    last_task_id TEXT,        -- Last completed task (for tree distance)
+    capability_profile TEXT
 );
 
 CREATE TABLE IF NOT EXISTS history (
@@ -166,30 +167,30 @@ CREATE INDEX IF NOT EXISTS idx_worker_events_timestamp ON worker_events(timestam
 
 /// SQLite-backed state management for a hirsel run
 pub struct SQLiteState {
-    run_name: String,
+    runtime_name: String,
 }
 
 impl SQLiteState {
     /// Create a new SQLiteState for the given run, initializing the database
-    pub async fn new(run_name: &str) -> StateResult<Self> {
-        let pool = crate::core::db::run_pool(run_name).await;
+    pub async fn new(runtime_name: &str) -> StateResult<Self> {
+        let pool = crate::core::db::runtime_pool(runtime_name).await;
 
         // Initialize schema
         sqlx::raw_sql(SCHEMA).execute(&pool).await?;
 
         Ok(Self {
-            run_name: run_name.to_string(),
+            runtime_name: runtime_name.to_string(),
         })
     }
 
     /// Get the run name
-    pub fn run_name(&self) -> &str {
-        &self.run_name
+    pub fn runtime_name(&self) -> &str {
+        &self.runtime_name
     }
 
     /// Get the database pool for this run
     pub(crate) async fn pool(&self) -> SqlitePool {
-        crate::core::db::run_pool(&self.run_name).await
+        crate::core::db::runtime_pool(&self.runtime_name).await
     }
 
     pub(crate) async fn log_history(&self, action: &str, detail: Option<&str>) -> StateResult<()> {

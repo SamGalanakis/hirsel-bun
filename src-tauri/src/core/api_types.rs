@@ -6,12 +6,13 @@
 use serde::{Deserialize, Serialize};
 
 use crate::core::config;
+use crate::core::CapabilityProfile;
 
 // =============================================================================
 // Status Enums
 // =============================================================================
 
-/// Run status values
+/// Runtime status values.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
@@ -55,7 +56,7 @@ pub enum EvalStatus {
 // Response Types
 // =============================================================================
 
-/// Summary of a run for the run list panel
+/// Summary of a runtime for route/runtime views.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSummary {
@@ -69,13 +70,12 @@ pub struct RunSummary {
     pub workers_desired: u32,
     pub elapsed_minutes: f64,
     pub time_limit_minutes: Option<u32>,
-    pub has_unread_messages: bool,
     pub created_at: String,
     pub project_id: Option<i64>,
     pub project_name: Option<String>,
 }
 
-/// Full run details for the detail view
+/// Full runtime details for inspection surfaces.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunDetail {
@@ -199,30 +199,8 @@ pub struct Worker {
     pub turns: Option<u32>,
     pub current_task: Option<String>,
     pub sheep_config: SheepConfig,
-}
-
-/// Message from the database
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Message {
-    pub id: u32,
-    pub thread: String,
-    pub sender: String,
-    pub content: String,
-    pub waiting: bool,
-    pub read_by: Option<Vec<String>>,
-    pub timestamp: String,
-}
-
-/// Thread summary for chat panel
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadSummary {
-    pub name: String,
-    pub message_count: u32,
-    pub unread_count: u32,
-    pub last_message: Option<String>,
-    pub last_timestamp: Option<String>,
+    #[serde(default)]
+    pub capability_profile: Option<CapabilityProfile>,
 }
 
 /// History entry for activity log
@@ -536,11 +514,10 @@ pub struct GitConfigResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigResponse {
-    pub runs_dir: String,
+    pub runtimes_dir: String,
     pub agent_command: Vec<String>,
     pub eval_timeout: u32,
     pub auto_learn: bool,
-    pub user_message_pause: String,
     pub human_in_the_loop: bool,
     pub context_warning_threshold: f64,
     pub coordinator_port: u16,
@@ -550,6 +527,7 @@ pub struct ConfigResponse {
     pub worker_runners: std::collections::HashMap<String, String>,
     pub backend: BackendConfigResponse,
     pub git: GitConfigResponse,
+    pub tavily_configured: bool,
     pub storage: StorageConfigResponse,
 }
 

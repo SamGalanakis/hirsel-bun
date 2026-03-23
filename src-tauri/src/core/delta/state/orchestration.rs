@@ -15,6 +15,12 @@ impl DeltaState {
         let now = utc_now();
 
         let node = self.get_node(id).await?;
+        if node.archived_at.is_some() {
+            return Err(DeltaStateError::NodeNotFound(format!(
+                "Node '{}' is archived and cannot be claimed directly",
+                id
+            )));
+        }
         if node.kind == NodeKind::Feature {
             return Err(DeltaStateError::NodeNotFound(format!(
                 "Node '{}' is a feature and cannot be claimed directly",
@@ -84,6 +90,12 @@ impl DeltaState {
         let now = utc_now();
 
         let node = self.get_node(id).await?;
+        if node.archived_at.is_some() {
+            return Err(DeltaStateError::NodeNotFound(format!(
+                "Node '{}' is archived and cannot be completed",
+                id
+            )));
+        }
 
         if node.claimed_by.as_deref() != Some(worker_name) {
             return Err(DeltaStateError::NodeNotFound(format!(
@@ -148,7 +160,7 @@ impl DeltaState {
                 "All board nodes complete for project {}, pausing run",
                 self.project_id
             );
-            self.update_project_run_status(ProjectRunStatus::Paused)
+            self.update_route_runtime_status(RouteRuntimeStatus::Paused)
                 .await?;
         }
 
@@ -605,6 +617,9 @@ impl DeltaState {
         let mut work_nodes = vec![];
 
         for node in nodes {
+            if node.archived_at.is_some() {
+                continue;
+            }
             if node.status != BoardNodeStatus::Pending || node.claimed_by.is_some() {
                 continue;
             }

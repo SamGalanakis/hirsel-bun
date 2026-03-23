@@ -1,8 +1,8 @@
-//! Board Service - unified interface for SpecFlow board operations
+//! Legacy board storage service used by older dispatch and delivery code paths.
 //!
 //! This module provides the BoardService which handles:
 //! - Database operations for tasks and evals
-//! - JSON file export/import for AI agents (Shepherd)
+//! - JSON/file export for legacy tooling
 //! - Validation computation
 //!
 //! ## Data Model
@@ -10,14 +10,6 @@
 //! - **Tasks**: Nested tree of work items with slug IDs
 //! - **Evals**: Flat list that validate tasks
 //!
-//! ## Agent Access
-//!
-//! Board structure is exposed via MCP tools (board_view, board_task, etc.)
-//! Content files live at: `~/.hirsel/projects/{project_id}/board/tasks/{id}.md`
-//!
-//! The agent uses MCP tools for structure, direct file edits for content.
-
-pub mod mcp;
 pub mod storage;
 mod types;
 
@@ -88,9 +80,9 @@ CREATE TABLE IF NOT EXISTS task_runs (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL,
     task_id TEXT NOT NULL,
-    run_name TEXT NOT NULL,
+    runtime_name TEXT NOT NULL,
     dispatched_at TEXT NOT NULL,
-    UNIQUE(project_id, task_id, run_name)
+    UNIQUE(project_id, task_id, runtime_name)
 );
 
 -- File baselines for change detection (hash of last exported content)
@@ -108,7 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_board_evals_project ON board_evals(project_id);
 CREATE INDEX IF NOT EXISTS idx_board_bookmarks_project ON board_bookmarks(project_id);
 CREATE INDEX IF NOT EXISTS idx_task_runs_project ON task_runs(project_id);
 CREATE INDEX IF NOT EXISTS idx_task_runs_task ON task_runs(task_id);
-CREATE INDEX IF NOT EXISTS idx_task_runs_run ON task_runs(run_name);
+CREATE INDEX IF NOT EXISTS idx_task_runs_run ON task_runs(runtime_name);
 "#;
 
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
@@ -1266,17 +1258,17 @@ impl BoardService {
     // ========== TASK-RUN TRACKING ==========
 
     /// Record that a run was dispatched from a task
-    pub async fn record_task_run(&self, task_id: &str, run_name: &str) -> BoardResult<TaskRun> {
+    pub async fn record_task_run(&self, task_id: &str, runtime_name: &str) -> BoardResult<TaskRun> {
         let pool = self.pool().await?;
         let now = utc_now();
 
         let result = sqlx::query(
-            "INSERT INTO task_runs (project_id, task_id, run_name, dispatched_at)
+            "INSERT INTO task_runs (project_id, task_id, runtime_name, dispatched_at)
              VALUES (?, ?, ?, ?)",
         )
         .bind(self.project_id)
         .bind(task_id)
-        .bind(run_name)
+        .bind(runtime_name)
         .bind(&now)
         .execute(pool)
         .await?;
@@ -1286,7 +1278,7 @@ impl BoardService {
             id,
             project_id: self.project_id,
             task_id: task_id.to_string(),
-            run_name: run_name.to_string(),
+            runtime_name: runtime_name.to_string(),
             dispatched_at: now,
         })
     }
@@ -1295,7 +1287,7 @@ impl BoardService {
     pub async fn get_runs_for_task(&self, task_id: &str) -> BoardResult<Vec<TaskRun>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
-            "SELECT id, project_id, task_id, run_name, dispatched_at
+            "SELECT id, project_id, task_id, runtime_name, dispatched_at
              FROM task_runs
              WHERE project_id = ? AND task_id = ?
              ORDER BY dispatched_at DESC",
@@ -1311,7 +1303,7 @@ impl BoardService {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
                 task_id: row.get("task_id"),
-                run_name: row.get("run_name"),
+                runtime_name: row.get("runtime_name"),
                 dispatched_at: row.get("dispatched_at"),
             })
             .collect();
@@ -1323,7 +1315,7 @@ impl BoardService {
     pub async fn get_all_task_runs(&self) -> BoardResult<Vec<TaskRun>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
-            "SELECT id, project_id, task_id, run_name, dispatched_at
+            "SELECT id, project_id, task_id, runtime_name, dispatched_at
              FROM task_runs
              WHERE project_id = ?
              ORDER BY dispatched_at DESC",
@@ -1338,7 +1330,7 @@ impl BoardService {
                 id: row.get("id"),
                 project_id: row.get("project_id"),
                 task_id: row.get("task_id"),
-                run_name: row.get("run_name"),
+                runtime_name: row.get("runtime_name"),
                 dispatched_at: row.get("dispatched_at"),
             })
             .collect();
@@ -1347,11 +1339,11 @@ impl BoardService {
     }
 
     /// Delete a task_run record (e.g., when run is abandoned)
-    pub async fn delete_task_run(&self, run_name: &str) -> BoardResult<()> {
+    pub async fn delete_task_run(&self, runtime_name: &str) -> BoardResult<()> {
         let pool = self.pool().await?;
-        sqlx::query("DELETE FROM task_runs WHERE project_id = ? AND run_name = ?")
+        sqlx::query("DELETE FROM task_runs WHERE project_id = ? AND runtime_name = ?")
             .bind(self.project_id)
-            .bind(run_name)
+            .bind(runtime_name)
             .execute(pool)
             .await?;
         Ok(())

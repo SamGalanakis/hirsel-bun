@@ -5,6 +5,9 @@ node_modules/
 build/
 dist/
 references/
+.hirsel-remote-dev/
+src-tauri/runs/
+src-tauri/runtimes/
 
 # Environment and secrets
 .env

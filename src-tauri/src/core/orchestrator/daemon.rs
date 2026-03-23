@@ -44,14 +44,14 @@ impl Orchestrator for DaemonOrchestrator {
 
     async fn list_runs(&self) -> OrchestratorResult<Vec<RunSummary>> {
         self.client
-            .get("/api/runs")
+            .get("/api/runtimes")
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
 
     async fn get_run(&self, name: &str) -> OrchestratorResult<RunDetail> {
         self.client
-            .get(&format!("/api/runs/{}", name))
+            .get(&format!("/api/runtimes/{}", name))
             .await
             .map_err(|e| {
                 if e.to_string().contains("404") {
@@ -65,7 +65,7 @@ impl Orchestrator for DaemonOrchestrator {
     async fn delete_run(&self, name: &str) -> OrchestratorResult<()> {
         let _: serde_json::Value = self
             .client
-            .delete(&format!("/api/runs/{}", name))
+            .delete(&format!("/api/runtimes/{}", name))
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
         Ok(())
@@ -74,7 +74,7 @@ impl Orchestrator for DaemonOrchestrator {
     async fn pause_run(&self, name: &str) -> OrchestratorResult<()> {
         let _: serde_json::Value = self
             .client
-            .post_empty(&format!("/api/runs/{}/pause", name))
+            .post_empty(&format!("/api/runtimes/{}/pause", name))
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
         Ok(())
@@ -88,7 +88,7 @@ impl Orchestrator for DaemonOrchestrator {
         let request = ResumeRunRequest { time_limit_minutes };
         let _: serde_json::Value = self
             .client
-            .post(&format!("/api/runs/{}/resume", name), request)
+            .post(&format!("/api/runtimes/{}/resume", name), request)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
         Ok(())
@@ -103,7 +103,7 @@ impl Orchestrator for DaemonOrchestrator {
         let request = DeliverRunRequest { branch };
         let response: DeliverResponse = self
             .client
-            .post(&format!("/api/runs/{}/deliver", name), request)
+            .post(&format!("/api/runtimes/{}/deliver", name), request)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
         Ok(response.branch)
@@ -115,7 +115,7 @@ impl Orchestrator for DaemonOrchestrator {
 
     async fn list_workers(&self, run: &str) -> OrchestratorResult<Vec<Worker>> {
         self.client
-            .get(&format!("/api/runs/{}/workers", run))
+            .get(&format!("/api/runtimes/{}/workers", run))
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
@@ -123,7 +123,7 @@ impl Orchestrator for DaemonOrchestrator {
     async fn restart_worker(&self, run: &str, worker: &str) -> OrchestratorResult<()> {
         let _: serde_json::Value = self
             .client
-            .post_empty(&format!("/api/runs/{}/workers/{}/restart", run, worker))
+            .post_empty(&format!("/api/runtimes/{}/workers/{}/restart", run, worker))
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))?;
         Ok(())
@@ -136,7 +136,7 @@ impl Orchestrator for DaemonOrchestrator {
         after_id: Option<i64>,
         limit: Option<i64>,
     ) -> OrchestratorResult<WorkerEventsResponse> {
-        let mut path = format!("/api/runs/{}/workers/{}/events", run, worker);
+        let mut path = format!("/api/runtimes/{}/workers/{}/events", run, worker);
         let mut params = Vec::new();
         if let Some(id) = after_id {
             params.push(format!("after_id={}", id));
@@ -160,7 +160,7 @@ impl Orchestrator for DaemonOrchestrator {
 
     async fn list_evals(&self, run: &str) -> OrchestratorResult<Vec<Eval>> {
         self.client
-            .get(&format!("/api/runs/{}/evals", run))
+            .get(&format!("/api/runtimes/{}/evals", run))
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
@@ -175,8 +175,8 @@ impl Orchestrator for DaemonOrchestrator {
         limit: Option<u32>,
     ) -> OrchestratorResult<Vec<HistoryEntry>> {
         let path = match limit {
-            Some(n) => format!("/api/runs/{}/history?limit={}", run, n),
-            None => format!("/api/runs/{}/history", run),
+            Some(n) => format!("/api/runtimes/{}/history?limit={}", run, n),
+            None => format!("/api/runtimes/{}/history", run),
         };
         self.client
             .get(&path)
@@ -208,25 +208,28 @@ impl Orchestrator for DaemonOrchestrator {
 
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
         self.client
-            .post("/api/runs/start", request)
+            .post("/api/runtimes/start", request)
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
 
     async fn init_workspace(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         request: super::InitWorkspaceRequest,
     ) -> OrchestratorResult<super::InitWorkspaceResponse> {
         self.client
-            .post(&format!("/api/runs/{}/workspace", run_name), request)
+            .post(
+                &format!("/api/runtimes/{}/workspace", runtime_name),
+                request,
+            )
             .await
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
 
     async fn spawn_single_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,
@@ -238,7 +241,10 @@ impl Orchestrator for DaemonOrchestrator {
         let _: serde_json::Value = self
             .client
             .post(
-                &format!("/api/runs/{}/workers/{}/spawn", run_name, worker_name),
+                &format!(
+                    "/api/runtimes/{}/workers/{}/spawn",
+                    runtime_name, worker_name
+                ),
                 request,
             )
             .await
@@ -248,7 +254,7 @@ impl Orchestrator for DaemonOrchestrator {
 
     async fn resume_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,
@@ -262,7 +268,10 @@ impl Orchestrator for DaemonOrchestrator {
         let _: serde_json::Value = self
             .client
             .post(
-                &format!("/api/runs/{}/workers/{}/resume", run_name, worker_name),
+                &format!(
+                    "/api/runtimes/{}/workers/{}/resume",
+                    runtime_name, worker_name
+                ),
                 request,
             )
             .await
@@ -322,7 +331,7 @@ impl Orchestrator for DaemonOrchestrator {
             .map_err(|e| OrchestratorError::Other(e.to_string()))
     }
 
-    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
+    async fn list_route_runtimes(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
         self.client
             .get(&format!("/api/projects/{}/runs", project_id))
             .await

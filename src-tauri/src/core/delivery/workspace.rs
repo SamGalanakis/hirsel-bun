@@ -34,7 +34,7 @@ pub enum WorkspaceLocation {
     Local(PathBuf),
     /// Files are held by a remote coordinator
     Coordinator {
-        run_name: String,
+        runtime_name: String,
         coordinator_url: Option<String>,
     },
 }
@@ -43,12 +43,12 @@ pub enum WorkspaceLocation {
 ///
 /// Prefers the staging worktree when present, then falls back to the root
 /// work directory for older or single-worktree runs.
-pub fn resolve_run_work_dir(run_name: &str) -> WorkspaceResult<PathBuf> {
-    let run_path = hirsel_dir().join("runs").join(run_name);
+pub fn resolve_run_work_dir(runtime_name: &str) -> WorkspaceResult<PathBuf> {
+    let run_path = hirsel_dir().join("runtimes").join(runtime_name);
     if !run_path.exists() {
         return Err(WorkspaceError::WorkDirNotFound(format!(
             "Run not found: {}",
-            run_name
+            runtime_name
         )));
     }
 
@@ -64,7 +64,7 @@ pub fn resolve_run_work_dir(run_name: &str) -> WorkspaceResult<PathBuf> {
 
     Err(WorkspaceError::WorkDirNotFound(format!(
         "Run work directory not found: {}",
-        run_name
+        runtime_name
     )))
 }
 
@@ -86,17 +86,19 @@ impl WorkspaceLocation {
 /// Resolve the workspace location for a project's active run
 pub async fn resolve_workspace(
     _project_id: i64,
-    run_name: &str,
+    runtime_name: &str,
 ) -> WorkspaceResult<WorkspaceLocation> {
     let (config, _) = Config::load().map_err(|e| WorkspaceError::Config(e.to_string()))?;
 
     if let Some(url) = config.backend.url {
         Ok(WorkspaceLocation::Coordinator {
-            run_name: run_name.to_string(),
+            runtime_name: runtime_name.to_string(),
             coordinator_url: Some(url),
         })
     } else {
-        Ok(WorkspaceLocation::Local(resolve_run_work_dir(run_name)?))
+        Ok(WorkspaceLocation::Local(resolve_run_work_dir(
+            runtime_name,
+        )?))
     }
 }
 
@@ -108,10 +110,10 @@ pub async fn resolve_workspace_for_project(
     // Get the active project run
     let state = DeltaState::with_route(project_id, route_id);
     let project_run = state
-        .get_project_run()
+        .get_route_runtime()
         .await
         .map_err(|e| WorkspaceError::State(e.to_string()))?
         .ok_or(WorkspaceError::NoActiveRun(project_id))?;
 
-    resolve_workspace(project_id, &project_run.run_name).await
+    resolve_workspace(project_id, &project_run.runtime_name).await
 }

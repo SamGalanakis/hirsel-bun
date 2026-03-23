@@ -168,36 +168,49 @@ fn build_router(state: Arc<AppState>) -> Router {
     // Daemon gets: shared routes + daemon-specific routes
     // No auth layer for local daemon - localhost only
     shared_routes::build_shared_routes()
+        .merge(shared_routes::build_readonly_config_routes())
         // Daemon-specific routes
         .route("/daemon/health", get(daemon_health))
         .route("/daemon/stop", post(daemon_stop))
         .route("/daemon/status", get(daemon_status))
-        // Per-run config endpoints for workers
+        // Per-runtime config endpoints for workers
         .route(
-            "/api/runs/{run}/config/human_in_the_loop",
+            "/api/runtimes/{runtime}/config/human_in_the_loop",
             get(get_run_hitl),
         )
-        .route("/api/runs/{run}/config/request", get(get_run_request))
         .route(
-            "/api/runs/{run}/config/project_path",
+            "/api/runtimes/{runtime}/config/request",
+            get(get_run_request),
+        )
+        .route(
+            "/api/runtimes/{runtime}/config/project_path",
             get(get_run_project_path),
         )
         .route(
-            "/api/runs/{run}/config/waiting_reason",
+            "/api/runtimes/{runtime}/config/waiting_reason",
             get(get_run_waiting_reason).post(set_run_waiting_reason),
         )
         // Worker state endpoints for workers (internal API)
-        .route("/api/runs/{run}/workers/list", get(list_workers))
-        .route("/api/runs/{run}/workers/active", get(list_active_workers))
-        .route("/api/runs/{run}/workers/all_done", get(all_workers_done))
-        .route("/api/runs/{run}/scaling_check", post(request_scaling_check))
-        .route("/api/runs/{run}/workers/{worker}", get(get_worker))
+        .route("/api/runtimes/{runtime}/workers/list", get(list_workers))
         .route(
-            "/api/runs/{run}/workers/{worker}/update",
+            "/api/runtimes/{runtime}/workers/active",
+            get(list_active_workers),
+        )
+        .route(
+            "/api/runtimes/{runtime}/workers/all_done",
+            get(all_workers_done),
+        )
+        .route(
+            "/api/runtimes/{runtime}/scaling_check",
+            post(request_scaling_check),
+        )
+        .route("/api/runtimes/{runtime}/workers/{worker}", get(get_worker))
+        .route(
+            "/api/runtimes/{runtime}/workers/{worker}/update",
             post(update_worker),
         )
         .route(
-            "/api/runs/{run}/workers/{worker}/heartbeat",
+            "/api/runtimes/{runtime}/workers/{worker}/heartbeat",
             post(worker_heartbeat),
         )
         .with_state(state)
@@ -237,7 +250,7 @@ struct DaemonStatus {
     pid: u32,
     tcp_port: u16,
     hirsel_root: String,
-    runs_dir: String,
+    runtimes_dir: String,
     uptime_secs: u64,
     active_runs: usize,
     version: String,
@@ -292,15 +305,21 @@ async fn daemon_status(State(state): State<Arc<AppState>>) -> Json<DaemonStatus>
         })
         .unwrap_or(0);
 
-    // Get runs_dir from config for debugging path issues
-    let runs_dir = state.config.read().await.runs_dir().display().to_string();
+    // Get runtimes_dir from config for debugging path issues
+    let runtimes_dir = state
+        .config
+        .read()
+        .await
+        .runtimes_dir()
+        .display()
+        .to_string();
 
     Json(DaemonStatus {
         running: true,
         pid: std::process::id(),
         tcp_port: super::get_daemon_port(),
         hirsel_root: hirsel_dir().display().to_string(),
-        runs_dir,
+        runtimes_dir,
         uptime_secs,
         active_runs,
         version: version::VERSION.to_string(),
@@ -332,20 +351,20 @@ use serde::Deserialize;
 /// Helper to get SQLite state for a run
 async fn get_run_state(
     state: &AppState,
-    run_name: &str,
+    runtime_name: &str,
 ) -> Result<crate::core::state::SQLiteState, (StatusCode, String)> {
     let config = state.config.read().await;
-    let run_dir = config.runs_dir().join(run_name);
-    let db_path = run_dir.join("hirsel.db");
+    let runtime_dir = config.runtimes_dir().join(runtime_name);
+    let db_path = runtime_dir.join("hirsel.db");
 
     if !db_path.exists() {
         return Err((
             StatusCode::NOT_FOUND,
-            format!("Run '{}' not found", run_name),
+            format!("Run '{}' not found", runtime_name),
         ));
     }
 
-    crate::core::state::SQLiteState::new(run_name)
+    crate::core::state::SQLiteState::new(runtime_name)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
 }
@@ -463,18 +482,23 @@ use crate::core::server::worker_routes::{
 
 /// Helper to create lifecycle manager for a run
 async fn create_lifecycle_manager(
-    run_name: &str,
+    runtime_name: &str,
     config: &crate::core::config::Config,
 ) -> Option<crate::core::lifecycle::LocalLifecycleManager> {
-    let run_dir = config.runs_dir().join(run_name);
+    let runtime_dir = config.runtimes_dir().join(runtime_name);
     let agent_command = crate::cli::config::get_agent_command();
-    match crate::core::lifecycle::LocalLifecycleManager::new(run_name, run_dir, agent_command).await
+    match crate::core::lifecycle::LocalLifecycleManager::new(
+        runtime_name,
+        runtime_dir,
+        agent_command,
+    )
+    .await
     {
         Ok(lm) => Some(lm),
         Err(e) => {
             tracing::warn!(
                 "[Daemon] Failed to create lifecycle manager for '{}': {} - lifecycle events disabled",
-                run_name,
+                runtime_name,
                 e
             );
             None

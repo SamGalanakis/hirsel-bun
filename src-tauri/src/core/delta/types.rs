@@ -1,8 +1,12 @@
-//! Unified board types
+//! Legacy delta/board types plus route runtime metadata.
 //!
-//! Single board_nodes table with kind (feature/task/check) and unified status lifecycle.
+//! The live GUI now centers on route work trees. This module remains as the
+//! route-runtime substrate and for older board/delivery internals that have not
+//! been cut over yet.
 
 use serde::{Deserialize, Serialize};
+
+use crate::core::CapabilityProfile;
 
 // =============================================================================
 // Node Types
@@ -206,6 +210,10 @@ pub struct BoardNode {
     pub check_result: Option<CheckResult>,
     pub check_feedback: Option<String>,
     pub tokens_used: Option<i64>,
+    pub assigned_agent_kind: Option<String>,
+    pub assigned_agent_id: Option<String>,
+    pub capability_profile: Option<CapabilityProfile>,
+    pub archived_at: Option<String>,
 }
 
 /// Board node tree (nested for frontend)
@@ -236,6 +244,10 @@ pub struct BoardNodeTree {
     pub check_result: Option<CheckResult>,
     pub check_feedback: Option<String>,
     pub tokens_used: Option<i64>,
+    pub assigned_agent_kind: Option<String>,
+    pub assigned_agent_id: Option<String>,
+    pub capability_profile: Option<CapabilityProfile>,
+    pub archived_at: Option<String>,
 }
 
 impl From<BoardNode> for BoardNodeTree {
@@ -262,6 +274,10 @@ impl From<BoardNode> for BoardNodeTree {
             check_result: node.check_result,
             check_feedback: node.check_feedback,
             tokens_used: node.tokens_used,
+            assigned_agent_kind: node.assigned_agent_kind,
+            assigned_agent_id: node.assigned_agent_id,
+            capability_profile: node.capability_profile,
+            archived_at: node.archived_at,
         }
     }
 }
@@ -273,14 +289,14 @@ impl From<BoardNode> for BoardNodeTree {
 /// Status of a project's persistent run
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum ProjectRunStatus {
+pub enum RouteRuntimeStatus {
     #[default]
     Paused,
     Working,
     Failed,
 }
 
-impl ProjectRunStatus {
+impl RouteRuntimeStatus {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Paused => "paused",
@@ -301,12 +317,12 @@ impl ProjectRunStatus {
 /// A persistent run for a project
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProjectRun {
+pub struct RouteRuntime {
     pub id: i64,
     pub project_id: i64,
     pub route_id: i64,
-    pub run_name: String,
-    pub status: ProjectRunStatus,
+    pub runtime_name: String,
+    pub status: RouteRuntimeStatus,
     pub created_at: String,
     pub last_dispatch_at: Option<String>,
 }
@@ -473,7 +489,7 @@ pub struct UpdateBoardNodeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchResult {
-    pub run_name: String,
+    pub runtime_name: String,
     pub node_count: usize,
     pub feature_count: usize,
     pub plan_task_count: usize,

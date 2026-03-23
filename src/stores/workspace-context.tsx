@@ -1,16 +1,15 @@
 import { type ParentComponent, createContext, createEffect, createSignal, useContext } from 'solid-js';
 import { useProject } from './project-context';
 
-export type MachineryTab = 'board' | 'workers';
+export type MachineryTab = 'work' | 'workers';
 
 interface WorkspaceContextValue {
   machineryOpen: () => boolean;
   setMachineryOpen: (open: boolean) => void;
   activeMachineryTab: () => MachineryTab;
   setActiveMachineryTab: (tab: MachineryTab) => void;
-  activeThread: () => string;
-  setActiveThread: (thread: string) => void;
-  openWorkerDM: (workerName: string) => void;
+  shepherdMinimized: () => boolean;
+  setShepherdMinimized: (minimized: boolean) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextValue>();
@@ -18,32 +17,24 @@ const WorkspaceContext = createContext<WorkspaceContextValue>();
 export const WorkspaceProvider: ParentComponent = (props) => {
   const project = useProject();
   const [machineryOpen, setMachineryOpen] = createSignal(false);
-  const [activeMachineryTab, setActiveMachineryTab] = createSignal<MachineryTab>('board');
-  const [activeThread, setActiveThread] = createSignal('chat');
+  const [activeMachineryTab, setActiveMachineryTab] = createSignal<MachineryTab>('work');
+  const [shepherdMinimized, setShepherdMinimized] = createSignal(false);
 
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (!projectId) {
       setMachineryOpen(false);
-      setActiveMachineryTab('board');
-      setActiveThread('chat');
+      setActiveMachineryTab('work');
     }
   });
-
-  const openWorkerDM = (workerName: string) => {
-    setActiveThread(workerName);
-    setActiveMachineryTab('workers');
-    setMachineryOpen(true);
-  };
 
   const value: WorkspaceContextValue = {
     machineryOpen,
     setMachineryOpen,
     activeMachineryTab,
     setActiveMachineryTab,
-    activeThread,
-    setActiveThread,
-    openWorkerDM,
+    shepherdMinimized,
+    setShepherdMinimized,
   };
 
   return <WorkspaceContext.Provider value={value}>{props.children}</WorkspaceContext.Provider>;

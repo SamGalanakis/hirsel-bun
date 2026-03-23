@@ -6,11 +6,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use anyhow::Context;
-use lash::plugin::StaticPluginFactory;
 use lash::{
-    default_context_strategy, default_execution_mode, default_tool_plugin_factories, AgentEvent,
-    AgentStateEnvelope, DefaultToolPluginDeps, EventSink, FsInstructionSource, HostProfile,
-    InputItem, LashRuntime, PluginHost, PluginSpec, RuntimeHostConfig, RuntimeServices,
+    default_context_strategy, default_execution_mode, AgentEvent, AgentStateEnvelope, EventSink,
+    HostProfile, InputItem, LashRuntime, PluginHost, RuntimeHostConfig, RuntimeServices,
     SessionPolicy, ToolDefinition, ToolParam, ToolProvider, ToolResult, TurnInput,
 };
 use serde_json::json;
@@ -21,6 +19,7 @@ use super::common::{build_worker_prompt, WorkerRunConfig};
 use super::runner::{WorkerConfig, WorkerRunner};
 use crate::core::state::{SQLiteState, ToolCallStatus};
 use crate::core::{llm_provider, Config};
+use crate::lash_tools::embedded_tool_plugin_factories;
 
 struct WorkerToolProvider {
     runner: Arc<WorkerRunner>,
@@ -167,20 +166,11 @@ impl ToolProvider for WorkerToolProvider {
                 injected: true,
             },
             ToolDefinition {
-                name: "list_contacts".into(),
-                description: "List message contacts".into(),
-                params: vec![],
-                returns: "dict".into(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            ToolDefinition {
-                name: "chat_history".into(),
-                description: "Read chat history".into(),
+                name: "report_progress".into(),
+                description: "Report important progress upward to the orchestrator without blocking execution.".into(),
                 params: vec![
-                    ToolParam::optional("with", "str"),
-                    ToolParam::optional("limit", "int"),
+                    ToolParam::typed("summary", "str"),
+                    ToolParam::optional("details", "str"),
                 ],
                 returns: "dict".into(),
                 examples: vec![],
@@ -188,11 +178,14 @@ impl ToolProvider for WorkerToolProvider {
                 injected: true,
             },
             ToolDefinition {
-                name: "chat_send".into(),
-                description: "Send chat message".into(),
+                name: "raise_concern".into(),
+                description: "Raise a structured concern to the orchestrator. Use this when you hit a blocker, detect risk, or want review. Set blocking=true if you need a decision before continuing.".into(),
                 params: vec![
-                    ToolParam::typed("to", "str"),
-                    ToolParam::typed("message", "str"),
+                    ToolParam::typed("kind", "str"),
+                    ToolParam::typed("summary", "str"),
+                    ToolParam::optional("details", "str"),
+                    ToolParam::optional("severity", "str"),
+                    ToolParam::optional("blocking", "bool"),
                 ],
                 returns: "dict".into(),
                 examples: vec![],
@@ -200,9 +193,12 @@ impl ToolProvider for WorkerToolProvider {
                 injected: true,
             },
             ToolDefinition {
-                name: "chat_unread".into(),
-                description: "Get unread chat".into(),
-                params: vec![ToolParam::optional("with", "str")],
+                name: "request_decision".into(),
+                description: "Escalate a decision that requires orchestrator or user input. This pauses your work until the orchestrator resolves it.".into(),
+                params: vec![
+                    ToolParam::typed("summary", "str"),
+                    ToolParam::optional("details", "str"),
+                ],
                 returns: "dict".into(),
                 examples: vec![],
                 enabled: true,
@@ -228,7 +224,7 @@ impl ToolProvider for WorkerToolProvider {
             },
             ToolDefinition {
                 name: "work_done".into(),
-                description: "Complete work and exit".into(),
+                description: "Complete work, exit, and return control to the orchestrator".into(),
                 params: vec![],
                 returns: "dict".into(),
                 examples: vec![],
@@ -313,29 +309,41 @@ impl ToolProvider for WorkerToolProvider {
                 Ok(task_id) => Self::from_worker_result(self.runner.delete_task(task_id)),
                 Err(e) => ToolResult::err(json!({"error": e})),
             },
-            "list_contacts" => Self::from_worker_result(self.runner.list_contacts()),
-            "chat_history" => {
-                let with = args.get("with").and_then(|v| v.as_str());
-                let limit = args
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as usize);
-                Self::from_worker_result(self.runner.chat_history(with, limit))
-            }
-            "chat_send" => {
-                let to = match Self::string_arg(args, "to") {
+            "report_progress" => {
+                let summary = match Self::string_arg(args, "summary") {
                     Ok(v) => v,
                     Err(e) => return ToolResult::err(json!({"error": e})),
                 };
-                let message = match Self::string_arg(args, "message") {
+                let details = args.get("details").and_then(|v| v.as_str());
+                Self::from_worker_result(self.runner.report_progress(summary, details))
+            }
+            "raise_concern" => {
+                let kind = match Self::string_arg(args, "kind") {
                     Ok(v) => v,
                     Err(e) => return ToolResult::err(json!({"error": e})),
                 };
-                Self::from_worker_result(self.runner.chat_send(to, message))
+                let summary = match Self::string_arg(args, "summary") {
+                    Ok(v) => v,
+                    Err(e) => return ToolResult::err(json!({"error": e})),
+                };
+                let details = args.get("details").and_then(|v| v.as_str());
+                let severity = args.get("severity").and_then(|v| v.as_str());
+                let blocking = args
+                    .get("blocking")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                Self::from_worker_result(
+                    self.runner
+                        .raise_concern(kind, summary, details, severity, blocking),
+                )
             }
-            "chat_unread" => {
-                let with = args.get("with").and_then(|v| v.as_str());
-                Self::from_worker_result(self.runner.chat_unread(with))
+            "request_decision" => {
+                let summary = match Self::string_arg(args, "summary") {
+                    Ok(v) => v,
+                    Err(e) => return ToolResult::err(json!({"error": e})),
+                };
+                let details = args.get("details").and_then(|v| v.as_str());
+                Self::from_worker_result(self.runner.request_decision(summary, details))
             }
             "scribe" => match Self::string_arg(args, "content") {
                 Ok(content) => Self::from_worker_result(self.runner.scribe(content)),
@@ -363,22 +371,22 @@ impl ToolProvider for WorkerToolProvider {
 }
 
 struct DbEventSink {
-    run_name: String,
+    runtime_name: String,
     worker_name: String,
     tool_seq: AtomicU64,
 }
 
 impl DbEventSink {
-    fn new(run_name: String, worker_name: String) -> Self {
+    fn new(runtime_name: String, worker_name: String) -> Self {
         Self {
-            run_name,
+            runtime_name,
             worker_name,
             tool_seq: AtomicU64::new(1),
         }
     }
 
     async fn state(&self) -> Option<SQLiteState> {
-        match SQLiteState::new(&self.run_name).await {
+        match SQLiteState::new(&self.runtime_name).await {
             Ok(state) => Some(state),
             Err(e) => {
                 warn!(
@@ -405,7 +413,13 @@ impl DbEventSink {
             Some("execute")
         } else if matches!(
             name,
-            "get_task_tree" | "get_task_details" | "get_available_tasks" | "get_my_tasks"
+            "get_task_tree"
+                | "get_task_details"
+                | "get_available_tasks"
+                | "get_my_tasks"
+                | "report_progress"
+                | "raise_concern"
+                | "request_decision"
         ) {
             Some("search")
         } else {
@@ -501,14 +515,14 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     info!(
         "[{}] starting lash worker for run={} in {}",
         config.worker_name,
-        config.run_name,
+        config.runtime_name,
         config.work_dir.display()
     );
 
     let worker_runner = Arc::new(WorkerRunner::new(WorkerConfig::new(
         config.worker_name.clone(),
-        config.run_name.clone(),
-        config.run_dir.clone(),
+        config.runtime_name.clone(),
+        config.runtime_dir.clone(),
         config.agent_command.clone(),
     ))?);
 
@@ -530,19 +544,12 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
             (model, variant)
         });
     let execution_mode = default_execution_mode();
-    let instruction_source = Arc::new(FsInstructionSource::new());
-    let mut plugin_factories = default_tool_plugin_factories(
-        execution_mode,
-        DefaultToolPluginDeps {
-            tavily_api_key: None,
-            prompt_bridge: None,
-            instruction_source: Some(instruction_source),
-        },
-    );
-    plugin_factories.push(Arc::new(StaticPluginFactory::new(
+    let tavily_api_key = std::env::var("TAVILY_API_KEY").ok();
+    let plugin_factories = embedded_tool_plugin_factories(
         "hirsel_worker_tools",
-        PluginSpec::new().with_tool_provider(Arc::clone(&worker_tools)),
-    )));
+        Arc::clone(&worker_tools),
+        tavily_api_key,
+    );
     let plugin_host = PluginHost::new(plugin_factories);
     let root_plugins = plugin_host
         .build_session("root", execution_mode, None)
@@ -577,15 +584,15 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
 
     let prompt = build_worker_prompt(
         &config.worker_name,
-        &config.run_name,
+        &config.runtime_name,
         config.teammates.as_deref(),
         &config.work_dir,
-        &config.run_dir,
+        &config.runtime_dir,
         config.assigned_task_id.as_deref(),
         config.is_plan_task,
     );
 
-    let sink = DbEventSink::new(config.run_name.clone(), config.worker_name.clone());
+    let sink = DbEventSink::new(config.runtime_name.clone(), config.worker_name.clone());
     let turn = runtime
         .stream_turn(
             TurnInput {

@@ -1,8 +1,8 @@
 /**
- * Route context for managing parallel exploration branches
+ * Route context for managing parallel exploration branches.
  *
- * Routes allow users to fork their board at any point and explore
- * different implementation approaches without losing work.
+ * Routes allow users to fork a project's line of work and explore
+ * different implementation approaches without losing context.
  */
 import { invoke } from '../lib/invoke';
 import {
@@ -22,6 +22,7 @@ import type { Route } from '../lib/types';
 
 interface RouteContextValue {
   routes: () => Route[];
+  archivedRoutes: () => Route[];
   activeRoute: () => Route | null;
   currentRoute: () => Route | null;
   currentRouteId: () => number | null;
@@ -33,7 +34,7 @@ interface RouteContextValue {
     parentRouteId?: number | null,
     parentVersionId?: number | null
   ) => Promise<Route | null>;
-  deleteRoute: (routeId: number) => Promise<boolean>;
+  archiveRoute: (routeId: number) => Promise<boolean>;
 }
 
 // =============================================================================
@@ -58,6 +59,7 @@ export const RouteProvider: ParentComponent = (props) => {
   const project = useProject();
 
   const [routes, setRoutes] = createSignal<Route[]>([]);
+  const [archivedRoutes, setArchivedRoutes] = createSignal<Route[]>([]);
   const [activeRoute, setActiveRouteState] = createSignal<Route | null>(null);
   const [loading, setLoading] = createSignal(false);
   const currentRoute = () => activeRoute() ?? routes()[0] ?? null;
@@ -68,6 +70,7 @@ export const RouteProvider: ParentComponent = (props) => {
     if (!projectId) {
       batch(() => {
         setRoutes([]);
+        setArchivedRoutes([]);
         setActiveRouteState(null);
       });
       return;
@@ -76,13 +79,15 @@ export const RouteProvider: ParentComponent = (props) => {
     try {
       setLoading(true);
 
-      const [routesList, active] = await Promise.all([
+      const [routesList, archivedList, active] = await Promise.all([
         invoke<Route[]>('list_routes', { projectId }),
+        invoke<Route[]>('list_archived_routes', { projectId }).catch(() => []),
         invoke<Route>('get_active_route', { projectId }).catch(() => null),
       ]);
 
       batch(() => {
         setRoutes(routesList);
+        setArchivedRoutes(archivedList);
         setActiveRouteState(active);
       });
     } catch (e) {
@@ -137,20 +142,20 @@ export const RouteProvider: ParentComponent = (props) => {
     }
   };
 
-  const deleteRoute = async (routeId: number): Promise<boolean> => {
+  const archiveRoute = async (routeId: number): Promise<boolean> => {
     const projectId = project.selectedProjectId();
     if (!projectId) return false;
 
     try {
-      await invoke('delete_route', { projectId, routeId });
+      await invoke('archive_route', { projectId, routeId });
 
       await loadRoutes();
 
-      window.toast?.success('Route deleted');
+      window.toast?.success('Route archived');
       return true;
     } catch (e) {
-      console.error('Failed to delete route:', e);
-      window.toast?.error(`Failed to delete route: ${e}`);
+      console.error('Failed to archive route:', e);
+      window.toast?.error(`Failed to archive route: ${e}`);
       return false;
     }
   };
@@ -162,6 +167,7 @@ export const RouteProvider: ParentComponent = (props) => {
     } else {
       batch(() => {
         setRoutes([]);
+        setArchivedRoutes([]);
         setActiveRouteState(null);
       });
     }
@@ -169,6 +175,7 @@ export const RouteProvider: ParentComponent = (props) => {
 
   const value: RouteContextValue = {
     routes,
+    archivedRoutes,
     activeRoute,
     currentRoute,
     currentRouteId,
@@ -176,7 +183,7 @@ export const RouteProvider: ParentComponent = (props) => {
     loadRoutes,
     setActiveRoute,
     createRoute,
-    deleteRoute,
+    archiveRoute,
   };
 
   return <RouteContext.Provider value={value}>{props.children}</RouteContext.Provider>;

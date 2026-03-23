@@ -38,7 +38,7 @@ pub enum ShepherdCommandStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShepherdDecision {
-    pub run_name: String,
+    pub runtime_name: String,
     pub decision_type: ShepherdDecisionType,
     pub summary: String,
     pub payload_json: String,
@@ -48,7 +48,7 @@ pub struct ShepherdDecision {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShepherdCommand {
-    pub run_name: String,
+    pub runtime_name: String,
     pub command_type: ShepherdCommandType,
     pub status: ShepherdCommandStatus,
     pub payload_json: String,
@@ -61,11 +61,11 @@ pub trait ShepherdEngine: Send + Sync {
 
     async fn ingest_user_message(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         message: &str,
     ) -> Result<ShepherdDecision, String>;
 
-    async fn issue_assignments(&self, run_name: &str) -> Result<Vec<ShepherdCommand>, String>;
+    async fn issue_assignments(&self, runtime_name: &str) -> Result<Vec<ShepherdCommand>, String>;
 }
 
 /// Minimal local Shepherd engine bootstrap.
@@ -82,11 +82,11 @@ impl ShepherdEngine for LocalShepherdEngine {
 
     async fn ingest_user_message(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         message: &str,
     ) -> Result<ShepherdDecision, String> {
         Ok(ShepherdDecision {
-            run_name: run_name.to_string(),
+            runtime_name: runtime_name.to_string(),
             decision_type: ShepherdDecisionType::Message,
             summary: "Accepted user instruction".to_string(),
             payload_json: serde_json::json!({ "message": message }).to_string(),
@@ -94,9 +94,9 @@ impl ShepherdEngine for LocalShepherdEngine {
         })
     }
 
-    async fn issue_assignments(&self, run_name: &str) -> Result<Vec<ShepherdCommand>, String> {
+    async fn issue_assignments(&self, runtime_name: &str) -> Result<Vec<ShepherdCommand>, String> {
         Ok(vec![ShepherdCommand {
-            run_name: run_name.to_string(),
+            runtime_name: runtime_name.to_string(),
             command_type: ShepherdCommandType::SpawnWorker,
             status: ShepherdCommandStatus::Pending,
             payload_json: "{}".to_string(),

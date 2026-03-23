@@ -1,15 +1,15 @@
 //! Worker subprocess main loop implementation.
 //!
 //! The WorkerRunner manages the lifecycle of a single worker subprocess:
-//! - Initializes connection to run state
+//! - Initializes connection to route runtime state
 //! - Spawns and communicates with the AI agent
 //! - Handles task claim/done cycle
 //! - Manages heartbeats and status updates
-//! - Coordinates with other workers via messaging
+//! - Reports upward to the orchestrator via structured concerns/progress
 //!
 //! Workers always access local SQLite state on the single host backend.
 
-use crate::cli::{MsgSubcommands, TaskSubcommands, WorkerCommands};
+use crate::cli::{TaskSubcommands, WorkerCommands};
 use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
 use crate::core::state_access::{StateAccess, StateAccessError};
 use crate::core::Files;
@@ -20,8 +20,8 @@ use thiserror::Error;
 /// Errors that can occur during worker operations.
 #[derive(Debug, Error)]
 pub enum WorkerError {
-    #[error("Run directory not found: {0}")]
-    RunNotFound(PathBuf),
+    #[error("Runtime directory not found: {0}")]
+    RuntimeNotFound(PathBuf),
 
     #[error("Worker not registered: {0}")]
     WorkerNotRegistered(String),
@@ -53,10 +53,10 @@ pub type WorkerResult<T> = Result<T, WorkerError>;
 pub struct WorkerConfig {
     /// Name of this worker (e.g., "achilles", "ajax").
     pub worker_name: String,
-    /// Name of the run.
-    pub run_name: String,
-    /// Path to the run directory.
-    pub run_dir: PathBuf,
+    /// Name of the runtime.
+    pub runtime_name: String,
+    /// Path to the runtime directory.
+    pub runtime_dir: PathBuf,
     /// Agent command to use for spawning workers.
     pub agent_command: Vec<String>,
     /// Heartbeat interval in seconds.
@@ -66,10 +66,10 @@ pub struct WorkerConfig {
 impl WorkerConfig {
     /// Create a new worker configuration from environment variables.
     ///
-    /// Expects HIRSEL_RUN and HIRSEL_WORKER environment variables.
+    /// Expects HIRSEL_RUNTIME and HIRSEL_WORKER environment variables.
     pub fn from_env() -> WorkerResult<Self> {
-        let run_name = std::env::var("HIRSEL_RUN")
-            .map_err(|_| WorkerError::Config("HIRSEL_RUN not set".into()))?;
+        let runtime_name = std::env::var("HIRSEL_RUNTIME")
+            .map_err(|_| WorkerError::Config("HIRSEL_RUNTIME not set".into()))?;
 
         let worker_name = std::env::var("HIRSEL_WORKER")
             .map_err(|_| WorkerError::Config("HIRSEL_WORKER not set".into()))?;
@@ -78,11 +78,11 @@ impl WorkerConfig {
         let agent_command = std::env::var("HIRSEL_AGENT_COMMAND")
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| vec!["hirsel".to_string(), "__worker-run".to_string()]);
+            .unwrap_or_else(|| vec!["hirsel".to_string(), "__worker-runtime".to_string()]);
 
-        // Get run directory - check HIRSEL_RUN_DIR first (for Docker/custom mounts),
-        // then fall back to HIRSEL_ROOT/runs/run_name
-        let run_dir = if let Ok(dir) = std::env::var("HIRSEL_RUN_DIR") {
+        // Get runtime directory. Check HIRSEL_RUNTIME_DIR first (for custom mounts),
+        // then fall back to HIRSEL_ROOT/runtimes/runtime_name.
+        let runtime_dir = if let Ok(dir) = std::env::var("HIRSEL_RUNTIME_DIR") {
             PathBuf::from(dir)
         } else {
             let hirsel_root = std::env::var("HIRSEL_ROOT")
@@ -92,17 +92,17 @@ impl WorkerConfig {
                         .unwrap_or_else(|| PathBuf::from("."))
                         .join(".hirsel")
                 });
-            hirsel_root.join("runs").join(&run_name)
+            hirsel_root.join("runtimes").join(&runtime_name)
         };
 
-        if !run_dir.exists() {
-            return Err(WorkerError::RunNotFound(run_dir));
+        if !runtime_dir.exists() {
+            return Err(WorkerError::RuntimeNotFound(runtime_dir));
         }
 
         Ok(Self {
             worker_name,
-            run_name,
-            run_dir,
+            runtime_name,
+            runtime_dir,
             agent_command,
             heartbeat_interval: 30,
         })
@@ -111,14 +111,14 @@ impl WorkerConfig {
     /// Create a worker configuration with explicit values.
     pub fn new(
         worker_name: String,
-        run_name: String,
-        run_dir: PathBuf,
+        runtime_name: String,
+        runtime_dir: PathBuf,
         agent_command: Vec<String>,
     ) -> Self {
         Self {
             worker_name,
-            run_name,
-            run_dir,
+            runtime_name,
+            runtime_dir,
             agent_command,
             heartbeat_interval: 30,
         }
@@ -143,13 +143,13 @@ pub struct WorkerRunner {
 impl WorkerRunner {
     /// Create a new worker runner backed by local SQLite state.
     pub fn new(config: WorkerConfig) -> WorkerResult<Self> {
-        let files = Files::new(&config.run_dir);
+        let files = Files::new(&config.runtime_dir);
 
         let runtime = tokio::runtime::Runtime::new()
             .map_err(|e| WorkerError::Config(format!("Failed to create runtime: {}", e)))?;
 
         let state = runtime
-            .block_on(SQLiteState::new(&config.run_name))
+            .block_on(SQLiteState::new(&config.runtime_name))
             .map_err(WorkerError::State)?;
 
         let workers = runtime
@@ -172,9 +172,9 @@ impl WorkerRunner {
         &self.config.worker_name
     }
 
-    /// Get the run directory.
-    pub fn run_dir(&self) -> &PathBuf {
-        &self.config.run_dir
+    /// Get the runtime directory.
+    pub fn runtime_dir(&self) -> &PathBuf {
+        &self.config.runtime_dir
     }
 
     /// Get access to the local SQLite state for direct queries.
@@ -227,11 +227,11 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // Task Operations (using board_nodes)
+    // Task operations backed by the route-scoped work tree state.
     // =========================================================================
 
     /// Get the full task tree with hierarchy and status.
-    /// Returns a hierarchical structure with dependencies using board_nodes.
+    /// Returns a hierarchical structure with dependencies using persisted work items.
     pub fn get_task_tree(&self) -> WorkerResult<String> {
         use crate::core::delta::{BoardNode, NodeKind};
 
@@ -426,17 +426,17 @@ impl WorkerRunner {
             .map_err(|e| WorkerError::Config(format!("Serialization error: {}", e)))
     }
 
-    /// Mark a task (board node) as done and signal ready for new work.
+    /// Mark a task (board node) as done and return control to the orchestrator.
     ///
     /// This:
     /// 1. Marks the task as complete (unblocks dependent tasks) - if a task is claimed
-    /// 2. Sets worker to Awaiting status (triggers process exit)
-    /// 3. Requests scaling check (daemon will respawn with new task if available)
+    /// 2. Sets worker to Awaiting status so the current process can exit cleanly
     ///
-    /// Workers are "dumb" - they do one task, then exit and get respawned.
+    /// Workers do not auto-pick follow-up work. The orchestrator decides what to
+    /// delegate next after this worker finishes.
     ///
-    /// For runs without board nodes, this will
-    /// just signal completion without completing a specific task.
+    /// For runtimes without persisted work items, this just signals completion
+    /// without completing a specific task.
     pub fn task_done(&self, task_id: Option<&str>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
 
@@ -475,14 +475,14 @@ impl WorkerRunner {
             ))?;
 
             tracing::info!(
-                "[{}] Completed task '{}', setting Awaiting for respawn",
+                "[{}] Completed task '{}', returning control to orchestrator",
                 self.config.worker_name,
                 task_id
             );
         } else {
-            // No task was claimed - this is valid for runs without board nodes (CLI runs)
+            // No task was claimed - this is valid for legacy direct worker flows
             tracing::info!(
-                "[{}] No task claimed, setting Awaiting for respawn (CLI run mode)",
+                "[{}] No task claimed, marking worker awaiting so orchestration can continue",
                 self.config.worker_name
             );
 
@@ -499,20 +499,11 @@ impl WorkerRunner {
         // Set status to Awaiting - this triggers worker termination
         self.set_status(WorkerStatus::Awaiting)?;
 
-        // Trigger scaling check - daemon will respawn with new task if available
-        if let Err(e) = self.run_async(self.state().request_scaling_check()) {
-            tracing::warn!(
-                "[{}] Failed to request scaling check: {} (worker will still exit)",
-                self.config.worker_name,
-                e
-            );
-        }
-
         Ok(serde_json::json!({
             "success": true,
             "task_id": tid,
             "status": "awaiting",
-            "message": "Work complete. Worker will exit and be respawned if more tasks available.",
+            "message": "Work complete. Worker will exit and control returns to the orchestrator.",
         })
         .to_string())
     }
@@ -542,17 +533,6 @@ impl WorkerRunner {
         ))?;
 
         tracing::debug!("[{}] Added node '{}'", self.config.worker_name, task_id);
-
-        // New unblocked task might be claimable - request scaling check
-        if blocked_refs.is_empty() {
-            if let Err(e) = self.run_async(self.state().request_scaling_check()) {
-                tracing::warn!(
-                    "[{}] Failed to request scaling check: {}",
-                    self.config.worker_name,
-                    e
-                );
-            }
-        }
 
         Ok(serde_json::json!({
             "success": true,
@@ -687,69 +667,45 @@ impl WorkerRunner {
     }
 
     // =========================================================================
-    // Message Operations (Project-Level via Sheepfold)
-    //
-    // All messages are stored in the global project_messages table.
-    // Thread naming:
-    // - "chat" = group chat (all workers + human)
-    // - Worker names = DMs (e.g., "willow-coopworth")
-    //
-    // Semantic aliases:
-    // - "user" → worker's own name (DM with human)
-    // - "group" → "chat" (group chat)
+    // Concern / Report Operations
     // =========================================================================
 
-    /// Get the project_id for messaging. Returns error if not in a board run.
-    fn get_project_id_for_messaging(&self) -> WorkerResult<i64> {
+    fn get_project_id_for_reporting(&self) -> WorkerResult<i64> {
         self.run_async(self.state().get_project_id())?
             .ok_or_else(|| {
-                WorkerError::Config("Messaging requires a project context (board run)".to_string())
+                WorkerError::Config("Reporting requires a route-bound project runtime".to_string())
             })
     }
 
-    /// Translate semantic thread names to actual thread names.
-    /// - "user" → worker's own name (DM)
-    /// - "group" → "chat" (group chat)
-    fn translate_thread(&self, thread: &str) -> String {
-        match thread {
-            "user" => self.config.worker_name.clone(),
-            "group" => "chat".to_string(),
-            _ => thread.to_string(),
-        }
-    }
-
-    /// Send a message to a thread.
-    /// When thread is "user", messages are sent to the worker's own DM thread
-    /// and HITL pause is triggered automatically (if HITL mode is enabled).
-    pub fn msg_send(&self, thread: &str, message: &str) -> WorkerResult<String> {
+    fn submit_concern(
+        &self,
+        kind: &str,
+        severity: &str,
+        summary: &str,
+        details: Option<&str>,
+        status: &str,
+        blocking: bool,
+    ) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
-        let project_id = self.get_project_id_for_messaging()?;
-        let is_user_dm = thread == "user";
-
-        // Translate semantic thread to actual thread
-        let actual_thread = self.translate_thread(thread);
-
-        self.run_async(self.state().add_project_message(
+        let project_id = self.get_project_id_for_reporting()?;
+        let concern = self.run_async(self.state().create_worker_concern(
             project_id,
-            &actual_thread,
             &worker_name,
-            message,
-            is_user_dm, // waiting flag for HITL
+            kind,
+            severity,
+            summary,
+            details,
+            status,
+            Some("worker"),
         ))?;
 
-        // Auto-trigger HITL pause when messaging the user (if HITL enabled)
-        let hitl_enabled = self
-            .run_async(self.state().get_human_in_the_loop())
-            .unwrap_or(true);
-        let waiting = is_user_dm && hitl_enabled;
-
-        if waiting {
+        if blocking {
             self.set_status(WorkerStatus::Awaiting)?;
             self.run_async(self.state().update_worker(
                 &worker_name,
                 WorkerUpdate {
-                    hitl_waiting: Some(true),
-                    waiting_thread: Some(actual_thread.clone()),
+                    hitl_waiting: Some(false),
+                    waiting_thread: Some("orchestrator".to_string()),
                     ..Default::default()
                 },
             ))?;
@@ -757,201 +713,63 @@ impl WorkerRunner {
 
         Ok(serde_json::json!({
             "success": true,
-            "thread": actual_thread,
-            "waiting": waiting,
+            "concern_id": concern.id,
+            "kind": concern.kind,
+            "severity": concern.severity,
+            "status": concern.status,
+            "blocking": blocking,
         })
         .to_string())
     }
 
-    /// Read messages from a thread (or all threads).
-    pub fn msg_read(&self, thread: Option<&str>) -> WorkerResult<String> {
+    pub fn report_progress(&self, summary: &str, details: Option<&str>) -> WorkerResult<String> {
         let worker_name = self.config.worker_name.clone();
-        let project_id = self.get_project_id_for_messaging()?;
+        let claimed = self.run_async(self.state().get_claimed_node(&worker_name))?;
 
-        let messages = if let Some(t) = thread {
-            let actual_thread = self.translate_thread(t);
-            self.run_async(self.state().get_unread_project_messages(
-                project_id,
-                &actual_thread,
+        if let Some(node) = claimed {
+            self.run_async(self.state().record_work_item_event(
+                &node.id,
+                "worker",
                 &worker_name,
-            ))?
-        } else {
-            self.run_async(
-                self.state()
-                    .get_all_unread_project_messages(project_id, &worker_name),
-            )?
-        };
-
-        // Mark messages as read
-        for msg in &messages {
-            let _ = self.run_async(self.state().mark_project_messages_read(
-                project_id,
-                &msg.thread,
-                &worker_name,
-            ));
-        }
-
-        Ok(serde_json::json!({
-            "messages": messages.iter().map(|m| serde_json::json!({
-                "thread": m.thread,
-                "sender": m.sender,
-                "content": m.content,
-                "timestamp": m.timestamp,
-                "waiting": m.waiting,
-            })).collect::<Vec<_>>(),
-        })
-        .to_string())
-    }
-
-    /// List available message threads.
-    pub fn msg_list(&self) -> WorkerResult<String> {
-        let project_id = self.get_project_id_for_messaging()?;
-        let threads = self.run_async(self.state().get_project_threads(project_id))?;
-
-        Ok(serde_json::json!({
-            "threads": threads,
-        })
-        .to_string())
-    }
-
-    /// Check inbox for new messages.
-    pub fn msg_inbox(&self) -> WorkerResult<String> {
-        let worker_name = self.config.worker_name.clone();
-        let project_id = self.get_project_id_for_messaging()?;
-        let threads = self.run_async(self.state().get_project_threads(project_id))?;
-
-        let mut inbox = Vec::new();
-        for thread in &threads {
-            let messages = self.run_async(self.state().get_unread_project_messages(
-                project_id,
-                thread,
-                &worker_name,
+                "progress",
+                summary,
+                details,
             ))?;
-
-            if !messages.is_empty() {
-                inbox.push(serde_json::json!({
-                    "thread": thread,
-                    "count": messages.len(),
-                    "messages": messages.iter().map(|m| serde_json::json!({
-                        "sender": m.sender,
-                        "content": m.content,
-                        "timestamp": m.timestamp,
-                    })).collect::<Vec<_>>(),
-                }));
-            }
-        }
-
-        Ok(serde_json::json!({
-            "inbox": inbox,
-        })
-        .to_string())
-    }
-
-    // =========================================================================
-    // Chat API (cleaner interface for workers)
-    // =========================================================================
-
-    /// List available chat contacts.
-    /// Returns: user (human), group (team), other workers.
-    pub fn list_contacts(&self) -> WorkerResult<String> {
-        let workers = self.run_async(self.state().get_workers())?;
-        let worker_names: Vec<String> = workers
-            .iter()
-            .filter(|w| w.name != self.config.worker_name)
-            .map(|w| w.name.clone())
-            .collect();
-
-        let is_multi_worker = workers.len() > 1;
-
-        Ok(serde_json::json!({
-            "contacts": {
-                "user": true,
-                "group": is_multi_worker,
-                "workers": worker_names,
-            },
-            "note": "Use 'user' for human, 'group' for team chat, worker name for DM"
-        })
-        .to_string())
-    }
-
-    /// Get chat message history, optionally filtered by contact.
-    pub fn chat_history(&self, with: Option<&str>, limit: Option<usize>) -> WorkerResult<String> {
-        let worker_name = self.config.worker_name.clone();
-        let project_id = self.get_project_id_for_messaging()?;
-        let limit = limit.unwrap_or(50) as i64;
-
-        let messages = if let Some(contact) = with {
-            let actual_thread = self.translate_thread(contact);
-            self.run_async(
-                self.state()
-                    .get_project_messages(project_id, &actual_thread, limit),
-            )?
-        } else {
-            // Get from all threads (limited)
-            self.run_async(
-                self.state()
-                    .get_all_unread_project_messages(project_id, &worker_name),
-            )?
-        };
-
-        let msgs: Vec<serde_json::Value> = messages
-            .iter()
-            .take(limit as usize)
-            .map(|m| {
-                serde_json::json!({
-                    "from": m.sender,
-                    "thread": m.thread,
-                    "content": m.content,
-                    "timestamp": m.timestamp,
-                })
+            return Ok(serde_json::json!({
+                "success": true,
+                "recorded": true,
+                "item_id": node.id,
             })
-            .collect();
-
-        Ok(serde_json::json!({
-            "messages": msgs,
-            "count": msgs.len(),
-        })
-        .to_string())
-    }
-
-    /// Send a chat message to a specific contact.
-    pub fn chat_send(&self, to: &str, message: &str) -> WorkerResult<String> {
-        self.msg_send(to, message)
-    }
-
-    /// Check for unread messages, optionally filtered by contact.
-    pub fn chat_unread(&self, with: Option<&str>) -> WorkerResult<String> {
-        let worker_name = self.config.worker_name.clone();
-        let project_id = self.get_project_id_for_messaging()?;
-
-        let threads = if let Some(contact) = with {
-            vec![self.translate_thread(contact)]
-        } else {
-            self.run_async(self.state().get_project_threads(project_id))?
-        };
-
-        let mut unread = Vec::new();
-        for thread in &threads {
-            let messages = self.run_async(self.state().get_unread_project_messages(
-                project_id,
-                thread,
-                &worker_name,
-            ))?;
-
-            if !messages.is_empty() {
-                unread.push(serde_json::json!({
-                    "from": thread,
-                    "count": messages.len(),
-                    "preview": messages.first().map(|m| m.content.chars().take(100).collect::<String>()),
-                }));
-            }
+            .to_string());
         }
 
         Ok(serde_json::json!({
-            "has_unread": !unread.is_empty(),
-            "threads": unread,
+            "success": true,
+            "recorded": false,
         })
         .to_string())
+    }
+
+    pub fn raise_concern(
+        &self,
+        kind: &str,
+        summary: &str,
+        details: Option<&str>,
+        severity: Option<&str>,
+        blocking: bool,
+    ) -> WorkerResult<String> {
+        self.submit_concern(
+            kind,
+            severity.unwrap_or(if blocking { "high" } else { "medium" }),
+            summary,
+            details,
+            "open",
+            blocking,
+        )
+    }
+
+    pub fn request_decision(&self, summary: &str, details: Option<&str>) -> WorkerResult<String> {
+        self.submit_concern("decision_needed", "high", summary, details, "open", true)
     }
 
     // =========================================================================
@@ -1087,13 +905,6 @@ impl WorkerRunner {
                 ),
                 TaskSubcommands::Done(args) => self.task_done(args.task_id.as_deref()),
             },
-
-            WorkerCommands::Msg(msg_cmd) => match msg_cmd {
-                MsgSubcommands::Send(args) => self.msg_send(&args.thread, &args.message),
-                MsgSubcommands::Read(args) => self.msg_read(args.thread.as_deref()),
-                MsgSubcommands::List => self.msg_list(),
-                MsgSubcommands::Inbox => self.msg_inbox(),
-            },
         }
     }
 }
@@ -1108,17 +919,17 @@ mod tests {
             "achilles".into(),
             "test-run".into(),
             PathBuf::from("/tmp/test-run"),
-            vec!["hirsel".to_string(), "__worker-run".to_string()],
+            vec!["hirsel".to_string(), "__worker-runtime".to_string()],
         );
         assert_eq!(config.worker_name, "achilles");
-        assert_eq!(config.run_name, "test-run");
+        assert_eq!(config.runtime_name, "test-run");
         assert_eq!(config.heartbeat_interval, 30);
     }
 
     #[test]
     fn test_worker_config_from_env_missing_vars() {
         // Clear env vars to ensure they're not set
-        std::env::remove_var("HIRSEL_RUN");
+        std::env::remove_var("HIRSEL_RUNTIME");
         std::env::remove_var("HIRSEL_WORKER");
 
         let result = WorkerConfig::from_env();

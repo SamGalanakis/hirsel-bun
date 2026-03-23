@@ -8,10 +8,9 @@
 //!
 //! | Builder | Used By | Description |
 //! |---------|---------|-------------|
-//! | `build_shared_routes()` | Both | Run ops, workers, tasks, messages, evals, history |
-//! | `build_legacy_chat_routes()` | N/A | Removed during lash migration |
+//! | `build_shared_routes()` | Both | Runtime ops, workers, tasks, evals, history |
+//! | `build_readonly_config_routes()` | Daemon | Read-only config endpoint |
 //! | `build_config_routes()` | Backend only | Config CRUD, credentials |
-//! | `build_board_routes()` | Backend only | Reserved (board file sync removed) |
 
 use axum::{
     routing::{get, patch, post},
@@ -23,133 +22,114 @@ use super::{routes, AppState};
 
 /// Routes shared between daemon and remote server
 ///
-/// These handle core run operations that both servers need.
+/// These handle core route-runtime operations that both servers need.
 pub fn build_shared_routes() -> Router<Arc<AppState>> {
     Router::new()
         // Health check
         .route("/health", get(routes::health))
-        // Run management
-        .route("/api/runs", get(routes::list_runs))
-        .route("/api/runs/start", post(routes::start_run))
+        // Runtime management
+        .route("/api/runtimes", get(routes::list_runs))
+        .route("/api/runtimes/start", post(routes::start_run))
         .route(
-            "/api/runs/{name}",
+            "/api/runtimes/{name}",
             get(routes::get_run).delete(routes::delete_run),
         )
-        .route("/api/runs/{name}/files", get(routes::download_files))
-        .route("/api/runs/{name}/workspace", post(routes::init_workspace))
-        .route("/api/runs/{name}/pause", post(routes::pause_run))
-        .route("/api/runs/{name}/resume", post(routes::resume_run))
-        .route("/api/runs/{name}/deliver", post(routes::deliver_run))
-        // Workers
-        .route("/api/runs/{name}/workers", get(routes::list_workers))
+        .route("/api/runtimes/{name}/files", get(routes::download_files))
         .route(
-            "/api/runs/{name}/workers/{worker}/restart",
+            "/api/runtimes/{name}/workspace",
+            post(routes::init_workspace),
+        )
+        .route("/api/runtimes/{name}/pause", post(routes::pause_run))
+        .route("/api/runtimes/{name}/resume", post(routes::resume_run))
+        .route("/api/runtimes/{name}/deliver", post(routes::deliver_run))
+        // Workers
+        .route("/api/runtimes/{name}/workers", get(routes::list_workers))
+        .route(
+            "/api/runtimes/{name}/workers/{worker}/restart",
             post(routes::restart_worker),
         )
         .route(
-            "/api/runs/{name}/workers/{worker}/spawn",
+            "/api/runtimes/{name}/workers/{worker}/spawn",
             post(routes::spawn_single_worker),
         )
         .route(
-            "/api/runs/{name}/workers/{worker}/resume",
+            "/api/runtimes/{name}/workers/{worker}/resume",
             post(routes::resume_worker),
         )
         .route(
-            "/api/runs/{name}/workers/{worker}/events",
+            "/api/runtimes/{name}/workers/{worker}/events",
             get(routes::get_worker_events),
         )
-        // Project messages (Sheepfold - used by workers via StateAccess)
+        .route("/api/runtimes/{name}/scribe", post(routes::add_scribe))
         .route(
-            "/api/projects/{project_id}/messages",
-            post(routes::add_project_message),
-        )
-        .route(
-            "/api/projects/{project_id}/messages/{thread}",
-            get(routes::get_project_messages),
-        )
-        .route(
-            "/api/projects/{project_id}/messages/{thread}/unread/{reader}",
-            get(routes::get_unread_project_messages),
-        )
-        .route(
-            "/api/projects/{project_id}/messages/{thread}/mark-read",
-            post(routes::mark_project_messages_read),
-        )
-        .route(
-            "/api/projects/{project_id}/messages/unread/{reader}",
-            get(routes::get_all_unread_project_messages),
-        )
-        .route(
-            "/api/projects/{project_id}/threads",
-            get(routes::get_project_threads),
-        )
-        .route("/api/runs/{name}/scribe", post(routes::add_scribe))
-        .route(
-            "/api/runs/{name}/retained-context",
+            "/api/runtimes/{name}/retained-context",
             get(routes::get_retained_context),
         )
         // Evals
-        .route("/api/runs/{name}/evals", get(routes::list_evals))
+        .route("/api/runtimes/{name}/evals", get(routes::list_evals))
         // History
-        .route("/api/runs/{name}/history", get(routes::get_history))
-        // Config - read only (both servers can read)
-        .route("/api/config", get(routes::get_config))
-        // Board integration - for workers in board runs
+        .route("/api/runtimes/{name}/history", get(routes::get_history))
+        // Board integration - for workers in route runtimes
         .route(
-            "/api/runs/{name}/config/project_id",
+            "/api/runtimes/{name}/config/project_id",
             get(routes::get_project_id),
         )
         // Nodes - unified task system
         .route(
-            "/api/runs/{name}/nodes",
+            "/api/runtimes/{name}/nodes",
             get(routes::get_nodes).post(routes::add_node),
         )
         .route(
-            "/api/runs/{name}/nodes/claimable",
+            "/api/runtimes/{name}/nodes/claimable",
             get(routes::get_claimable_nodes),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/claim",
+            "/api/runtimes/{name}/nodes/{id}/claim",
             post(routes::claim_node),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/complete",
+            "/api/runtimes/{name}/nodes/{id}/complete",
             post(routes::complete_node),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/unclaim",
+            "/api/runtimes/{name}/nodes/{id}/unclaim",
             post(routes::unclaim_node),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/blocked",
+            "/api/runtimes/{name}/nodes/{id}/blocked",
             get(routes::is_node_blocked),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/check-pass",
+            "/api/runtimes/{name}/nodes/{id}/check-pass",
             post(routes::node_check_pass),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/check-fail",
+            "/api/runtimes/{name}/nodes/{id}/check-fail",
             post(routes::node_check_fail),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/tokens",
+            "/api/runtimes/{name}/nodes/{id}/tokens",
             post(routes::set_node_tokens),
         )
         .route(
-            "/api/runs/{name}/nodes/{id}/validated",
+            "/api/runtimes/{name}/nodes/{id}/validated",
             get(routes::get_validated_nodes),
         )
 }
 
 /// Shepherd routes were removed during lash migration.
 
+/// Read-only config routes for the local daemon.
+pub fn build_readonly_config_routes() -> Router<Arc<AppState>> {
+    Router::new().route("/api/config", get(routes::get_config))
+}
+
 /// Config management routes (backend server only)
 ///
-/// Full config CRUD - daemon only exposes read-only config endpoint.
+/// Full config CRUD for the remote server.
 pub fn build_config_routes() -> Router<Arc<AppState>> {
     Router::new()
-        // Config - full CRUD (overwrites the read-only route from shared)
+        // Config - full CRUD (includes GET, so do not merge with read-only config routes)
         .route(
             "/api/config",
             get(routes::get_config)
@@ -188,9 +168,4 @@ pub fn build_config_routes() -> Router<Arc<AppState>> {
             "/api/auth/codex/device/exchange",
             post(routes::codex_device_exchange),
         )
-}
-
-/// Board file-sync routes removed (DB-only board editing).
-pub fn build_board_routes() -> Router<Arc<AppState>> {
-    Router::new()
 }

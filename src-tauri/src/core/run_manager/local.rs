@@ -142,15 +142,15 @@ impl RunManager for LocalRunManager {
     // =========================================================================
 
     async fn poll_lifecycle(&self, run: &str) -> RunManagerResult<()> {
-        use crate::core::config::run_dir;
+        use crate::core::config::runtime_dir;
 
-        let run_dir = run_dir(run);
+        let runtime_dir = runtime_dir(run);
 
         // Get agent command
         let agent_cmd = crate::cli::config::get_agent_command();
 
         // Create lifecycle manager (it opens the state DB internally)
-        let lifecycle = LocalLifecycleManager::new(run.to_string(), run_dir.clone(), agent_cmd)
+        let lifecycle = LocalLifecycleManager::new(run.to_string(), runtime_dir.clone(), agent_cmd)
             .await
             .map_err(|e| RunManagerError::State(e.to_string()))?;
 

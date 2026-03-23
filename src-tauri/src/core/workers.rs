@@ -12,7 +12,7 @@
 use crate::cli::AgentPreset;
 use crate::core::constants::TIME_NOTIFICATION_THRESHOLDS;
 use crate::core::state::{SQLiteState, StateError, Status, WorkerStatus, WorkerUpdate};
-use crate::core::ProjectMessagesStore;
+use crate::core::{CreateWorkerConcernRequest, WorkerConcernStore};
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use thiserror::Error;
@@ -30,7 +30,7 @@ pub enum WorkerError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
-    #[error("Run is paused")]
+    #[error("Runtime is paused")]
     RunPaused,
 
     #[error("Worker not found: {0}")]
@@ -66,10 +66,10 @@ pub async fn spawn_worker(
     config: WorkerSpawnConfig,
     state: &SQLiteState,
 ) -> WorkerResult<SpawnResult> {
-    // Check if run is paused before spawning
+    // Check if the route runtime is paused before spawning.
     if state.status().await? == Status::Paused {
         info!(
-            "[{}] spawn_worker: run is paused, not spawning",
+            "[{}] spawn_worker: runtime is paused, not spawning",
             config.worker_name
         );
         state
@@ -87,7 +87,7 @@ pub async fn spawn_worker(
     // Build environment for worker subprocess BEFORE updating state
     let mut env: HashMap<String, String> = std::env::vars().collect();
     env.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
-    env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
+    env.insert("HIRSEL_RUNTIME".to_string(), config.runtime_name.clone());
     env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
 
     // Apply forwarded credentials from the backend runtime
@@ -97,6 +97,9 @@ pub async fn spawn_worker(
         }
         if let Some(ref key) = creds.openrouter_api_key {
             env.insert("OPENROUTER_API_KEY".to_string(), key.clone());
+        }
+        if let Some(ref key) = creds.tavily_api_key {
+            env.insert("TAVILY_API_KEY".to_string(), key.clone());
         }
         if let Some(ref token) = creds.codex_access_token {
             env.insert("CODEX_ACCESS_TOKEN".to_string(), token.clone());
@@ -123,21 +126,21 @@ pub async fn spawn_worker(
         err
     })?;
 
-    // Build args for hirsel __worker-run
+    // Build args for hirsel __worker-runtime.
     let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
         WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e))
     })?;
 
     let mut args = vec![
-        "__worker-run".to_string(),
-        "--run".to_string(),
-        config.run_name.clone(),
+        "__worker-runtime".to_string(),
+        "--runtime".to_string(),
+        config.runtime_name.clone(),
         "--worker".to_string(),
         config.worker_name.clone(),
         "--work-dir".to_string(),
         config.work_dir.to_string_lossy().to_string(),
-        "--run-dir".to_string(),
-        config.run_dir.to_string_lossy().to_string(),
+        "--runtime-dir".to_string(),
+        config.runtime_dir.to_string_lossy().to_string(),
         "--agent-command".to_string(),
         agent_command_json,
     ];
@@ -225,7 +228,7 @@ pub async fn spawn_worker(
         .await?;
 
     info!(
-        "Spawned worker {} (hirsel __worker-run, PID {}, runner_type: local)",
+        "Spawned worker {} (hirsel __worker-runtime, PID {}, runner_type: local)",
         config.worker_name, pid
     );
 
@@ -391,24 +394,35 @@ pub async fn check_and_send_time_notifications(
         if threshold > last_notified && pct_elapsed >= threshold {
             let message = get_time_notification_message(threshold);
 
-            // Send via project messages if the run is linked to a project
+            // Record as a structured worker concern if the run is linked to a project
             if let (Ok(Some(project_id)), Ok(route_id)) =
                 (state.get_project_id().await, state.get_route_id().await)
             {
-                if let Ok(store) = ProjectMessagesStore::open().await {
-                    // Send to chat (group) or worker DM
-                    let thread = if is_multi_worker {
-                        "chat".to_string()
-                    } else {
-                        worker_name.unwrap_or("user").to_string()
-                    };
-
-                    if let Err(e) = store
-                        .add_message(project_id, route_id, &thread, "system", message, false)
-                        .await
-                    {
-                        warn!("Failed to send time notification to project: {}", e);
-                    }
+                if let Ok(store) = WorkerConcernStore::open().await {
+                    let _ = store
+                        .create(&CreateWorkerConcernRequest {
+                            project_id,
+                            route_id,
+                            runtime_name: Some(state.runtime_name().to_string()),
+                            worker_name: worker_name.unwrap_or("system").to_string(),
+                            kind: "time_warning".to_string(),
+                            severity: "medium".to_string(),
+                            summary: message.to_string(),
+                            details: Some(format!(
+                                "Run has reached {}% of its configured time limit.",
+                                threshold
+                            )),
+                            status: "open".to_string(),
+                            source: Some(
+                                if is_multi_worker {
+                                    "time-check-multi"
+                                } else {
+                                    "time-check-single"
+                                }
+                                .to_string(),
+                            ),
+                        })
+                        .await;
                 }
             }
 
@@ -466,8 +480,8 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
     let mut marked: Vec<(String, String)> = Vec::new();
 
     // Get the runs directory
-    let runs_dir = match dirs::home_dir() {
-        Some(home) => home.join(".hirsel").join("runs"),
+    let runtimes_dir = match dirs::home_dir() {
+        Some(home) => home.join(".hirsel").join("runtimes"),
         None => {
             warn!("[reconcile] Could not determine home directory");
             return marked;
@@ -475,25 +489,25 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
     };
 
     // Iterate over all run directories
-    let entries = match std::fs::read_dir(&runs_dir) {
+    let entries = match std::fs::read_dir(&runtimes_dir) {
         Ok(e) => e,
         Err(_) => return marked,
     };
 
     for entry in entries.flatten() {
-        let run_name = entry.file_name().to_string_lossy().to_string();
+        let runtime_name = entry.file_name().to_string_lossy().to_string();
         let db_path = entry.path().join("hirsel.db");
 
         if !db_path.exists() {
             continue;
         }
 
-        let state = match SQLiteState::new(&run_name).await {
+        let state = match SQLiteState::new(&runtime_name).await {
             Ok(s) => s,
             Err(e) => {
                 warn!(
                     "[reconcile] Failed to open database for {}: {}",
-                    run_name, e
+                    runtime_name, e
                 );
                 continue;
             }
@@ -502,7 +516,10 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
         let workers = match state.get_workers().await {
             Ok(w) => w,
             Err(e) => {
-                warn!("[reconcile] Failed to get workers for {}: {}", run_name, e);
+                warn!(
+                    "[reconcile] Failed to get workers for {}: {}",
+                    runtime_name, e
+                );
                 continue;
             }
         };
@@ -522,7 +539,7 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
                     // Mark as Paused so it can be resumed
                     info!(
                         "[reconcile] Marking stale worker {} in run {} as Paused (PID {} dead)",
-                        worker.name, run_name, pid
+                        worker.name, runtime_name, pid
                     );
 
                     if let Err(e) = state
@@ -543,7 +560,7 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
                             worker.name, e
                         );
                     } else {
-                        marked.push((run_name.clone(), worker.name.clone()));
+                        marked.push((runtime_name.clone(), worker.name.clone()));
                     }
                 }
             } else if worker.status == WorkerStatus::Working {
@@ -564,7 +581,7 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
                 // Local worker without PID - stale entry, mark as Paused
                 info!(
                     "[reconcile] Marking stale worker {} in run {} as Paused (no PID)",
-                    worker.name, run_name
+                    worker.name, runtime_name
                 );
 
                 if let Err(e) = state
@@ -584,7 +601,7 @@ pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
                         worker.name, e
                     );
                 } else {
-                    marked.push((run_name.clone(), worker.name.clone()));
+                    marked.push((runtime_name.clone(), worker.name.clone()));
                 }
             }
         }
@@ -626,10 +643,10 @@ mod tests {
     #[test]
     fn test_worker_spawn_config() {
         let config = WorkerSpawnConfig {
-            run_name: "my-run".to_string(),
+            runtime_name: "my-run".to_string(),
             worker_name: "worker1".to_string(),
             work_dir: PathBuf::from("/tmp/work"),
-            run_dir: PathBuf::from("/tmp/run"),
+            runtime_dir: PathBuf::from("/tmp/run"),
             agent_command: vec!["test-agent".to_string()],
             is_leader: true,
             leader_name: Some("worker1".to_string()),

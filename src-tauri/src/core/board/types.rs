@@ -279,7 +279,7 @@ pub struct TaskRun {
     pub id: i64,
     pub project_id: i64,
     pub task_id: String,
-    pub run_name: String,
+    pub runtime_name: String,
     pub dispatched_at: String,
 }
 

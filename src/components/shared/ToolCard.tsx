@@ -10,7 +10,7 @@ import { getToolIcon, getToolShortLabel, getToolStatusIndicator, isToolWorking }
 
 /** Props for ToolCard component */
 export interface ToolCardProps {
-  /** Full tool name/title (e.g., "mcp__hirsel__board_view") */
+  /** Full tool name/title (e.g., "mcp__hirsel__get_route_work_tree") */
   title: string | null | undefined;
   /** Tool kind (read, edit, execute, etc.) */
   kind: string | null | undefined;

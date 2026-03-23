@@ -14,23 +14,23 @@ pub fn hirsel_dir() -> PathBuf {
         .join(".hirsel")
 }
 
-/// Get the runs directory (~/.hirsel/runs)
-pub fn runs_dir() -> PathBuf {
-    hirsel_dir().join("runs")
+/// Get the runtime workspace directory (~/.hirsel/runtimes).
+pub fn runtimes_dir() -> PathBuf {
+    hirsel_dir().join("runtimes")
 }
 
-/// Get the path to a specific run
-pub fn run_dir(run_name: &str) -> PathBuf {
-    runs_dir().join(run_name)
+/// Get the path to a specific runtime workspace.
+pub fn runtime_dir(runtime_name: &str) -> PathBuf {
+    runtimes_dir().join(runtime_name)
 }
 
-/// Check if a run exists
-pub fn run_exists(run_name: &str) -> bool {
-    run_dir(run_name).exists()
+/// Check if a runtime workspace exists.
+pub fn runtime_exists(runtime_name: &str) -> bool {
+    runtime_dir(runtime_name).exists()
 }
 
 /// Get the path to the global hirsel database (~/.hirsel/hirsel.db)
-/// This stores global data like Shepherd chat history that shouldn't be in run DBs
+/// This stores global data like Shepherd chat history that shouldn't be in route runtime DBs.
 pub fn global_db_path() -> PathBuf {
     hirsel_dir().join("hirsel.db")
 }

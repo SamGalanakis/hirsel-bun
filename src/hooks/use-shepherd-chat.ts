@@ -63,7 +63,7 @@ interface UseShepherdChatReturn {
   reset: () => Promise<void>;
 }
 
-const WELCOME_MESSAGE = `Hello! I'm Shepherd, your AI assistant for Hirsel. I can help you steer the project surface, routes, tasks, and workers.
+const WELCOME_MESSAGE = `Hello! I'm Shepherd, your AI assistant for Hirsel. I can help you steer the project surface, routes, work items, and workers.
 
 What would you like to do today?`;
 
@@ -85,7 +85,7 @@ export function useShepherdChat(
   const [shepherdEditing, setShepherdEditing] = createSignal(false);
   const [editingIslands, setEditingIslands] = createSignal<Set<string>>(new Set());
 
-  // Focus node (for project context)
+  // Focused work item (for project context)
   const [focusNodeId, setFocusNodeIdState] = createSignal<string | null>(null);
   const [focusNodeName, setFocusNodeNameState] = createSignal<string | null>(null);
 

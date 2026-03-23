@@ -49,7 +49,7 @@ pub type DispatchResult<T> = Result<T, DispatchError>;
 #[derive(Default)]
 pub struct DispatchConfig {
     /// Custom run name (auto-generated if not provided)
-    pub run_name: Option<String>,
+    pub runtime_name: Option<String>,
     /// Target branch for delivery (from project settings if not specified)
     pub target_branch: Option<String>,
     /// Worker scale override
@@ -62,7 +62,7 @@ pub struct DispatchConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DispatchInfo {
-    pub run_name: String,
+    pub runtime_name: String,
     pub run_path: PathBuf,
     pub task_ids: Vec<String>,
     pub eval_ids: Vec<String>,
@@ -262,11 +262,11 @@ impl DispatchService {
     }
 
     /// Record the dispatch in the task_runs table
-    pub async fn record_dispatch(&self, task_id: &str, run_name: &str) -> DispatchResult<()> {
-        self.board.record_task_run(task_id, run_name).await?;
+    pub async fn record_dispatch(&self, task_id: &str, runtime_name: &str) -> DispatchResult<()> {
+        self.board.record_task_run(task_id, runtime_name).await?;
         info!(
             "Recorded dispatch: task={}, run={}, project={}",
-            task_id, run_name, self.project_id
+            task_id, runtime_name, self.project_id
         );
         Ok(())
     }
@@ -305,18 +305,18 @@ impl DispatchService {
         let eval_content = self.generate_eval(&evals);
 
         // Generate run name if not provided
-        let run_name = config
-            .run_name
+        let runtime_name = config
+            .runtime_name
             .clone()
-            .unwrap_or_else(crate::core::names::generate_run_name);
+            .unwrap_or_else(crate::core::names::generate_runtime_name);
 
         info!(
             "Prepared dispatch: run={}, tasks={}, evals={}",
-            run_name, preview.task_count, preview.eval_count
+            runtime_name, preview.task_count, preview.eval_count
         );
 
         Ok(DispatchInfo {
-            run_name,
+            runtime_name,
             run_path: PathBuf::new(), // Will be set by RunManager
             task_ids: preview.task_ids,
             eval_ids: preview.eval_ids,
@@ -355,21 +355,21 @@ impl DispatchService {
         let eval_content = self.generate_eval(&scope.evals);
 
         // Generate run name if not provided
-        let run_name = config
-            .run_name
+        let runtime_name = config
+            .runtime_name
             .clone()
-            .unwrap_or_else(crate::core::names::generate_run_name);
+            .unwrap_or_else(crate::core::names::generate_runtime_name);
 
         info!(
             "Prepared multi-root dispatch: run={}, roots={}, tasks={}, evals={}",
-            run_name,
+            runtime_name,
             root_task_ids.len(),
             scope.task_ids.len(),
             scope.eval_ids.len()
         );
 
         Ok(DispatchInfo {
-            run_name,
+            runtime_name,
             run_path: PathBuf::new(), // Will be set by RunManager
             task_ids: scope.task_ids,
             eval_ids: scope.eval_ids,

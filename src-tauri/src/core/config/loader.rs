@@ -156,20 +156,6 @@ pub fn load_config_file(
         }
     }
 
-    // Load user_message_pause
-    if let Some(val) = table.get("user_message_pause") {
-        if let Some(s) = val.as_str() {
-            if s == "sender" || s == "all" {
-                config.user_message_pause = s.to_string();
-            } else {
-                warnings.push(format!(
-                    "Config warning: user_message_pause must be 'sender' or 'all', got {}",
-                    s
-                ));
-            }
-        }
-    }
-
     // Load coordinator_port
     if let Some(val) = table.get("coordinator_port") {
         if let Some(n) = val.as_integer() {

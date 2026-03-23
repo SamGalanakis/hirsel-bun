@@ -1,32 +1,33 @@
 # Hirsel Server Deployment
 
-Deploy hirsel as a headless backend server.
+Deploy Hirsel as a headless backend server.
 
-## Network Architecture
+## What this Docker setup is
+
+This image runs the server binary only:
+
+- `hirsel serve`
+- local Hirsel state under `/data`
+- basic host tools needed by the backend (`git`, `ssh`, `curl`)
+
+It does **not** bundle the old ACP adapters or the Tauri GUI stack.
+
+## Network architecture
 
 Hirsel expects the backend to be reachable at a stable URL from client devices:
 
-```
+```text
 Desktop / phone app ──┐
                       │ your network / VPN / reverse proxy
 Backend host ─────────┘  backend.example.internal:8080
 ```
 
-Clients connect to the backend via whatever URL you provide. Hirsel does not manage the network layer itself.
+Clients connect to whatever URL you provide. Hirsel does not manage the network layer itself.
 
-## Setup
-
-### 1. Put the backend host on your network
+## Quick start with Docker Compose
 
 ```bash
-# Make sure client devices can reach the backend host.
-# This can be via LAN, VPN, reverse proxy, or any other setup you manage.
-```
-
-### 2. Deploy the backend
-
-```bash
-git clone https://github.com/anthropics/hirsel.git
+git clone https://github.com/SamGalanakis/hirsel.git
 cd hirsel/deploy
 
 cp .env.example .env
@@ -35,16 +36,34 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-First build takes a few minutes (compiling Rust).
+First build compiles the Rust server binary, so it takes a few minutes.
 
-### 3. Verify
+## Direct `docker run`
+
+If you do not want Compose:
 
 ```bash
-# From a client machine
+docker build -f deploy/Dockerfile -t hirsel-server .
+
+docker volume create hirsel-data
+
+docker run -d \
+  --name hirsel \
+  --restart unless-stopped \
+  -p 8080:8080 \
+  -e HIRSEL_API_KEY=replace-me \
+  -e HIRSEL_ROOT=/data \
+  -v hirsel-data:/data \
+  hirsel-server
+```
+
+## Verify
+
+```bash
 curl http://backend.example.internal:8080/health
 ```
 
-## Client Configuration
+## Client configuration
 
 On each client device, configure the backend target in `~/.hirsel/config.toml`:
 
@@ -54,15 +73,16 @@ url = "http://backend.example.internal:8080"
 api_key = "your-api-key"
 ```
 
-## Environment Variables
+## Environment variables
 
 | Variable | Description |
 |----------|-------------|
-| `HIRSEL_API_KEY` | API key for authentication (required) |
+| `HIRSEL_API_KEY` | API key for authenticating client requests. Required. |
+| `HIRSEL_ROOT` | Server data directory inside the container. Defaults to `/data`. |
 
-## Data Management
+## Data and backups
 
-Run data is persisted in the `hirsel-data` Docker volume.
+This deployment stores Hirsel state in the `hirsel-data` Docker volume mounted at `/data`.
 
 ### Backup
 
@@ -91,7 +111,7 @@ docker compose logs -f
 # Restart
 docker compose restart
 
-# Update
+# Rebuild after updating the repo
 git pull
 docker compose up -d --build
 
@@ -99,4 +119,13 @@ docker compose up -d --build
 docker compose down
 ```
 
-The backend just needs to be reachable by clients at some URL.
+## Important runtime note
+
+Workers always run on the backend host.
+
+For this Docker deployment, that means workers run **inside this container** unless you explicitly configure container runners or choose a non-containerized host deployment.
+
+So this image is a good default for simple self-hosting, but it does **not** try to ship every possible project toolchain. If your workers need custom language/runtime environments, prefer:
+
+- host/binary deployment, or
+- explicit worker runner container images configured in Hirsel.

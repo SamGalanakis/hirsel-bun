@@ -38,7 +38,6 @@ export interface StorageConfig {
 export interface Settings {
   evalTimeout: number;
   humanInTheLoop: boolean;
-  userMessagePause: 'sender' | 'all' | 'none';
   autoLearn: boolean;
   contextWarningThreshold: number;
   coordinatorPort: number;
@@ -53,6 +52,7 @@ export interface Settings {
     configuredProviders?: string[];
     defaultProvider?: string;
   };
+  tavilyConfigured?: boolean;
   llm?: {
     provider?: 'codex' | 'openrouter';
     openrouterBaseUrl?: string;
@@ -85,7 +85,6 @@ export interface CodexDeviceExchangeResponse {
 export const defaultSettings = (): Settings => ({
   evalTimeout: 300,
   humanInTheLoop: true,
-  userMessagePause: 'sender',
   autoLearn: false,
   contextWarningThreshold: 0.5,
   coordinatorPort: 19700,

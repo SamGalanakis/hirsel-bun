@@ -281,8 +281,13 @@ export const ProjectProvider: ParentComponent = (props) => {
     createPoll(
       async () => {
         try {
-          const count = await invoke<number>('get_project_unread_count', { projectId });
-          setProjectUnreadCount(count);
+          const response = await invoke<{
+            notifications: Array<{ projectId: number }>;
+          }>('get_all_unread_notifications');
+          setProjectUnreadCount(
+            response.notifications.filter((notification) => notification.projectId === projectId)
+              .length,
+          );
         } catch (e) {
           console.error('Failed to fetch unread count:', e);
         }

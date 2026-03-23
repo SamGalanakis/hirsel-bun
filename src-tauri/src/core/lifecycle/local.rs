@@ -17,7 +17,6 @@ use crate::core::snapshot::{
     WorkerStateHandle,
 };
 use crate::core::state::{FailureReason, SQLiteState, Status, WorkerStatus, WorkerUpdate};
-use crate::core::ProjectMessagesStore;
 // Note: Workers are no longer spawned directly from the lifecycle manager.
 // The daemon handles spawning via the orchestrator, which uses the runner system.
 use std::collections::HashSet;
@@ -38,16 +37,16 @@ pub struct LocalLifecycleManager {
 impl LocalLifecycleManager {
     /// Create a new LocalLifecycleManager.
     pub async fn new(
-        run_name: impl Into<String>,
-        run_dir: PathBuf,
+        runtime_name: impl Into<String>,
+        runtime_dir: PathBuf,
         agent_command: Vec<String>,
     ) -> LifecycleResult<Self> {
-        let run_name = run_name.into();
-        let files = Files::new(&run_dir);
-        let state = SQLiteState::new(&run_name).await?;
+        let runtime_name = runtime_name.into();
+        let files = Files::new(&runtime_dir);
+        let state = SQLiteState::new(&runtime_name).await?;
 
         Ok(Self {
-            context: LifecycleContext::new(&run_name, run_dir, agent_command),
+            context: LifecycleContext::new(&runtime_name, runtime_dir, agent_command),
             state,
             files,
         })
@@ -55,14 +54,14 @@ impl LocalLifecycleManager {
 
     /// Create from existing state (for use in contexts where state is already open).
     pub fn from_state(
-        run_name: impl Into<String>,
-        run_dir: PathBuf,
+        runtime_name: impl Into<String>,
+        runtime_dir: PathBuf,
         agent_command: Vec<String>,
         state: SQLiteState,
     ) -> Self {
-        let files = Files::new(&run_dir);
+        let files = Files::new(&runtime_dir);
         Self {
-            context: LifecycleContext::new(run_name, run_dir, agent_command),
+            context: LifecycleContext::new(runtime_name, runtime_dir, agent_command),
             state,
             files,
         }
@@ -83,45 +82,6 @@ impl LocalLifecycleManager {
         let project_id = self.state.get_project_id().await.ok().flatten()?;
         let route_id = self.state.get_route_id().await.ok()?;
         Some(DeltaState::with_route(project_id, route_id))
-    }
-
-    /// Send a system message to the group chat.
-    /// Uses project messages if the run is linked to a project.
-    async fn send_system_message(&self, message: &str) {
-        if let (Ok(Some(project_id)), Ok(route_id)) = (
-            self.state.get_project_id().await,
-            self.state.get_route_id().await,
-        ) {
-            if let Ok(store) = ProjectMessagesStore::open().await {
-                if let Err(e) = store
-                    .add_message(project_id, route_id, "chat", "system", message, false)
-                    .await
-                {
-                    warn!("Failed to send system message to project: {}", e);
-                }
-            }
-        }
-    }
-
-    /// Send a system message to a specific worker (their DM thread).
-    /// Uses project messages if the run is linked to a project.
-    async fn send_system_message_to_worker(&self, worker_name: &str, message: &str) {
-        if let (Ok(Some(project_id)), Ok(route_id)) = (
-            self.state.get_project_id().await,
-            self.state.get_route_id().await,
-        ) {
-            if let Ok(store) = ProjectMessagesStore::open().await {
-                if let Err(e) = store
-                    .add_message(project_id, route_id, worker_name, "system", message, false)
-                    .await
-                {
-                    warn!(
-                        "Failed to send system message to worker {}: {}",
-                        worker_name, e
-                    );
-                }
-            }
-        }
     }
 
     /// Get claimable nodes (board nodes that can be claimed).
@@ -276,7 +236,7 @@ impl LocalLifecycleManager {
 
     /// Pause all workers (kill processes and mark as Paused).
     ///
-    /// For ephemeral hosts (Fly), creates a snapshot of the work directory
+    /// For storage-backed ephemeral hosts, creates a snapshot of the work directory
     /// before stopping the worker so it can be restored on resume.
     async fn pause_all_workers_internal(&self) -> LifecycleResult<Vec<String>> {
         // Load config to get runner and storage settings
@@ -313,14 +273,15 @@ impl LocalLifecycleManager {
                     }
                 };
 
-            // Archive work directory (for ephemeral hosts)
+            // Archive work directory for storage-backed ephemeral hosts.
             if let (Some(ref work_dir_str), Some(ref strategy)) =
                 (&worker.work_dir, &archive_strategy)
             {
                 // Skip archive for no-op strategies (files persist on disk)
                 if !strategy.is_noop() {
                     let work_dir = PathBuf::from(work_dir_str);
-                    let archive_key = format!("{}/{}/workdir", self.context.run_name, worker.name);
+                    let archive_key =
+                        format!("{}/{}/workdir", self.context.runtime_name, worker.name);
 
                     match strategy.archive(&archive_key, &work_dir).await {
                         Ok(handle) => {
@@ -346,14 +307,15 @@ impl LocalLifecycleManager {
                 }
             }
 
-            // Archive agent session (for session resume on ephemeral hosts)
+            // Archive agent session for session resume on storage-backed ephemeral hosts.
             if let (Some(ref session_id), Some(ref strategy)) =
                 (&worker.session_id, &archive_strategy)
             {
                 // Skip archive for no-op strategies (files persist on disk)
                 if !strategy.is_noop() {
-                    let session_dir = host_session_path(&self.context.run_dir, &worker.name);
-                    let archive_key = format!("{}/{}/session", self.context.run_name, worker.name);
+                    let session_dir = host_session_path(&self.context.runtime_dir, &worker.name);
+                    let archive_key =
+                        format!("{}/{}/session", self.context.runtime_name, worker.name);
 
                     match strategy.archive(&archive_key, &session_dir).await {
                         Ok(handle) => {
@@ -496,7 +458,7 @@ impl LocalLifecycleManager {
                 .as_ref()
                 .filter(|s| !s.is_empty())
                 .map(PathBuf::from)
-                .unwrap_or_else(|| self.context.run_dir.join("work").join(&worker.name));
+                .unwrap_or_else(|| self.context.runtime_dir.join("work").join(&worker.name));
 
             // Parse unified state handle if exists (don't restore here - orchestrator will do it)
             let state_handle = worker.state_handle.as_ref().and_then(|json| {
@@ -599,7 +561,7 @@ impl LocalLifecycleManager {
         };
 
         let project_path = PathBuf::from(&project_path_str);
-        let staging_dir = self.context.run_dir.join("work").join("staging");
+        let staging_dir = self.context.runtime_dir.join("work").join("staging");
 
         // Pick the best claimable node to assign to this worker
         let node = match Self::pick_best_claimable_node(&claimable) {
@@ -613,11 +575,11 @@ impl LocalLifecycleManager {
 
         // Create worker clone
         let worker_dir = match create_worker_clone(
-            &self.context.run_name,
+            &self.context.runtime_name,
             &project_path,
             &new_name,
             Some(&staging_dir),
-            &self.context.run_dir,
+            &self.context.runtime_dir,
         ) {
             Ok(dir) => dir,
             Err(e) => {
@@ -636,7 +598,12 @@ impl LocalLifecycleManager {
             .flatten()
             .unwrap_or_else(|| "local".to_string());
         self.state
-            .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
+            .add_worker(
+                &new_name,
+                worker_dir.to_str().unwrap_or("."),
+                &location,
+                None,
+            )
             .await?;
 
         // Claim node for new worker
@@ -667,19 +634,6 @@ impl LocalLifecycleManager {
                 new_name, e
             );
         }
-
-        // Create worker chat file
-        let chat_file = self.files.chats_dir().join(format!("{}.md", new_name));
-        if let Err(e) = std::fs::write(&chat_file, format!("# {} Chat\n\n", new_name)) {
-            warn!("maybe_scale_up: failed to create worker chat: {}", e);
-        }
-
-        // Announce in group chat
-        self.send_system_message(&format!(
-            "New worker **{}** has joined and is assigned task **{}**.",
-            new_name, node.id
-        ))
-        .await;
 
         info!(
             "maybe_scale_up: spawning worker {} with task {}",
@@ -764,7 +718,7 @@ impl LocalLifecycleManager {
                     .as_ref()
                     .filter(|s| !s.is_empty())
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| self.context.run_dir.join("work").join(&worker.name));
+                    .unwrap_or_else(|| self.context.runtime_dir.join("work").join(&worker.name));
 
                 actions.push(LifecycleAction::ResumeWorker {
                     worker_name: worker.name.clone(),
@@ -818,7 +772,7 @@ impl LocalLifecycleManager {
         };
 
         let project_path = PathBuf::from(&project_path_str);
-        let staging_dir = self.context.run_dir.join("work").join("staging");
+        let staging_dir = self.context.runtime_dir.join("work").join("staging");
         let to_spawn = available_slots.min(claimable.len());
 
         for node in claimable.into_iter().take(to_spawn) {
@@ -826,11 +780,11 @@ impl LocalLifecycleManager {
             used_names.insert(new_name.clone());
 
             let worker_dir = match create_worker_clone(
-                &self.context.run_name,
+                &self.context.runtime_name,
                 &project_path,
                 &new_name,
                 Some(&staging_dir),
-                &self.context.run_dir,
+                &self.context.runtime_dir,
             ) {
                 Ok(dir) => dir,
                 Err(e) => {
@@ -853,7 +807,12 @@ impl LocalLifecycleManager {
 
             if let Err(e) = self
                 .state
-                .add_worker(&new_name, worker_dir.to_str().unwrap_or("."), &location)
+                .add_worker(
+                    &new_name,
+                    worker_dir.to_str().unwrap_or("."),
+                    &location,
+                    None,
+                )
                 .await
             {
                 warn!("evaluate_scaling: failed to add worker {}: {}", new_name, e);
@@ -888,20 +847,6 @@ impl LocalLifecycleManager {
                 );
             }
 
-            let chat_file = self.files.chats_dir().join(format!("{}.md", new_name));
-            if let Err(e) = std::fs::write(&chat_file, format!("# {} Chat\n\n", new_name)) {
-                warn!(
-                    "evaluate_scaling: failed to create worker chat for {}: {}",
-                    new_name, e
-                );
-            }
-
-            self.send_system_message(&format!(
-                "New worker **{}** has joined and is assigned task **{}**.",
-                new_name, node.id
-            ))
-            .await;
-
             actions.push(LifecycleAction::SpawnWorker {
                 worker_name: new_name.clone(),
                 work_dir: worker_dir,
@@ -934,7 +879,7 @@ impl LocalLifecycleManager {
 
         // Spawn the eval subprocess
         // Capture stderr to a log file for debugging
-        let eval_log_path = self.context.run_dir.join("eval_spawn.log");
+        let eval_log_path = self.context.runtime_dir.join("eval_spawn.log");
         let log_file = match std::fs::File::create(&eval_log_path) {
             Ok(f) => Some(f),
             Err(e) => {
@@ -945,10 +890,10 @@ impl LocalLifecycleManager {
 
         let mut cmd = Command::new(&hirsel_exe);
         cmd.arg("__eval-run")
-            .arg("--run")
-            .arg(&self.context.run_name)
-            .arg("--run-dir")
-            .arg(&self.context.run_dir)
+            .arg("--runtime")
+            .arg(&self.context.runtime_name)
+            .arg("--runtime-dir")
+            .arg(&self.context.runtime_dir)
             .arg("--agent-command")
             .arg(serde_json::to_string(&agent_command).unwrap_or_else(|_| "[]".to_string()))
             .stdin(Stdio::null())
@@ -973,8 +918,8 @@ impl LocalLifecycleManager {
             .map_err(|e| LifecycleError::Worker(format!("Failed to spawn eval agent: {}", e)))?;
 
         info!(
-            "Spawned eval agent for run {}, pid={}",
-            self.context.run_name,
+            "Spawned eval agent for runtime {}, pid={}",
+            self.context.runtime_name,
             child.id()
         );
 
@@ -992,7 +937,7 @@ impl LocalLifecycleManager {
         };
 
         match Command::new(&hirsel_exe)
-            .args(["summary", &self.context.run_name])
+            .args(["summary", &self.context.runtime_name])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1311,20 +1256,6 @@ impl LifecycleManager for LocalLifecycleManager {
             return Ok(());
         }
 
-        // Send final message
-        let workers = self.state.get_workers().await?;
-        let is_multi_worker = workers.len() > 1;
-
-        let message = "Time limit reached. Run failed.";
-
-        // Send to group chat or individual worker DM
-        if is_multi_worker {
-            self.send_system_message(message).await;
-        } else if let Some(worker) = workers.first() {
-            self.send_system_message_to_worker(&worker.name, message)
-                .await;
-        }
-
         // Cancel any running evals
         let cancelled = self
             .state
@@ -1341,6 +1272,7 @@ impl LifecycleManager for LocalLifecycleManager {
         }
 
         // Set all active workers to PAUSED status
+        let workers = self.state.get_workers().await?;
         for worker in &workers {
             if matches!(
                 worker.status,
@@ -1358,9 +1290,9 @@ impl LifecycleManager for LocalLifecycleManager {
             }
         }
 
-        // Set run status to Failed with TimeLimit reason
+        // Set runtime status to Failed with TimeLimit reason
         self.state.set_failed(FailureReason::TimeLimit).await?;
-        info!("Run status set to Failed (time_limit)");
+        info!("Runtime status set to Failed (time_limit)");
 
         // Write timeout event to database
         if let Err(e) = self
@@ -1446,8 +1378,8 @@ mod tests {
             PathBuf::from("/tmp/test"),
             vec!["codex".to_string()],
         );
-        assert_eq!(ctx.run_name, "test-run");
-        assert_eq!(ctx.run_dir, PathBuf::from("/tmp/test"));
+        assert_eq!(ctx.runtime_name, "test-run");
+        assert_eq!(ctx.runtime_dir, PathBuf::from("/tmp/test"));
         assert_eq!(ctx.agent_command, vec!["codex".to_string()]);
     }
 }

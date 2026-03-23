@@ -57,7 +57,7 @@ export function getToolStatusColor(status: string | null | undefined): string {
  * Get a short display label from a tool title.
  *
  * Examples:
- * - "mcp__hirsel__board_view" → "board_view"
+ * - "mcp__hirsel__get_route_work_tree" → "get_route_work_tree"
  * - "Read" → "Read"
  * - "mcp__eval__run_tests" → "run_tests"
  */

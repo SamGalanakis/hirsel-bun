@@ -1,0 +1,13 @@
+.git
+.github
+.idea
+.vscode
+node_modules
+dist
+target
+src-tauri/target
+docs
+screenshots
+tests
+dev.log
+.profiling

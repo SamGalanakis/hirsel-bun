@@ -60,6 +60,7 @@ export const BackendTab: Component<BackendTabProps> = (props) => {
   const [gitHubToken, setGitHubToken] = createSignal('');
   const [openrouterApiKey, setOpenrouterApiKey] = createSignal('');
   const [openrouterKeyConfigured, setOpenrouterKeyConfigured] = createSignal(false);
+  const [tavilyApiKey, setTavilyApiKey] = createSignal('');
   const [codexLoggedIn, setCodexLoggedIn] = createSignal(false);
   const [codexLoginInProgress, setCodexLoginInProgress] = createSignal(false);
   const [codexLoginStatus, setCodexLoginStatus] = createSignal('');
@@ -70,12 +71,6 @@ export const BackendTab: Component<BackendTabProps> = (props) => {
   const providerOptions: DropdownOption[] = [
     { value: 'codex', label: 'Codex (OpenAI)' },
     { value: 'openrouter', label: 'OpenRouter' },
-  ];
-
-  const pauseOptions: DropdownOption[] = [
-    { value: 'sender', label: 'Sender only' },
-    { value: 'all', label: 'All workers' },
-    { value: 'none', label: 'None' },
   ];
 
   const runnerSelectOptions = (): DropdownOption[] => [
@@ -329,6 +324,10 @@ export const BackendTab: Component<BackendTabProps> = (props) => {
       keyType: 'openrouter_api_key',
     }).catch(() => false);
     setOpenrouterKeyConfigured(hasOpenrouter);
+    const hasTavily = await invoke<boolean>('has_credential', {
+      keyType: 'tavily_api_key',
+    }).catch(() => false);
+    props.setSettings('tavilyConfigured', hasTavily);
     await refreshCodexAuthState();
   };
 
@@ -344,6 +343,13 @@ export const BackendTab: Component<BackendTabProps> = (props) => {
         keyType: 'openrouter_api_key',
         value: openrouterApiKey().trim(),
       });
+    }
+    if (tavilyApiKey().trim()) {
+      await invoke('store_credential', {
+        keyType: 'tavily_api_key',
+        value: tavilyApiKey().trim(),
+      });
+      props.setSettings('tavilyConfigured', true);
     }
   };
 
@@ -473,7 +479,7 @@ export const BackendTab: Component<BackendTabProps> = (props) => {
                   class="input w-full"
                   value={props.settings.backend.url || ''}
                   onInput={(e) => props.setSettings('backend', 'url', e.currentTarget.value)}
-                  placeholder="http://hirsel-host.tailnet.ts.net:8080"
+                  placeholder="http://backend.example.internal:8080"
                 />
                 <p class="text-xs text-wool-500">Use the backend URL you want this client to connect to.</p>
               </div>
@@ -703,18 +709,8 @@ export const BackendTab: Component<BackendTabProps> = (props) => {
                 checked={props.settings.humanInTheLoop}
                 onChange={(checked) => props.setSettings('humanInTheLoop', checked)}
                 label="Human in the Loop"
-                description="Allow agents to send messages to the user and wait for a response."
+                description="Allow the orchestrator to loop the user in when worker concerns require a decision."
               />
-
-              <div class="space-y-2">
-                <label class="block text-sm text-wool-300">Pause on User Message</label>
-                <Dropdown
-                  value={props.settings.userMessagePause}
-                  options={pauseOptions}
-                  onChange={(value) => props.setSettings('userMessagePause', value as 'sender' | 'all' | 'none')}
-                />
-                <p class="text-xs text-wool-500">Which workers pause when a user message is sent.</p>
-              </div>
 
               <Switch
                 id="autolearn-switch"
@@ -842,8 +838,48 @@ export const BackendTab: Component<BackendTabProps> = (props) => {
           <Show when={props.section() === 'services'}>
             <div class="space-y-6">
               <p class="text-sm text-wool-500">
-                Hirsel now assumes a single backend control plane. Workers, Scribe, delivery, and orchestration run there; clients connect over your private network.
+                Configure service credentials that Hirsel uses across Shepherd and worker runtimes.
               </p>
+
+              <div class="rounded-none border border-pasture-600 p-4 space-y-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="flex items-center gap-3">
+                    <span class="flex items-center justify-center w-8 h-8 rounded-none bg-sage/20">
+                      <Icon name="globe" class="w-4 h-4 text-sage" />
+                    </span>
+                    <div>
+                      <h3 class="font-medium text-wool-200">Tavily Web Search</h3>
+                      <p class="text-xs text-wool-500">
+                        Required for the <code>search_web</code> and <code>fetch_url</code> tools in both Shepherd and workers.
+                      </p>
+                    </div>
+                  </div>
+                  <Show when={props.settings.tavilyConfigured}>
+                    <span class="text-xs px-2 py-0.5 bg-green-500/20 text-green-400 rounded-none flex items-center gap-1">
+                      <Icon name="check" class="w-3 h-3" />
+                      Configured
+                    </span>
+                  </Show>
+                  <Show when={!props.settings.tavilyConfigured}>
+                    <span class="text-xs px-2 py-0.5 bg-amber-500/20 text-amber-400 rounded">Required</span>
+                  </Show>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="block text-sm text-wool-300">Tavily API Key</label>
+                  <input
+                    type="password"
+                    class="input w-full"
+                    value={tavilyApiKey()}
+                    onInput={(e) => setTavilyApiKey(e.currentTarget.value)}
+                    placeholder="tvly-..."
+                  />
+                  <p class="text-xs text-wool-500">
+                    Add a Tavily key here before expecting web search or URL fetch tools to work.
+                  </p>
+                </div>
+              </div>
+
               <div class="rounded-none border border-pasture-600 p-4 space-y-3">
                 <div class="flex items-center gap-3">
                   <span class="flex items-center justify-center w-8 h-8 rounded-none bg-sage/20">

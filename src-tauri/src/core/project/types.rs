@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::route::CreateRouteRepoRequest;
 
-/// Project - a lightweight configuration container for runs
+/// Project - a lightweight configuration container for route-based work
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -49,8 +49,6 @@ pub struct RouteSummary {
     pub name: String,
     pub selected: bool,
     pub status: String,
-    #[serde(default)]
-    pub run_name: Option<String>,
     pub updated_at: String,
 }
 

@@ -9,8 +9,7 @@ version = 2
 unmaintained = "none"
 # RUSTSEC-2023-0071: rsa timing sidechannel - no fix available, transitive dep from octocrab
 # Only used for JWT signing (GitHub API auth), not in network-observable crypto operations
-# RUSTSEC-2026-0007: bytes integer overflow - transitive dep, waiting for upstream fix
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0007"]
+ignore = ["RUSTSEC-2023-0071"]
 
 [licenses]
 version = 2
@@ -29,8 +28,6 @@ allow = [
     "CC0-1.0",
     "BSL-1.0",
     "CDLA-Permissive-2.0",
-    # Internal proprietary dependency (lash)
-    "LicenseRef-LASH-PROPRIETARY",
 ]
 confidence-threshold = 0.8
 exceptions = []
@@ -43,13 +40,6 @@ registries = []
 [[licenses.clarify]]
 crate = "hirsel"
 expression = "MIT"
-license-files = []
-
-# lash currently has no SPDX metadata in Cargo.toml.
-# Treat it as a private/proprietary internal dependency.
-[[licenses.clarify]]
-crate = "lash"
-expression = "LicenseRef-LASH-PROPRIETARY"
 license-files = []
 
 [bans]

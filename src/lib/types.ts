@@ -26,10 +26,10 @@ export interface RunnerEntry {
 }
 
 // =============================================================================
-// Run Types
+// Runtime Types
 // =============================================================================
 
-/** Run status values matching Rust Status enum */
+/** Runtime status values matching the Rust `Status` enum. */
 export type RunStatus =
   | 'draft'
   | 'working'
@@ -48,7 +48,7 @@ export type RunStatus =
 /** Failure reason values (only meaningful when status is 'failed') */
 export type FailureReason = 'iteration_limit' | 'time_limit' | 'eval_failed' | 'manual';
 
-/** Summary of a run for the run list panel */
+/** Summary of a runtime for worker/runtime views. */
 export interface RunSummary {
   name: string;
   status: RunStatus;
@@ -59,11 +59,10 @@ export interface RunSummary {
   workersDesired: number;
   elapsedMinutes: number;
   timeLimitMinutes: number | null;
-  hasUnreadMessages: boolean;
   createdAt: string;
 }
 
-/** Full run details for the detail view */
+/** Full runtime details for inspection surfaces. */
 export interface RunDetail {
   name: string;
   status: RunStatus;
@@ -205,6 +204,7 @@ export interface Worker {
   needsRestart: boolean;
   sessionStartedAt: string | null;
   hitlWaiting: boolean;
+  capabilityProfile?: CapabilityProfile | null;
 }
 
 /** Worker with session metrics for display */
@@ -221,38 +221,18 @@ export interface WorkerDisplay extends Worker {
   hitlWaiting: boolean;
 }
 
-// =============================================================================
-// Message Types
-// =============================================================================
-
-/** Message from the database */
-export interface Message {
-  id: number;
-  thread: string;
-  sender: string;
-  content: string;
-  waiting: boolean;
-  readBy: string[] | null;
-  timestamp: string;
-}
-
-/** Thread summary for chat panel */
-export interface ThreadSummary {
-  name: string;
-  messageCount: number;
-  unreadCount: number;
-  lastMessage: string | null;
-  lastTimestamp: string | null;
-}
-
 /** Unread notification from backend */
 export interface UnreadNotification {
   id: string;
+  concernId: number;
   projectId: number;
-  runName: string;
-  thread: string;
-  sender: string;
-  content: string;
+  projectName: string;
+  routeId: number;
+  routeName: string;
+  workerName: string;
+  kind: string;
+  severity: string;
+  summary: string;
   timestamp: string;
 }
 
@@ -539,26 +519,30 @@ export interface WorkerEventsResponse {
 export type WorkerStreamEvent =
   | {
       type: 'history';
-      runName: string;
+      projectId: number;
+      routeId: number;
       workerName: string;
       events: WorkerEvent[];
       workerStatus: string | null;
     }
   | {
       type: 'event';
-      runName: string;
+      projectId: number;
+      routeId: number;
       workerName: string;
       event: WorkerEvent;
     }
   | {
       type: 'status';
-      runName: string;
+      projectId: number;
+      routeId: number;
       workerName: string;
       workerStatus: string | null;
     }
   | {
       type: 'ended';
-      runName: string;
+      projectId: number;
+      routeId: number;
       workerName: string;
     };
 
@@ -709,13 +693,11 @@ export type ShepherdMessageChunk =
 /** Shepherd session scope - determines prompt and context */
 export type ShepherdScope =
   | { type: 'general' }
-  | { type: 'run'; runName: string; workspacePath: string; projectPath?: string }
   | { type: 'project'; projectId: number; workspacePath?: string; focus?: TaskFocus };
 
 /** Request to start a Shepherd session */
 export type StartShepherdSessionRequest =
   | { type: 'general' }
-  | { type: 'run'; runName: string }
   | { type: 'project'; projectId: number }
   | { type: 'projectFocused'; projectId: number; taskId: string; taskName: string };
 
@@ -1050,8 +1032,6 @@ export type BoardNodeStatus =
 export type BoardNodeSource = 'user' | 'plan' | 'worker' | 'system';
 
 /** Status of a project's persistent run */
-export type ProjectRunStatus = 'paused' | 'working' | 'failed';
-
 /** A board node (flat, from DB) */
 export interface BoardNode {
   id: string;
@@ -1103,16 +1083,6 @@ export interface BoardNodeTree {
   tokensUsed: number | null;
 }
 
-/** A persistent run for a project */
-export interface ProjectRun {
-  id: number;
-  projectId: number;
-  runName: string;
-  status: ProjectRunStatus;
-  createdAt: string;
-  lastDispatchAt: string | null;
-}
-
 /** Request to create a board node */
 export interface CreateBoardNodeRequest {
   parentId?: string | null;
@@ -1129,23 +1099,6 @@ export interface UpdateBoardNodeRequest {
   content?: string;
   validatedBy?: string[];
   blockedBy?: string[];
-}
-
-/** Response from starting Shepherd orchestration */
-export interface ShepherdRunResponse {
-  runName: string;
-  nodeCount: number;
-  featureCount: number;
-  planTaskCount: number;
-  versionNumber: number;
-  versionId: number;
-}
-
-/** Response containing the board tree */
-export interface BoardTreeResponse {
-  tree: BoardNodeTree[];
-  projectRun: ProjectRun | null;
-  generation: number;
 }
 
 /** Status colors for board nodes */
@@ -1298,6 +1251,7 @@ export interface Route {
   humanInTheLoop: boolean;
   targetBranch: string | null;
   runner: string | null;
+  archivedAt: string | null;
 }
 
 /** Latest persisted project-focus artifact for a project */
@@ -1313,13 +1267,45 @@ export interface RouteSummary {
   name: string;
   selected: boolean;
   status: string;
-  runName: string | null;
   updatedAt: string;
 }
 
 export interface ProjectSurfaceSnapshot {
   focusView: ProjectFocusView;
   routes: RouteSummary[];
+}
+
+export type CapabilityProfile = 'channel' | 'branch' | 'code_worker' | 'ops_worker';
+
+export interface AgentRef {
+  kind: string;
+  id: string;
+  capabilityProfile?: CapabilityProfile | null;
+}
+
+export interface WorkItem {
+  id: string;
+  parentId: string | null;
+  title: string;
+  description: string;
+  status: string;
+  blockedBy: string[];
+  claimedBy: string | null;
+  completedBy: string | null;
+  completedAt: string | null;
+  assignee: AgentRef | null;
+  capabilityProfile: CapabilityProfile | null;
+  archivedAt: string | null;
+}
+
+export interface WorkItemTree extends WorkItem {
+  children: WorkItemTree[];
+}
+
+export interface WorkTreeSnapshot {
+  routeId: number;
+  tree: WorkItemTree[];
+  generation: number;
 }
 
 /** Route with ancestry information for tree display */
@@ -1333,25 +1319,24 @@ export interface RouteTree {
 }
 
 // =============================================================================
-// Project Messages Types (Sheepfold)
+// Worker Concern Types
 // =============================================================================
 
-/** Project message (Meadow or worker DM) */
-export interface ProjectMessage {
+export interface WorkerConcern {
   id: number;
   projectId: number;
-  thread: string; // 'chat' or worker_name
-  sender: string; // 'user' or worker_name
-  content: string;
-  waiting: boolean;
-  timestamp: string;
-}
-
-/** Project thread summary with unread count */
-export interface ProjectThreadSummary {
-  thread: string;
-  messageCount: number;
-  unreadCount: number;
-  lastMessage: string | null;
-  lastTimestamp: string | null;
+  routeId: number;
+  runName: string | null;
+  workerName: string;
+  kind: string;
+  severity: string;
+  summary: string;
+  details: string | null;
+  status: string;
+  source: string | null;
+  resolution: string | null;
+  resolvedBy: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }

@@ -12,7 +12,7 @@ use crate::core::project::{
     UpdateProjectRequest,
 };
 use crate::core::route::{CreateRouteRepoRequest, RouteStore, UpdateRouteSettingsRequest};
-use crate::core::state::SQLiteState;
+use crate::core::SQLiteState;
 use tauri::Emitter;
 
 /// List all projects, sorted by most recently created
@@ -63,7 +63,7 @@ pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapsh
 
     for route in routes {
         let delta = DeltaState::with_route(project_id, route.id);
-        let project_run = delta.get_project_run().await.str_err()?;
+        let project_run = delta.get_route_runtime().await.str_err()?;
         summaries.push(RouteSummary {
             route_id: route.id,
             name: route.name,
@@ -72,7 +72,6 @@ pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapsh
                 .as_ref()
                 .map(|run| run.status.as_str().to_string())
                 .unwrap_or_else(|| "idle".to_string()),
-            run_name: project_run.map(|run| run.run_name),
             updated_at: route.updated_at,
         });
     }
@@ -303,27 +302,31 @@ async fn propagate_settings_to_active_run(
     human_in_the_loop: Option<bool>,
 ) -> Result<(), String> {
     let delta_state = DeltaState::with_route(project_id, route_id);
-    let project_run = delta_state.get_project_run().await.str_err()?;
+    let project_run = delta_state.get_route_runtime().await.str_err()?;
 
     let Some(run) = project_run else {
         return Ok(());
     };
 
-    let run_dir = config::run_dir(&run.run_name);
-    let db_path = run_dir.join("hirsel.db");
+    let runtime_dir = config::runtime_dir(&run.runtime_name);
+    let db_path = runtime_dir.join("hirsel.db");
 
     if !db_path.exists() {
         return Ok(());
     }
 
-    let state = SQLiteState::new(&run.run_name).await.str_err()?;
+    let state = SQLiteState::new(&run.runtime_name).await.str_err()?;
 
     if let Some(scale) = worker_scale {
         state
             .set_worker_scale(scale)
             .await
             .context("Failed to set worker_scale")?;
-        tracing::info!("Propagated worker_scale={} to run {}", scale, run.run_name);
+        tracing::info!(
+            "Propagated worker_scale={} to run {}",
+            scale,
+            run.runtime_name
+        );
     }
 
     if let Some(limit) = time_limit_minutes {
@@ -334,7 +337,7 @@ async fn propagate_settings_to_active_run(
         tracing::info!(
             "Propagated time_limit_minutes={} to run {}",
             limit,
-            run.run_name
+            run.runtime_name
         );
     }
 
@@ -346,7 +349,7 @@ async fn propagate_settings_to_active_run(
         tracing::info!(
             "Propagated human_in_the_loop={} to run {}",
             hitl,
-            run.run_name
+            run.runtime_name
         );
     }
 

@@ -13,7 +13,7 @@ mod schema;
 mod versions;
 
 pub use error::{DeltaStateError, DeltaStateResult};
-pub use runs::{list_working_project_runs, update_project_run_status_by_name};
+pub use runs::{list_working_route_runtimes, update_route_runtime_status_by_name};
 pub use schema::ensure_schema;
 
 use sqlx::SqlitePool;

@@ -45,13 +45,13 @@ pub type RunnerResult<T> = Result<T, RunnerError>;
 #[derive(Debug, Clone)]
 pub struct WorkerSpawnConfig {
     /// Run name
-    pub run_name: String,
+    pub runtime_name: String,
     /// Worker name
     pub worker_name: String,
     /// Working directory for the worker
     pub work_dir: PathBuf,
-    /// Run directory (contains state.db, chats/, logs/)
-    pub run_dir: PathBuf,
+    /// Run directory (contains state.db, logs, and runtime assets)
+    pub runtime_dir: PathBuf,
     /// Agent command to run (e.g., ["codex"])
     pub agent_command: Vec<String>,
     /// Whether this worker is the leader
@@ -95,6 +95,9 @@ impl WorkerSpawnConfig {
             }
             if let Some(ref key) = creds.openrouter_api_key {
                 env.insert("OPENROUTER_API_KEY".to_string(), key.clone());
+            }
+            if let Some(ref key) = creds.tavily_api_key {
+                env.insert("TAVILY_API_KEY".to_string(), key.clone());
             }
             if let Some(ref token) = creds.codex_access_token {
                 env.insert("CODEX_ACCESS_TOKEN".to_string(), token.clone());

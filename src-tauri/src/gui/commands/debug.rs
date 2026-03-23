@@ -1,9 +1,8 @@
 //! Debug and utility commands
 //!
-//! Commands for debugging, frontend logging, version info, and daemon health.
+//! Commands for debugging, frontend logging, version info, and local process inspection.
 
 use super::ResultExt;
-use crate::daemon;
 use crate::version;
 
 /// Version information response
@@ -66,7 +65,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
         // Count hirsel worker processes
         let hirsel_output = Command::new("sh")
             .arg("-c")
-            .arg("ps aux | grep -E '[h]irsel .*__worker-run' | wc -l")
+            .arg("ps aux | grep -E '[h]irsel .*__worker-runtime' | wc -l")
             .output()
             .str_err()?;
         let hirsel_count: i32 = String::from_utf8_lossy(&hirsel_output.stdout)
@@ -88,7 +87,7 @@ pub async fn get_process_counts() -> Result<serde_json::Value, String> {
         // Get detailed process list
         let detail_output = Command::new("sh")
             .arg("-c")
-            .arg("ps aux | grep -E 'hirsel .*__worker-run|node' | grep -v grep | head -20")
+            .arg("ps aux | grep -E 'hirsel .*__worker-runtime|node' | grep -v grep | head -20")
             .output()
             .str_err()?;
         let details = String::from_utf8_lossy(&detail_output.stdout).to_string();
@@ -121,7 +120,7 @@ pub async fn kill_orphaned_worker_processes() -> Result<serde_json::Value, Strin
         // Use pkill to kill stale worker helper processes.
         let output = Command::new("pkill")
             .arg("-f")
-            .arg("__worker-run")
+            .arg("__worker-runtime")
             .output()
             .str_err()?;
 
@@ -140,95 +139,6 @@ pub async fn kill_orphaned_worker_processes() -> Result<serde_json::Value, Strin
     #[cfg(not(unix))]
     {
         Ok(serde_json::json!({ "killed": 0 }))
-    }
-}
-
-/// Daemon health status response
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DaemonHealth {
-    pub running: bool,
-    pub version: Option<String>,
-    pub git_sha: Option<String>,
-    pub build_date: Option<String>,
-    pub uptime_secs: Option<u64>,
-    pub active_runs: Option<usize>,
-    pub pid: Option<u32>,
-    pub runs_dir: Option<String>,
-    pub error: Option<String>,
-}
-
-/// Get daemon health status
-///
-/// Checks if daemon is running and returns its version info.
-/// If daemon is not running, returns running=false with error message.
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_daemon_health() -> DaemonHealth {
-    let port = daemon::get_daemon_port();
-    let url = format!("http://127.0.0.1:{}/daemon/status", port);
-
-    match reqwest::Client::new()
-        .get(&url)
-        .timeout(std::time::Duration::from_secs(2))
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            let status = resp.status();
-            if status.is_success() {
-                if let Ok(data) = resp.json::<serde_json::Value>().await {
-                    return DaemonHealth {
-                        running: true,
-                        version: data
-                            .get("version")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        git_sha: data
-                            .get("git_sha")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        build_date: data
-                            .get("build_date")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        uptime_secs: data.get("uptime_secs").and_then(|v| v.as_u64()),
-                        active_runs: data
-                            .get("active_runs")
-                            .and_then(|v| v.as_u64())
-                            .map(|n| n as usize),
-                        pid: data.get("pid").and_then(|v| v.as_u64()).map(|n| n as u32),
-                        runs_dir: data
-                            .get("runs_dir")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        error: None,
-                    };
-                }
-            }
-            DaemonHealth {
-                running: false,
-                version: None,
-                git_sha: None,
-                build_date: None,
-                uptime_secs: None,
-                active_runs: None,
-                pid: None,
-                runs_dir: None,
-                error: Some(format!("Daemon returned status: {}", status)),
-            }
-        }
-        Err(e) => DaemonHealth {
-            running: false,
-            version: None,
-            git_sha: None,
-            build_date: None,
-            uptime_secs: None,
-            active_runs: None,
-            pid: None,
-            runs_dir: None,
-            error: Some(format!("Failed to connect to daemon: {}", e)),
-        },
     }
 }
 
@@ -276,22 +186,5 @@ pub fn get_process_memory() -> Option<f64> {
     #[cfg(not(unix))]
     {
         None
-    }
-}
-
-/// Start or restart the daemon
-#[tracing::instrument]
-#[tauri::command]
-pub async fn ensure_daemon_running() -> Result<DaemonHealth, String> {
-    use crate::core::orchestrator::DaemonOrchestrator;
-
-    // Try to connect or start the daemon
-    match DaemonOrchestrator::connect_or_start() {
-        Ok(_) => {
-            // Wait a moment for daemon to be ready
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            Ok(get_daemon_health().await)
-        }
-        Err(e) => Err(format!("Failed to start daemon: {}", e)),
     }
 }

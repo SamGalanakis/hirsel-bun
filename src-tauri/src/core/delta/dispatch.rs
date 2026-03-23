@@ -10,7 +10,7 @@ use tracing::info;
 
 use super::state::DeltaState;
 use super::types::*;
-use crate::core::names::generate_run_name;
+use crate::core::names::generate_runtime_name;
 
 /// Error type for dispatch operations
 #[derive(Debug, thiserror::Error)]
@@ -89,11 +89,11 @@ impl DeltaDispatchService {
 
         // 6. Update run status to working
         self.state
-            .update_project_run_status(ProjectRunStatus::Working)
+            .update_route_runtime_status(RouteRuntimeStatus::Working)
             .await?;
 
         Ok(DispatchResult {
-            run_name: run.run_name,
+            runtime_name: run.runtime_name,
             node_count: draft_nodes.len(),
             feature_count,
             plan_task_count: 0,
@@ -103,16 +103,16 @@ impl DeltaDispatchService {
     }
 
     /// Get the existing run or create a new one
-    async fn get_or_create_run(&self) -> DeltaDispatchResult<ProjectRun> {
-        if let Some(run) = self.state.get_project_run().await? {
-            info!("Using existing run: {}", run.run_name);
+    async fn get_or_create_run(&self) -> DeltaDispatchResult<RouteRuntime> {
+        if let Some(run) = self.state.get_route_runtime().await? {
+            info!("Using existing run: {}", run.runtime_name);
             return Ok(run);
         }
 
-        let run_name = generate_run_name();
-        info!("Creating new persistent run: {}", run_name);
+        let runtime_name = generate_runtime_name();
+        info!("Creating new persistent run: {}", runtime_name);
 
-        let run = self.state.create_project_run(&run_name).await?;
+        let run = self.state.create_route_runtime(&runtime_name).await?;
         Ok(run)
     }
 
@@ -152,8 +152,8 @@ impl DeltaDispatchService {
     }
 
     /// Get the project run
-    pub async fn get_project_run(&self) -> DeltaDispatchResult<Option<ProjectRun>> {
-        Ok(self.state.get_project_run().await?)
+    pub async fn get_route_runtime(&self) -> DeltaDispatchResult<Option<RouteRuntime>> {
+        Ok(self.state.get_route_runtime().await?)
     }
 
     /// Get underlying state

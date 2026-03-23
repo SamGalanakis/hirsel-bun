@@ -14,24 +14,14 @@ const STORAGE_KEY = 'hirsel-shortcuts';
 // =============================================================================
 
 export type ShortcutAction =
-  | 'navigate-up'
-  | 'navigate-down'
-  | 'select-run'
   | 'fullscreen'
-  | 'attach'
-  | 'pause'
-  | 'resume'
-  | 'switch-chat'
-  | 'focus-message'
   | 'toggle-ai'
-  | 'toggle-debug'
   | 'close-panel'
   | 'toggle-sidebar'
   | 'toggle-theme'
-  | 'toggle-radial'
   | 'show-help';
 
-export type ShortcutCategory = 'navigation' | 'run-controls' | 'communication' | 'other';
+export type ShortcutCategory = 'navigation' | 'workspace' | 'other';
 
 export interface ShortcutModifiers {
   ctrl?: boolean;
@@ -60,27 +50,6 @@ export interface ShortcutConfig {
 export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
   // Navigation
   {
-    action: 'navigate-up',
-    label: 'Navigate runs up',
-    category: 'navigation',
-    binding: { key: 'k' },
-    defaultBinding: { key: 'k' },
-  },
-  {
-    action: 'navigate-down',
-    label: 'Navigate runs down',
-    category: 'navigation',
-    binding: { key: 'j' },
-    defaultBinding: { key: 'j' },
-  },
-  {
-    action: 'select-run',
-    label: 'Select run',
-    category: 'navigation',
-    binding: { key: 'Enter' },
-    defaultBinding: { key: 'Enter' },
-  },
-  {
     action: 'fullscreen',
     label: 'Fullscreen activity',
     category: 'navigation',
@@ -88,73 +57,22 @@ export const DEFAULT_SHORTCUTS: ShortcutConfig[] = [
     defaultBinding: { key: 'f' },
   },
 
-  // Run controls
-  {
-    action: 'attach',
-    label: 'Attach to worker',
-    category: 'run-controls',
-    binding: { key: 'a' },
-    defaultBinding: { key: 'a' },
-  },
-  {
-    action: 'pause',
-    label: 'Pause run',
-    category: 'run-controls',
-    binding: { key: 'p' },
-    defaultBinding: { key: 'p' },
-  },
-  {
-    action: 'resume',
-    label: 'Resume run',
-    category: 'run-controls',
-    binding: { key: 'r' },
-    defaultBinding: { key: 'r' },
-  },
-
-  // Communication
-  {
-    action: 'switch-chat',
-    label: 'Switch to chat',
-    category: 'communication',
-    binding: { key: 'c' },
-    defaultBinding: { key: 'c' },
-  },
-  {
-    action: 'focus-message',
-    label: 'Focus message input',
-    category: 'communication',
-    binding: { key: 'm' },
-    defaultBinding: { key: 'm' },
-  },
+  // Workspace
   {
     action: 'toggle-ai',
-    label: 'Toggle AI sidebar',
-    category: 'communication',
+    label: 'Toggle shepherd',
+    category: 'workspace',
     binding: { key: 'i' },
     defaultBinding: { key: 'i' },
   },
 
   // Other
   {
-    action: 'toggle-debug',
-    label: 'Debug panel',
-    category: 'other',
-    binding: { key: 'g' },
-    defaultBinding: { key: 'g' },
-  },
-  {
     action: 'close-panel',
     label: 'Close panels',
     category: 'other',
     binding: { key: 'Escape' },
     defaultBinding: { key: 'Escape' },
-  },
-  {
-    action: 'toggle-radial',
-    label: 'Pie menu',
-    category: 'other',
-    binding: { key: '`' },
-    defaultBinding: { key: '`' },
   },
 ];
 
@@ -367,8 +285,7 @@ export function getShortcutsByCategory(
 ): Record<ShortcutCategory, ShortcutConfig[]> {
   const grouped: Record<ShortcutCategory, ShortcutConfig[]> = {
     navigation: [],
-    'run-controls': [],
-    communication: [],
+    workspace: [],
     other: [],
   };
 
@@ -386,10 +303,8 @@ export function getCategoryLabel(category: ShortcutCategory): string {
   switch (category) {
     case 'navigation':
       return 'Navigation';
-    case 'run-controls':
-      return 'Run Controls';
-    case 'communication':
-      return 'Communication';
+    case 'workspace':
+      return 'Workspace';
     case 'other':
       return 'Other';
   }

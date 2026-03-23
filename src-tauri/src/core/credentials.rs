@@ -81,6 +81,8 @@ pub struct ForwardedCredentials {
     pub openai_api_key: Option<String>,
     /// API key for OpenRouter auth (OPENROUTER_API_KEY)
     pub openrouter_api_key: Option<String>,
+    /// API key for Tavily web search/fetch tools (TAVILY_API_KEY)
+    pub tavily_api_key: Option<String>,
     /// Codex OAuth access token (CODEX_ACCESS_TOKEN)
     pub codex_access_token: Option<String>,
     /// Codex OAuth refresh token (CODEX_REFRESH_TOKEN)
@@ -101,6 +103,7 @@ impl ForwardedCredentials {
     pub fn has_any(&self) -> bool {
         self.openai_api_key.is_some()
             || self.openrouter_api_key.is_some()
+            || self.tavily_api_key.is_some()
             || self.codex_access_token.is_some()
             || self.codex_refresh_token.is_some()
             || self.codex_expires_at.is_some()
@@ -112,11 +115,36 @@ impl ForwardedCredentials {
         Self {
             openai_api_key: self.openai_api_key.or(other.openai_api_key),
             openrouter_api_key: self.openrouter_api_key.or(other.openrouter_api_key),
+            tavily_api_key: self.tavily_api_key.or(other.tavily_api_key),
             codex_access_token: self.codex_access_token.or(other.codex_access_token),
             codex_refresh_token: self.codex_refresh_token.or(other.codex_refresh_token),
             codex_expires_at: self.codex_expires_at.or(other.codex_expires_at),
             codex_account_id: self.codex_account_id.or(other.codex_account_id),
         }
+    }
+
+    /// Load forwarded credentials from the current process environment.
+    pub fn from_env() -> Self {
+        Self {
+            openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
+            openrouter_api_key: std::env::var("OPENROUTER_API_KEY").ok(),
+            tavily_api_key: std::env::var("TAVILY_API_KEY").ok(),
+            codex_access_token: std::env::var("CODEX_ACCESS_TOKEN").ok(),
+            codex_refresh_token: std::env::var("CODEX_REFRESH_TOKEN").ok(),
+            codex_expires_at: std::env::var("CODEX_EXPIRES_AT").ok(),
+            codex_account_id: std::env::var("CODEX_ACCOUNT_ID").ok(),
+        }
+    }
+}
+
+/// Best-effort load of credentials that should be forwarded to worker runtimes.
+///
+/// Credential-store values win over ambient environment values.
+pub async fn load_forwarded_credentials() -> ForwardedCredentials {
+    let env = ForwardedCredentials::from_env();
+    match CredentialStore::open().await {
+        Ok(store) => store.load_all().await.merge(env),
+        Err(_) => env,
     }
 }
 
@@ -288,6 +316,7 @@ impl CredentialStore {
         ForwardedCredentials {
             openai_api_key: self.load("openai_api_key").await.ok(),
             openrouter_api_key: self.load("openrouter_api_key").await.ok(),
+            tavily_api_key: self.load("tavily_api_key").await.ok(),
             codex_access_token: self.load("codex_access_token").await.ok(),
             codex_refresh_token: self.load("codex_refresh_token").await.ok(),
             codex_expires_at: self.load("codex_expires_at").await.ok(),
@@ -304,6 +333,9 @@ impl CredentialStore {
         }
         if let Some(ref key) = creds.openrouter_api_key {
             self.store("openrouter_api_key", key).await?;
+        }
+        if let Some(ref key) = creds.tavily_api_key {
+            self.store("tavily_api_key", key).await?;
         }
         if let Some(ref token) = creds.codex_access_token {
             self.store("codex_access_token", token).await?;

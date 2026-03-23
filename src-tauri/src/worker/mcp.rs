@@ -15,7 +15,7 @@
 //!
 //! The MCP server is started by setting up the worker environment and running:
 //! ```bash
-//! HIRSEL_RUN=myrun HIRSEL_WORKER=achilles hirsel-worker mcp
+//! HIRSEL_RUNTIME=myrun HIRSEL_WORKER=achilles hirsel-worker mcp
 //! ```
 
 use serde_json::{json, Value};
@@ -69,7 +69,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "complete_task",
-            description: "Mark task complete and exit. Unblocks dependent tasks, then worker exits and is respawned with next available task.",
+            description: "Mark task complete and exit. Unblocks dependent tasks, then returns control to the orchestrator.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -149,62 +149,72 @@ fn get_tools() -> Vec<Tool> {
             }),
         },
         // ==========================================================================
-        // Communication
+        // Orchestrator Coordination
         // ==========================================================================
         Tool {
-            name: "list_contacts",
-            description: "List available chat contacts: user (human), group (team), other workers.",
-            input_schema: json!({
-                "type": "object",
-                "properties": {}
-            }),
-        },
-        Tool {
-            name: "chat_history",
-            description: "Read chat message history. Filter by contact or get all.",
+            name: "report_progress",
+            description: "Report important progress upward to the orchestrator without blocking execution.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "with": {
+                    "summary": {
                         "type": "string",
-                        "description": "Contact name to filter: 'user', 'group', or 'worker-N'. Omit for all."
+                        "description": "Short progress summary"
                     },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum messages to return (default 50)"
-                    }
-                }
-            }),
-        },
-        Tool {
-            name: "chat_send",
-            description: "Send a message. Messages to 'user' pause until they reply (if HITL enabled).",
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "to": {
+                    "details": {
                         "type": "string",
-                        "description": "Recipient: 'user', 'group', or 'worker-N'"
-                    },
-                    "message": {
-                        "type": "string",
-                        "description": "Message content"
+                        "description": "Optional extra context"
                     }
                 },
-                "required": ["to", "message"]
+                "required": ["summary"]
             }),
         },
         Tool {
-            name: "chat_unread",
-            description: "Check for new unread messages since session started.",
+            name: "raise_concern",
+            description: "Raise a structured concern to the orchestrator. Set blocking=true if you need a decision before continuing.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "with": {
+                    "kind": {
                         "type": "string",
-                        "description": "Contact to check, or omit for all contacts"
+                        "description": "Concern kind, for example blocker, risk, review_needed, or conflict"
+                    },
+                    "summary": {
+                        "type": "string",
+                        "description": "Short concern summary"
+                    },
+                    "details": {
+                        "type": "string",
+                        "description": "Optional supporting detail"
+                    },
+                    "severity": {
+                        "type": "string",
+                        "description": "Optional severity: info, low, medium, high, critical"
+                    },
+                    "blocking": {
+                        "type": "boolean",
+                        "description": "Whether the worker must pause until this is resolved"
                     }
-                }
+                },
+                "required": ["kind", "summary"]
+            }),
+        },
+        Tool {
+            name: "request_decision",
+            description: "Escalate a decision that requires orchestrator or user input. This pauses your work until the orchestrator resolves it.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "summary": {
+                        "type": "string",
+                        "description": "Decision needed"
+                    },
+                    "details": {
+                        "type": "string",
+                        "description": "Optional context or options"
+                    }
+                },
+                "required": ["summary"]
             }),
         },
         Tool {
@@ -234,7 +244,7 @@ fn get_tools() -> Vec<Tool> {
         // ==========================================================================
         Tool {
             name: "work_done",
-            description: "Signal task complete and ready for new assignment. Auto-completes your assigned task, then exits. You'll be respawned with a new task if available.",
+            description: "Signal task complete. Auto-completes your assigned task, then exits so the orchestrator can decide what happens next.",
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -242,7 +252,7 @@ fn get_tools() -> Vec<Tool> {
         },
         Tool {
             name: "time_status",
-            description: "Get current time limit status for this run. Shows elapsed time, remaining time, percentage progress.",
+            description: "Get current time limit status for this route runtime. Shows elapsed time, remaining time, and percentage progress.",
             input_schema: json!({
                 "type": "object",
                 "properties": {}
@@ -402,30 +412,45 @@ impl McpServer {
                 self.runner.delete_task(task_id).map(|s| (s, false))
             }
 
-            // Communication
-            "list_contacts" => self.runner.list_contacts().map(|s| (s, false)),
-            "chat_history" => {
-                let with = args.get("with").and_then(|v| v.as_str());
-                let limit = args
-                    .get("limit")
-                    .and_then(|v| v.as_i64())
-                    .map(|l| l as usize);
-                self.runner.chat_history(with, limit).map(|s| (s, false))
-            }
-            "chat_send" => {
-                let to = args
-                    .get("to")
+            // Orchestrator coordination
+            "report_progress" => {
+                let summary = args
+                    .get("summary")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("to is required".into()))?;
-                let message = args
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| WorkerError::Config("message is required".into()))?;
-                self.runner.chat_send(to, message).map(|s| (s, false))
+                    .ok_or_else(|| WorkerError::Config("summary is required".into()))?;
+                let details = args.get("details").and_then(|v| v.as_str());
+                self.runner
+                    .report_progress(summary, details)
+                    .map(|s| (s, false))
             }
-            "chat_unread" => {
-                let with = args.get("with").and_then(|v| v.as_str());
-                self.runner.chat_unread(with).map(|s| (s, false))
+            "raise_concern" => {
+                let kind = args
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("kind is required".into()))?;
+                let summary = args
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("summary is required".into()))?;
+                let details = args.get("details").and_then(|v| v.as_str());
+                let severity = args.get("severity").and_then(|v| v.as_str());
+                let blocking = args
+                    .get("blocking")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                self.runner
+                    .raise_concern(kind, summary, details, severity, blocking)
+                    .map(|s| (s, false))
+            }
+            "request_decision" => {
+                let summary = args
+                    .get("summary")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| WorkerError::Config("summary is required".into()))?;
+                let details = args.get("details").and_then(|v| v.as_str());
+                self.runner
+                    .request_decision(summary, details)
+                    .map(|s| (s, false))
             }
 
             "scribe" => {
@@ -496,10 +521,9 @@ mod tests {
         assert!(names.contains(&"add_task"));
         assert!(names.contains(&"add_check"));
         assert!(names.contains(&"delete_task"));
-        assert!(names.contains(&"list_contacts"));
-        assert!(names.contains(&"chat_history"));
-        assert!(names.contains(&"chat_send"));
-        assert!(names.contains(&"chat_unread"));
+        assert!(names.contains(&"report_progress"));
+        assert!(names.contains(&"raise_concern"));
+        assert!(names.contains(&"request_decision"));
         assert!(names.contains(&"scribe"));
         assert!(names.contains(&"read_retained_context"));
         assert!(names.contains(&"work_done"));

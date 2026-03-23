@@ -32,20 +32,20 @@ pub fn parse_eval_script(content: &str) -> Vec<String> {
 }
 
 /// Check if eval script exists for a run
-pub fn has_eval_script(run_dir: &Path) -> bool {
-    let eval_md = run_dir.join("eval.md");
-    let eval_sh = run_dir.join("eval.sh");
+pub fn has_eval_script(runtime_dir: &Path) -> bool {
+    let eval_md = runtime_dir.join("eval.md");
+    let eval_sh = runtime_dir.join("eval.sh");
     eval_md.exists() || eval_sh.exists()
 }
 
 /// Get eval script path for a run
-pub fn get_eval_script(run_dir: &Path) -> Option<String> {
-    let eval_sh = run_dir.join("eval.sh");
+pub fn get_eval_script(runtime_dir: &Path) -> Option<String> {
+    let eval_sh = runtime_dir.join("eval.sh");
     if eval_sh.exists() {
         return Some(eval_sh.to_string_lossy().to_string());
     }
 
-    let eval_md = run_dir.join("eval.md");
+    let eval_md = runtime_dir.join("eval.md");
     if eval_md.exists() {
         // Extract script from markdown - look for code blocks
         if let Ok(content) = fs::read_to_string(&eval_md) {
@@ -68,8 +68,8 @@ pub fn get_eval_script(run_dir: &Path) -> Option<String> {
 
             if !script_lines.is_empty() {
                 // Write extracted script to temp file
-                let temp_script = run_dir.join("tmp").join("eval_extracted.sh");
-                if let Ok(()) = fs::create_dir_all(run_dir.join("tmp")) {
+                let temp_script = runtime_dir.join("tmp").join("eval_extracted.sh");
+                if let Ok(()) = fs::create_dir_all(runtime_dir.join("tmp")) {
                     if let Ok(()) = fs::write(&temp_script, script_lines.join("\n")) {
                         return Some(temp_script.to_string_lossy().to_string());
                     }

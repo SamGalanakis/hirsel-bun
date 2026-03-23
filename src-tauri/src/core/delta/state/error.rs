@@ -10,7 +10,7 @@ pub enum DeltaStateError {
     #[error("Board node not found: {0}")]
     NodeNotFound(String),
     #[error("Project run not found for project: {0}")]
-    ProjectRunNotFound(i64),
+    RouteRuntimeNotFound(i64),
     #[error("Parent node not found: {0}")]
     ParentNodeNotFound(String),
 }

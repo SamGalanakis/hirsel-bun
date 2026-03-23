@@ -1,4 +1,4 @@
-//! Project run operations
+//! Route runtime persistence.
 
 use sqlx::Row;
 
@@ -8,15 +8,15 @@ use crate::core::delta::types::*;
 
 impl DeltaState {
     // =========================================================================
-    // Project Run Operations
+    // Route Runtime Operations
     // =========================================================================
 
-    /// Get the persistent run for this project
-    pub async fn get_project_run(&self) -> DeltaStateResult<Option<ProjectRun>> {
+    /// Get the persistent route runtime for this route.
+    pub async fn get_route_runtime(&self) -> DeltaStateResult<Option<RouteRuntime>> {
         let pool = self.pool().await?;
         let row = sqlx::query(
-            "SELECT id, project_id, route_id, run_name, status, created_at, last_dispatch_at
-             FROM project_runs
+            "SELECT id, project_id, route_id, runtime_name, status, created_at, last_dispatch_at
+             FROM route_runtimes
              WHERE project_id = ? AND route_id = ?",
         )
         .bind(self.project_id)
@@ -24,46 +24,46 @@ impl DeltaState {
         .fetch_optional(pool)
         .await?;
 
-        Ok(row.map(|row| self.row_to_project_run(&row)))
+        Ok(row.map(|row| self.row_to_route_runtime(&row)))
     }
 
-    /// Create a new persistent run for this project
-    pub async fn create_project_run(&self, run_name: &str) -> DeltaStateResult<ProjectRun> {
+    /// Create a new persistent route runtime for this route.
+    pub async fn create_route_runtime(&self, runtime_name: &str) -> DeltaStateResult<RouteRuntime> {
         let pool = self.pool().await?;
         let now = utc_now();
 
         let result = sqlx::query(
-            "INSERT INTO project_runs (project_id, route_id, run_name, status, created_at)
+            "INSERT INTO route_runtimes (project_id, route_id, runtime_name, status, created_at)
              VALUES (?, ?, ?, 'paused', ?)",
         )
         .bind(self.project_id)
         .bind(self.route_id)
-        .bind(run_name)
+        .bind(runtime_name)
         .bind(&now)
         .execute(pool)
         .await?;
 
         let id = result.last_insert_rowid();
         self.bump_tree_generation().await?;
-        Ok(ProjectRun {
+        Ok(RouteRuntime {
             id,
             project_id: self.project_id,
             route_id: self.route_id,
-            run_name: run_name.to_string(),
-            status: ProjectRunStatus::Paused,
+            runtime_name: runtime_name.to_string(),
+            status: RouteRuntimeStatus::Paused,
             created_at: now,
             last_dispatch_at: None,
         })
     }
 
-    /// Update project run status
-    pub async fn update_project_run_status(
+    /// Update the route runtime status.
+    pub async fn update_route_runtime_status(
         &self,
-        status: ProjectRunStatus,
+        status: RouteRuntimeStatus,
     ) -> DeltaStateResult<()> {
         let pool = self.pool().await?;
 
-        sqlx::query("UPDATE project_runs SET status = ? WHERE project_id = ? AND route_id = ?")
+        sqlx::query("UPDATE route_runtimes SET status = ? WHERE project_id = ? AND route_id = ?")
             .bind(status.as_str())
             .bind(self.project_id)
             .bind(self.route_id)
@@ -80,7 +80,7 @@ impl DeltaState {
         let now = utc_now();
 
         sqlx::query(
-            "UPDATE project_runs SET last_dispatch_at = ? WHERE project_id = ? AND route_id = ?",
+            "UPDATE route_runtimes SET last_dispatch_at = ? WHERE project_id = ? AND route_id = ?",
         )
         .bind(&now)
         .bind(self.project_id)
@@ -91,33 +91,33 @@ impl DeltaState {
         Ok(())
     }
 
-    pub(crate) fn row_to_project_run(&self, row: &sqlx::sqlite::SqliteRow) -> ProjectRun {
-        let run_name: String = row.get("run_name");
+    pub(crate) fn row_to_route_runtime(&self, row: &sqlx::sqlite::SqliteRow) -> RouteRuntime {
+        let runtime_name: String = row.get("runtime_name");
         let status_str: String = row.get("status");
-        let status = ProjectRunStatus::from_str(&status_str);
+        let status = RouteRuntimeStatus::from_str(&status_str);
 
-        ProjectRun {
+        RouteRuntime {
             id: row.get("id"),
             project_id: row.get("project_id"),
             route_id: row.get("route_id"),
-            run_name,
+            runtime_name,
             status,
             created_at: row.get("created_at"),
             last_dispatch_at: row.get("last_dispatch_at"),
         }
     }
 
-    /// List all project runs across all projects (for run listing)
+    /// List all route runtimes across all projects.
     ///
-    /// Returns tuples of (ProjectRun, project_name) for building run summaries.
-    pub async fn list_all_project_runs() -> DeltaStateResult<Vec<(ProjectRun, String)>> {
+    /// Returns tuples of (RouteRuntime, project_name) for building runtime summaries.
+    pub async fn list_all_route_runtimes() -> DeltaStateResult<Vec<(RouteRuntime, String)>> {
         let pool = global_pool().await;
         ensure_schema(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT pr.id, pr.project_id, pr.route_id, pr.run_name, pr.status, pr.created_at, pr.last_dispatch_at,
+            "SELECT pr.id, pr.project_id, pr.route_id, pr.runtime_name, pr.status, pr.created_at, pr.last_dispatch_at,
                     p.name as project_name
-             FROM project_runs pr
+             FROM route_runtimes pr
              JOIN projects p ON pr.project_id = p.id
              ORDER BY pr.created_at DESC",
         )
@@ -129,12 +129,12 @@ impl DeltaState {
             .map(|row| {
                 let status_str: String = row.get("status");
                 (
-                    ProjectRun {
+                    RouteRuntime {
                         id: row.get("id"),
                         project_id: row.get("project_id"),
                         route_id: row.get("route_id"),
-                        run_name: row.get("run_name"),
-                        status: ProjectRunStatus::from_str(&status_str),
+                        runtime_name: row.get("runtime_name"),
+                        status: RouteRuntimeStatus::from_str(&status_str),
                         created_at: row.get("created_at"),
                         last_dispatch_at: row.get("last_dispatch_at"),
                     },
@@ -147,18 +147,18 @@ impl DeltaState {
     }
 }
 
-/// Update a project run's status by run name
+/// Update a route runtime's status by runtime name.
 ///
-/// Used by pause/resume commands that only have the run name, not project+route IDs.
-pub async fn update_project_run_status_by_name(
-    run_name: &str,
-    status: ProjectRunStatus,
+/// Used by runtime-level commands that only have the runtime name.
+pub async fn update_route_runtime_status_by_name(
+    runtime_name: &str,
+    status: RouteRuntimeStatus,
 ) -> DeltaStateResult<()> {
     let pool = global_pool().await;
     ensure_schema(pool).await?;
 
-    let row = sqlx::query("SELECT project_id, route_id FROM project_runs WHERE run_name = ?")
-        .bind(run_name)
+    let row = sqlx::query("SELECT project_id, route_id FROM route_runtimes WHERE runtime_name = ?")
+        .bind(runtime_name)
         .fetch_optional(pool)
         .await?;
 
@@ -166,9 +166,9 @@ pub async fn update_project_run_status_by_name(
         let project_id: i64 = row.get("project_id");
         let route_id: i64 = row.get("route_id");
 
-        sqlx::query("UPDATE project_runs SET status = ? WHERE run_name = ?")
+        sqlx::query("UPDATE route_runtimes SET status = ? WHERE runtime_name = ?")
             .bind(status.as_str())
-            .bind(run_name)
+            .bind(runtime_name)
             .execute(pool)
             .await?;
 
@@ -183,13 +183,13 @@ pub async fn update_project_run_status_by_name(
     Ok(())
 }
 
-/// List all working project runs (for daemon polling)
-pub async fn list_working_project_runs() -> DeltaStateResult<Vec<(i64, i64, String)>> {
+/// List all working route runtimes.
+pub async fn list_working_route_runtimes() -> DeltaStateResult<Vec<(i64, i64, String)>> {
     let pool = global_pool().await;
     ensure_schema(pool).await?;
 
     let rows = sqlx::query(
-        "SELECT project_id, route_id, run_name FROM project_runs WHERE status = 'working'",
+        "SELECT project_id, route_id, runtime_name FROM route_runtimes WHERE status = 'working'",
     )
     .fetch_all(pool)
     .await?;
@@ -200,7 +200,7 @@ pub async fn list_working_project_runs() -> DeltaStateResult<Vec<(i64, i64, Stri
             (
                 row.get::<i64, _>("project_id"),
                 row.get::<i64, _>("route_id"),
-                row.get::<String, _>("run_name"),
+                row.get::<String, _>("runtime_name"),
             )
         })
         .collect();

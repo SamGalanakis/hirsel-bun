@@ -12,15 +12,6 @@ pub struct ShepherdTaskFocus {
 pub enum ShepherdScope {
     #[serde(rename = "general")]
     General,
-    #[serde(rename = "run")]
-    Run {
-        #[serde(rename = "runName")]
-        run_name: String,
-        #[serde(rename = "workspacePath", default)]
-        workspace_path: String,
-        #[serde(rename = "projectPath", default)]
-        project_path: Option<String>,
-    },
     #[serde(rename = "project")]
     Project {
         #[serde(rename = "projectId")]
@@ -37,11 +28,6 @@ pub enum ShepherdScope {
 pub enum StartShepherdSessionRequest {
     #[serde(rename = "general")]
     General,
-    #[serde(rename = "run")]
-    Run {
-        #[serde(rename = "runName")]
-        run_name: String,
-    },
     #[serde(rename = "project")]
     Project {
         #[serde(rename = "projectId")]

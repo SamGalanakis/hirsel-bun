@@ -87,9 +87,9 @@ impl RemoteOrchestrator {
 
     /// Download working directory tarball from the server
     ///
-    /// Returns a gzipped tar archive of the run's work directory.
-    pub async fn download_files(&self, run_name: &str) -> OrchestratorResult<Vec<u8>> {
-        let path = format!("/api/runs/{}/files", urlencoding::encode(run_name));
+    /// Returns a gzipped tar archive of the runtime workspace.
+    pub async fn download_files(&self, runtime_name: &str) -> OrchestratorResult<Vec<u8>> {
+        let path = format!("/api/runtimes/{}/files", urlencoding::encode(runtime_name));
         self.client
             .get_bytes(&path)
             .await
@@ -104,22 +104,22 @@ impl Orchestrator for RemoteOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_runs(&self) -> OrchestratorResult<Vec<RunSummary>> {
-        self.get("/api/runs").await
+        self.get("/api/runtimes").await
     }
 
     async fn get_run(&self, name: &str) -> OrchestratorResult<RunDetail> {
-        self.get(&format!("/api/runs/{}", urlencoding::encode(name)))
+        self.get(&format!("/api/runtimes/{}", urlencoding::encode(name)))
             .await
     }
 
     async fn delete_run(&self, name: &str) -> OrchestratorResult<()> {
-        self.delete(&format!("/api/runs/{}", urlencoding::encode(name)))
+        self.delete(&format!("/api/runtimes/{}", urlencoding::encode(name)))
             .await
     }
 
     async fn pause_run(&self, name: &str) -> OrchestratorResult<()> {
         self.post_empty(
-            &format!("/api/runs/{}/pause", urlencoding::encode(name)),
+            &format!("/api/runtimes/{}/pause", urlencoding::encode(name)),
             &(),
         )
         .await
@@ -132,7 +132,7 @@ impl Orchestrator for RemoteOrchestrator {
     ) -> OrchestratorResult<()> {
         let body = ResumeRunRequest { time_limit_minutes };
         self.post_empty(
-            &format!("/api/runs/{}/resume", urlencoding::encode(name)),
+            &format!("/api/runtimes/{}/resume", urlencoding::encode(name)),
             &body,
         )
         .await
@@ -147,7 +147,7 @@ impl Orchestrator for RemoteOrchestrator {
         let body = DeliverRunRequest { branch };
         let resp: DeliverResponse = self
             .post(
-                &format!("/api/runs/{}/deliver", urlencoding::encode(name)),
+                &format!("/api/runtimes/{}/deliver", urlencoding::encode(name)),
                 &body,
             )
             .await?;
@@ -160,14 +160,17 @@ impl Orchestrator for RemoteOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_workers(&self, run: &str) -> OrchestratorResult<Vec<Worker>> {
-        self.get(&format!("/api/runs/{}/workers", urlencoding::encode(run)))
-            .await
+        self.get(&format!(
+            "/api/runtimes/{}/workers",
+            urlencoding::encode(run)
+        ))
+        .await
     }
 
     async fn restart_worker(&self, run: &str, worker: &str) -> OrchestratorResult<()> {
         self.post_empty(
             &format!(
-                "/api/runs/{}/workers/{}/restart",
+                "/api/runtimes/{}/workers/{}/restart",
                 urlencoding::encode(run),
                 urlencoding::encode(worker)
             ),
@@ -194,7 +197,7 @@ impl Orchestrator for RemoteOrchestrator {
         let params = EventParams { after_id, limit };
         let query = serde_urlencoded::to_string(&params).unwrap_or_default();
         let path = format!(
-            "/api/runs/{}/workers/{}/events?{}",
+            "/api/runtimes/{}/workers/{}/events?{}",
             urlencoding::encode(run),
             urlencoding::encode(worker),
             query
@@ -208,7 +211,7 @@ impl Orchestrator for RemoteOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn list_evals(&self, run: &str) -> OrchestratorResult<Vec<Eval>> {
-        self.get(&format!("/api/runs/{}/evals", urlencoding::encode(run)))
+        self.get(&format!("/api/runtimes/{}/evals", urlencoding::encode(run)))
             .await
     }
 
@@ -222,8 +225,12 @@ impl Orchestrator for RemoteOrchestrator {
         limit: Option<u32>,
     ) -> OrchestratorResult<Vec<HistoryEntry>> {
         let path = match limit {
-            Some(l) => format!("/api/runs/{}/history?limit={}", urlencoding::encode(run), l),
-            None => format!("/api/runs/{}/history", urlencoding::encode(run)),
+            Some(l) => format!(
+                "/api/runtimes/{}/history?limit={}",
+                urlencoding::encode(run),
+                l
+            ),
+            None => format!("/api/runtimes/{}/history", urlencoding::encode(run)),
         };
         self.get(&path).await
     }
@@ -246,23 +253,26 @@ impl Orchestrator for RemoteOrchestrator {
 
     async fn init_workspace(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         request: super::InitWorkspaceRequest,
     ) -> OrchestratorResult<super::InitWorkspaceResponse> {
         self.post(
-            &format!("/api/runs/{}/workspace", urlencoding::encode(run_name)),
+            &format!(
+                "/api/runtimes/{}/workspace",
+                urlencoding::encode(runtime_name)
+            ),
             &request,
         )
         .await
     }
 
     async fn start_run(&self, request: StartRunRequest) -> OrchestratorResult<RunDetail> {
-        self.post("/api/runs/start", &request).await
+        self.post("/api/runtimes/start", &request).await
     }
 
     async fn spawn_single_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,
@@ -274,8 +284,8 @@ impl Orchestrator for RemoteOrchestrator {
         let _: serde_json::Value = self
             .post(
                 &format!(
-                    "/api/runs/{}/workers/{}/spawn",
-                    urlencoding::encode(run_name),
+                    "/api/runtimes/{}/workers/{}/spawn",
+                    urlencoding::encode(runtime_name),
                     urlencoding::encode(worker_name)
                 ),
                 &request,
@@ -286,7 +296,7 @@ impl Orchestrator for RemoteOrchestrator {
 
     async fn resume_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,
@@ -300,8 +310,8 @@ impl Orchestrator for RemoteOrchestrator {
         let _: serde_json::Value = self
             .post(
                 &format!(
-                    "/api/runs/{}/workers/{}/resume",
-                    urlencoding::encode(run_name),
+                    "/api/runtimes/{}/workers/{}/resume",
+                    urlencoding::encode(runtime_name),
                     urlencoding::encode(worker_name)
                 ),
                 &request,
@@ -344,7 +354,7 @@ impl Orchestrator for RemoteOrchestrator {
         self.delete(&format!("/api/projects/{}", id)).await
     }
 
-    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
+    async fn list_route_runtimes(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>> {
         self.get(&format!("/api/projects/{}/runs", project_id))
             .await
     }

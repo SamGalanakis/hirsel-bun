@@ -6,9 +6,9 @@
 //!
 //! Used by:
 //! - `RemoteOrchestrator` for run management API calls
-//! - `RemoteChatOrchestrator` for chat session API calls
+//! - Shepherd session commands for remote API calls
 //! - `DaemonClient` for daemon communication
-//! - Service workers for remote HTTP calls
+//! - Backend-side worker services for remote HTTP calls
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -145,16 +145,16 @@ impl ResponseExt for reqwest::Response {
 /// let client = AuthenticatedClient::new("https://api.example.com", "my-api-key");
 ///
 /// // GET request with typed response
-/// let runs: Vec<Run> = client.get("/api/runs").await?;
+/// let runtimes: Vec<Runtime> = client.get("/api/runtimes").await?;
 ///
 /// // POST request with body and typed response
-/// let result: CreateResponse = client.post("/api/runs", &request).await?;
+/// let result: CreateResponse = client.post("/api/runtimes", &request).await?;
 ///
 /// // POST with no response body
-/// client.post_empty("/api/runs/my-run/pause", &()).await?;
+/// client.post_empty("/api/runtimes/my-runtime/pause", &()).await?;
 ///
 /// // DELETE request
-/// client.delete("/api/runs/my-run").await?;
+/// client.delete("/api/runtimes/my-runtime").await?;
 /// ```
 pub struct AuthenticatedClient {
     client: Client,
@@ -317,11 +317,17 @@ mod tests {
     #[test]
     fn test_url_building() {
         let client = AuthenticatedClient::new("https://example.com", "test-key");
-        assert_eq!(client.url("/api/runs"), "https://example.com/api/runs");
+        assert_eq!(
+            client.url("/api/runtimes"),
+            "https://example.com/api/runtimes"
+        );
 
         // Test trailing slash handling
         let client = AuthenticatedClient::new("https://example.com/", "test-key");
-        assert_eq!(client.url("/api/runs"), "https://example.com/api/runs");
+        assert_eq!(
+            client.url("/api/runtimes"),
+            "https://example.com/api/runtimes"
+        );
     }
 
     #[test]

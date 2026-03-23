@@ -1,14 +1,15 @@
-import { type Component, Match, Show, Switch } from 'solid-js';
+import { type Component, Match, Show, Switch, createSignal } from 'solid-js';
 import { useProjectSurface } from '../../hooks';
-import { emit } from '../../lib/events';
 import { useProject, useRoute, useWorkspace } from '../../stores';
-import { SpecBoard } from '../specflow/SpecBoard';
-import { MessagingPanel } from '../messaging';
+import { WorkersPane } from '../workers';
+import { WorkTreePane } from '../worktree';
 import { Dropdown, Icon, type DropdownOption } from '../shared';
+import { DeliveryDialog } from '../specflow/DeliveryDialog';
+import { ForkRouteDialog } from '../specflow/ForkRouteDialog';
 
 const MACHINERY_TABS = [
-  { id: 'board', label: 'Board', icon: 'blocks' },
-  { id: 'workers', label: 'Workers', icon: 'message-circle' },
+  { id: 'work', label: 'Work', icon: 'blocks' },
+  { id: 'workers', label: 'Workers', icon: 'bot' },
 ] as const;
 
 export const ProjectSurface: Component = () => {
@@ -16,6 +17,8 @@ export const ProjectSurface: Component = () => {
   const route = useRoute();
   const workspace = useWorkspace();
   const { surface } = useProjectSurface();
+  const [showForkDialog, setShowForkDialog] = createSignal(false);
+  const [showDeliveryDialog, setShowDeliveryDialog] = createSignal(false);
   const routeOptions = (): DropdownOption[] =>
     (surface()?.routes ?? []).map((routeSummary) => ({
       value: String(routeSummary.routeId),
@@ -69,7 +72,7 @@ export const ProjectSurface: Component = () => {
               <div class="h-full overflow-hidden rounded-3xl border border-pasture-700/60 bg-pasture-950/70 shadow-[0_24px_80px_rgba(0,0,0,0.28)]">
                 <iframe
                   title={`Project focus for ${project.selectedProject()?.name ?? 'project'}`}
-                  sandbox=""
+                  sandbox="allow-scripts"
                   srcdoc={projectSurface().focusView.html}
                   class="h-full w-full bg-transparent"
                 />
@@ -108,12 +111,38 @@ export const ProjectSurface: Component = () => {
                 </Show>
                 <button
                   type="button"
-                  onClick={() => emit('open-fork-dialog')}
+                  onClick={() => setShowForkDialog(true)}
                   class="rounded-none border border-pasture-700/60 bg-pasture-800/70 px-3 py-2 text-sm text-wool-300 transition-colors hover:bg-pasture-700"
                 >
                   <span class="flex items-center gap-2">
                     <Icon name="copy-plus" class="w-4 h-4" />
                     <span>Fork route</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowDeliveryDialog(true)}
+                  class="rounded-none border border-pasture-700/60 bg-pasture-800/70 px-3 py-2 text-sm text-wool-300 transition-colors hover:bg-pasture-700"
+                >
+                  <span class="flex items-center gap-2">
+                    <Icon name="package" class="w-4 h-4" />
+                    <span>Deliver</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const routeId = route.currentRouteId();
+                    if (routeId) {
+                      void route.archiveRoute(routeId);
+                    }
+                  }}
+                  disabled={surface()?.routes.length === 1}
+                  class="rounded-none border border-pasture-700/60 bg-pasture-800/70 px-3 py-2 text-sm text-wool-300 transition-colors hover:bg-pasture-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <span class="flex items-center gap-2">
+                    <Icon name="archive" class="w-4 h-4" />
+                    <span>Archive route</span>
                   </span>
                 </button>
               </div>
@@ -140,17 +169,23 @@ export const ProjectSurface: Component = () => {
 
             <div class="h-[calc(100%-49px)] min-h-0">
               <Switch>
-                <Match when={workspace.activeMachineryTab() === 'board'}>
-                  <SpecBoard />
+                <Match when={workspace.activeMachineryTab() === 'work'}>
+                  <WorkTreePane />
                 </Match>
                 <Match when={workspace.activeMachineryTab() === 'workers'}>
-                  <MessagingPanel />
+                  <WorkersPane />
                 </Match>
               </Switch>
             </div>
           </section>
         </Show>
       </div>
+      <Show when={showForkDialog()}>
+        <ForkRouteDialog onClose={() => setShowForkDialog(false)} />
+      </Show>
+      <Show when={showDeliveryDialog()}>
+        <DeliveryDialog onClose={() => setShowDeliveryDialog(false)} />
+      </Show>
     </section>
   );
 };

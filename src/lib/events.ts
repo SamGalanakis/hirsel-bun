@@ -1,18 +1,9 @@
 type EventMap = {
-  'show-worker-output': { runName: string; workerName: string };
-  'run-selected': string | null;
-  'draft-selected': string | null;
-  'draft-created': undefined;
-  'create-draft': undefined;
+  'show-worker-output': { projectId: number; routeId: number; workerName: string };
   'project-selected': number;
   'project-deselected': undefined;
   'project-created': unknown;
   'cancel-project-setup': undefined;
-  'board-refresh': number;
-  'radial-start-shepherd': undefined;
-  'radial-deliver': undefined;
-  'radial-open-ide': undefined;
-  'open-fork-dialog': undefined;
   'close-settings': undefined;
   'switch-tab': string;
   'theme-changed': { themeId: string; theme: unknown };

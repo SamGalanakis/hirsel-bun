@@ -101,8 +101,11 @@ impl DeliveryOrchestrator {
     /// Create a delivery orchestrator from a run name.
     ///
     /// Resolves the work directory from the run name and delegates to `from_work_dir`.
-    pub fn from_run_name(run_name: &str, expected_remote: Option<&str>) -> DeliveryResult<Self> {
-        let work_dir = resolve_run_work_dir(run_name).map_err(|e| match e {
+    pub fn from_runtime_name(
+        runtime_name: &str,
+        expected_remote: Option<&str>,
+    ) -> DeliveryResult<Self> {
+        let work_dir = resolve_run_work_dir(runtime_name).map_err(|e| match e {
             super::workspace::WorkspaceError::WorkDirNotFound(message) => {
                 DeliveryError::InvalidState(message)
             }

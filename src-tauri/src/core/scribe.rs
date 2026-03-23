@@ -66,9 +66,9 @@ pub async fn should_process_batch(state: &SQLiteState, config: &Config) -> bool 
 }
 
 /// Process pending scribe submissions for a run.
-pub async fn process_scribe_batch(run_name: &str) -> Result<ScribeBatchResult, ScribeError> {
+pub async fn process_scribe_batch(runtime_name: &str) -> Result<ScribeBatchResult, ScribeError> {
     let (project_id, batch_id, submissions) = {
-        let state = SQLiteState::new(run_name)
+        let state = SQLiteState::new(runtime_name)
             .await
             .map_err(|e| ScribeError::Database(e.to_string()))?;
         let project_id = state
@@ -76,7 +76,10 @@ pub async fn process_scribe_batch(run_name: &str) -> Result<ScribeBatchResult, S
             .await
             .map_err(ScribeError::State)?
             .ok_or_else(|| {
-                ScribeError::InvalidPath(format!("Run '{}' is not linked to a project", run_name))
+                ScribeError::InvalidPath(format!(
+                    "Run '{}' is not linked to a project",
+                    runtime_name
+                ))
             })?;
         let submissions = state
             .get_pending_scribe_submissions()
@@ -139,7 +142,7 @@ pub async fn process_scribe_batch(run_name: &str) -> Result<ScribeBatchResult, S
 
     let success = write_result.is_ok();
     {
-        let state = SQLiteState::new(run_name)
+        let state = SQLiteState::new(runtime_name)
             .await
             .map_err(|e| ScribeError::Database(e.to_string()))?;
         state

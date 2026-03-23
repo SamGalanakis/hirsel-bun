@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 /// Configuration for running a worker.
 #[derive(Debug, Clone)]
 pub struct WorkerRunConfig {
-    pub run_name: String,
+    pub runtime_name: String,
     pub worker_name: String,
     pub work_dir: PathBuf,
-    pub run_dir: PathBuf,
+    pub runtime_dir: PathBuf,
     pub agent_command: Vec<String>,
     pub is_leader: bool,
     pub leader_name: Option<String>,
@@ -23,10 +23,10 @@ pub struct WorkerRunConfig {
 /// Workers access task details via tools (get_task_tree, get_task_details, etc.)
 pub fn build_worker_prompt(
     worker_name: &str,
-    run_name: &str,
+    runtime_name: &str,
     teammates: Option<&[String]>,
     work_dir: &Path,
-    run_dir: &Path,
+    runtime_dir: &Path,
     assigned_task_id: Option<&str>,
     is_plan_task: bool,
 ) -> String {
@@ -47,7 +47,7 @@ pub fn build_worker_prompt(
     // Context
     prompt.push_str("## Your Context\n\n");
     prompt.push_str(&format!("- **Worker name:** {}\n", worker_name));
-    prompt.push_str(&format!("- **Run name:** {}\n", run_name));
+    prompt.push_str(&format!("- **Run name:** {}\n", runtime_name));
     if let Some(task_id) = assigned_task_id {
         prompt.push_str(&format!("- **Assigned task:** `{}`\n", task_id));
     }
@@ -55,10 +55,10 @@ pub fn build_worker_prompt(
         "- **Work directory:** {} (git worktree - write code here)\n",
         work_dir.display()
     ));
-    prompt.push_str(&format!("- **Run directory:** {}\n", run_dir.display()));
+    prompt.push_str(&format!("- **Run directory:** {}\n", runtime_dir.display()));
     prompt.push_str(&format!(
         "- **Assets directory:** {} (images & files referenced in spec)\n\n",
-        run_dir.join("assets").display()
+        runtime_dir.join("assets").display()
     ));
 
     // Your Task - Direct assignment
@@ -86,8 +86,10 @@ pub fn build_worker_prompt(
     } else {
         // Single-worker: working directly in staging workspace, no remote
         prompt.push_str("You're working directly on the `staging` branch.\n");
-        prompt.push_str("This is a single-worker run - no git remote is configured.\n");
-        prompt.push_str("Your changes stay local until the run completes.\n\n");
+        prompt.push_str("This is a single-worker route workspace - no git remote is configured.\n");
+        prompt.push_str(
+            "Your changes stay local until the orchestrator chooses how to continue.\n\n",
+        );
     }
 
     prompt.push_str("**Commit Discipline (IMPORTANT):**\n");
@@ -149,18 +151,20 @@ pub fn build_worker_prompt(
     prompt.push_str("- `delete_task(task_id)` - Delete a worker-created task\n");
     prompt.push_str("- `add_check(check_id, name, validates?)` - Create check task\n\n");
 
-    prompt.push_str("### Communication\n");
-    prompt.push_str("- `list_contacts()` - Available chat targets (user, group, workers)\n");
-    prompt.push_str("- `chat_history(with?, limit?)` - Read message history\n");
-    prompt.push_str("- `chat_send(to, message)` - Send a message\n");
-    prompt.push_str("- `chat_unread(with?)` - Check for new unread messages\n\n");
+    prompt.push_str("### Orchestrator Coordination\n");
+    prompt.push_str(
+        "- `report_progress(summary, details?)` - Send a non-blocking progress update upward\n",
+    );
+    prompt.push_str("- `raise_concern(kind, summary, details?, severity?, blocking?)` - Escalate a blocker, risk, conflict, or review need to the orchestrator\n");
+    prompt.push_str("- `request_decision(summary, details?)` - Pause and ask the orchestrator for a decision you cannot safely make alone\n\n");
 
     prompt.push_str("### Retained Context\n");
     prompt.push_str("- `read_retained_context()` - Read durable project context\n");
     prompt.push_str("- `scribe(content)` - Record durable context for scribe condensation\n\n");
 
     prompt.push_str("### Completion\n");
-    prompt.push_str("- `work_done` - Signal task complete and ready for new assignment\n");
+    prompt
+        .push_str("- `work_done` - Signal task complete and return control to the orchestrator\n");
     prompt.push_str("- `time_status` - Check time limit status\n\n");
 
     prompt.push_str("### Check Operations\n");
@@ -179,23 +183,31 @@ pub fn build_worker_prompt(
     prompt.push_str("- Use `get_task_details(task_id)` to see full task content\n");
     prompt.push_str("- Complete the work in your git workspace\n");
     prompt.push_str("- Call `work_done()` when your task is complete\n");
-    prompt.push_str("  - This marks your task done and exits\n");
-    prompt.push_str("  - You'll be respawned with a new task if one is available\n\n");
+    prompt.push_str(
+        "  - This marks your task done, exits, and returns control to the orchestrator\n\n",
+    );
     prompt.push_str("**Creating subtasks:**\n");
     prompt.push_str("- You can still use `add_task()` to break down work\n");
     prompt.push_str("- Subtasks go into the pool and may be assigned to you or other workers\n\n");
 
-    // Messaging section
-    prompt.push_str("## Messaging the User\n\n");
-    prompt.push_str("Messages to `user` pause execution until they reply.\n\n");
-    prompt.push_str("**When to message:**\n");
-    prompt.push_str("- You need information to proceed\n");
-    prompt.push_str("- Significant architectural decision\n");
-    prompt.push_str("- Spec is ambiguous\n");
-    prompt.push_str("- Something the user should review\n\n");
-    prompt.push_str("```\n");
-    prompt
-        .push_str("chat_send(\"user\", \"Which database should I use - PostgreSQL or SQLite?\")\n");
+    // Escalation section
+    prompt.push_str("## Escalation\n\n");
+    prompt.push_str("You do not message the user or other workers directly. The orchestrator owns all user communication and cross-worker coordination.\n\n");
+    prompt.push_str("**Use `report_progress()` when:**\n");
+    prompt.push_str("- You finished a meaningful sub-result worth surfacing upward\n");
+    prompt.push_str(
+        "- You discovered something the orchestrator should know while you continue working\n\n",
+    );
+    prompt.push_str("**Use `raise_concern()` when:**\n");
+    prompt.push_str("- You found a blocker, risk, conflict, or review need\n");
+    prompt.push_str("- You suspect the route/task plan should change\n");
+    prompt.push_str("- Another worker's work or route state may invalidate your current plan\n\n");
+    prompt.push_str("**Use `request_decision()` when:**\n");
+    prompt.push_str("- You truly need a decision before you can continue safely\n");
+    prompt.push_str("- The spec is ambiguous in a way that would materially affect the outcome\n");
+    prompt.push_str("- A tradeoff needs orchestrator or user judgment\n\n");
+    prompt.push_str("```text\n");
+    prompt.push_str("request_decision(\"Choose database\", \"I can implement either PostgreSQL or SQLite; current constraints are unclear.\")\n");
     prompt.push_str("```\n\n");
 
     prompt.push_str("## Retained Context\n\n");
@@ -207,14 +219,11 @@ pub fn build_worker_prompt(
     prompt.push_str("1. Use `get_task_details(your_assigned_task)` to see your task\n");
     prompt.push_str("2. Work on the task in your git workspace\n");
     prompt.push_str("3. Commit your changes\n");
-    prompt.push_str("4. Call `work_done()` - your task is auto-completed and you'll be respawned with a new task if available\n\n");
+    prompt.push_str("4. Call `work_done()` - your task is auto-completed and the orchestrator decides the next delegation\n\n");
 
     // When stuck
     prompt.push_str("## When Stuck\n\n");
-    prompt.push_str("Don't spin. If you can't figure something out after 2-3 attempts:\n");
-    prompt.push_str("```\n");
-    prompt.push_str("chat_send(\"user\", \"Specific question about what's blocking you\")\n");
-    prompt.push_str("```\n\n");
+    prompt.push_str("Don't spin. If you can't figure something out after 2-3 attempts, raise a structured concern or request a decision instead of guessing blindly.\n\n");
 
     prompt.push_str("**Begin by reviewing your assigned task with `get_task_details()`.**\n");
 

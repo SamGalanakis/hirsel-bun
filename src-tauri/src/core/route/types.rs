@@ -85,6 +85,7 @@ pub struct Route {
     pub human_in_the_loop: bool,
     pub target_branch: Option<String>,
     pub runner: Option<String>,
+    pub archived_at: Option<String>,
 }
 
 /// Route with ancestry information for tree display

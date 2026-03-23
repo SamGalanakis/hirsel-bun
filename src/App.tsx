@@ -7,11 +7,8 @@ import { useMcpBrowserBridge } from './lib/mcp-browser-bridge';
 import {
   AppProvider,
   DeliveryProvider,
-  DeltaProvider,
   ProjectProvider,
   RouteProvider,
-  RunsProvider,
-  SelectionProvider,
   WorkspaceProvider,
 } from './stores';
 
@@ -27,15 +24,9 @@ const App: Component = () => {
       <ProjectProvider>
         <WorkspaceProvider>
           <RouteProvider>
-            <RunsProvider>
-              <SelectionProvider>
-                <DeltaProvider>
-                  <DeliveryProvider>
-                    <Layout />
-                  </DeliveryProvider>
-                </DeltaProvider>
-              </SelectionProvider>
-            </RunsProvider>
+            <DeliveryProvider>
+              <Layout />
+            </DeliveryProvider>
           </RouteProvider>
         </WorkspaceProvider>
       </ProjectProvider>

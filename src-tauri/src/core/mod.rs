@@ -4,14 +4,13 @@
 //! - State management (SQLite)
 //! - Configuration
 //! - Git operations
-//! - Chat/messaging system
 //! - File utilities
 //! - Eval system
 //! - Orchestrator abstraction for local/remote coordination
 
 pub mod api_types;
 pub mod board;
-pub mod chats;
+pub mod capabilities;
 pub mod config;
 pub mod conflict_resolver;
 pub mod constants;
@@ -37,8 +36,8 @@ pub mod ops;
 pub mod orchestrator;
 pub mod process;
 pub mod project;
-pub mod project_messages;
 pub mod route;
+pub mod route_runtime;
 pub mod run_manager;
 pub mod runner;
 pub mod scribe;
@@ -51,10 +50,11 @@ pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod system;
+pub mod worker_concerns;
 pub mod workers;
+pub mod worktree;
 
 // Re-export commonly used types
-pub use chats::{ChatHeader, ChatMode};
 pub use config::*;
 pub use credentials::{CredentialError, CredentialResult, CredentialStore, ForwardedCredentials};
 pub use error::{ErrorKind, HirselError, HirselResult};
@@ -65,7 +65,7 @@ pub use lifecycle::{
     LifecycleResult, LocalLifecycleManager, RunStateMachine, WorkerStateMachine,
 };
 pub use names::{
-    generate_run_name, generate_worker_name, get_available_name, get_available_names, slugify,
+    generate_runtime_name, generate_worker_name, get_available_name, get_available_names, slugify,
 };
 pub use orchestrator::{
     create_local_orchestrator, create_orchestrator, LocalOrchestrator, Orchestrator,
@@ -73,10 +73,6 @@ pub use orchestrator::{
 };
 pub use project::{
     CreateProjectRequest, Project, ProjectError, ProjectResult, ProjectStore, UpdateProjectRequest,
-};
-pub use project_messages::{
-    ProjectMessage, ProjectMessagesError, ProjectMessagesResult, ProjectMessagesStore,
-    ProjectThreadSummary,
 };
 pub use run_manager::{
     create_run_manager, LocalRunManager, RemoteRunManager, RunManager, RunManagerError,
@@ -113,11 +109,16 @@ pub use storage::S3FileStorage;
 pub use storage::{
     create_file_storage, FileStorage, LocalFileStorage, StorageError, StorageResult,
 };
+pub use worker_concerns::{
+    CreateWorkerConcernRequest, WorkerConcern, WorkerConcernError, WorkerConcernResult,
+    WorkerConcernStore,
+};
 pub use workers::{
     check_and_send_time_notifications, check_worker_heartbeats, get_agent_command, is_pid_alive,
     spawn_worker, update_worker_heartbeat, SpawnResult, WorkerError, WorkerResult, WorkerScale,
     WorkerSpawnConfig,
 };
+pub use worktree::{AgentRef, WorkItem, WorkItemTree, WorkTreeSnapshot};
 
 // Draft workspace management
 pub use draft::{
@@ -155,16 +156,20 @@ pub use board::{
     TaskRun as BoardTaskRun, TaskStatus as BoardTaskStatus, TaskTree, UpdateEvalRequest,
     UpdateTaskRequest,
 };
+pub use capabilities::CapabilityProfile;
 
 // Delta dispatch (unified board tree)
 pub use delta::{
     BoardNode, BoardNodeDifficulty, BoardNodeSource, BoardNodeStatus, BoardNodeTree, BoardVersion,
     CreateBoardNodeRequest, DeltaDispatchService, DeltaState,
-    DispatchResult as DeltaDispatchResult, NodeKind, ProjectRun, ProjectRunStatus,
+    DispatchResult as DeltaDispatchResult, NodeKind, RouteRuntime, RouteRuntimeStatus,
     UpdateBoardNodeRequest,
 };
 
 // Route management
 pub use route::{
     CreateRouteRequest, Route, RouteError, RouteFiles, RouteResult, RouteStore, RouteTree,
+};
+pub use route_runtime::{
+    ensure_route_runtime, get_route_runtime_name, runtime_name_for_route, RouteRuntimeHandle,
 };

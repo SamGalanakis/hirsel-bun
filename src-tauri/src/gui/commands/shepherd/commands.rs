@@ -1,11 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use lash::plugin::StaticPluginFactory;
 use lash::{
-    default_context_strategy, default_execution_mode, AgentStateEnvelope, DefaultToolPluginDeps,
-    FsInstructionSource, HostProfile, InputItem, OutputState, PluginHost, PluginSpec,
-    RuntimeHostConfig, RuntimeServices, SessionPolicy, ToolProvider, TurnInput, TurnStatus,
+    default_context_strategy, default_execution_mode, AgentStateEnvelope, HostProfile, InputItem,
+    OutputState, PluginHost, RuntimeHostConfig, RuntimeServices, SessionPolicy, ToolProvider,
+    TurnInput, TurnStatus,
 };
 use tauri::Emitter;
 use tokio::sync::Mutex;
@@ -27,7 +26,9 @@ use super::types::{
     ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus, StartShepherdSessionRequest,
     StartShepherdSessionResponse,
 };
+use crate::core::credentials::CredentialStore;
 use crate::core::ShepherdChatMessage;
+use crate::lash_tools::embedded_tool_plugin_factories;
 
 /// Start a Shepherd session.
 #[tauri::command]
@@ -112,19 +113,12 @@ pub async fn send_shepherd_message(
                 });
             let execution_mode = default_execution_mode();
             let context_strategy = default_context_strategy();
-            let instruction_source = Arc::new(FsInstructionSource::new());
-            let mut plugin_factories = lash::default_tool_plugin_factories(
-                execution_mode,
-                DefaultToolPluginDeps {
-                    tavily_api_key: None,
-                    prompt_bridge: None,
-                    instruction_source: Some(instruction_source),
-                },
-            );
-            plugin_factories.push(Arc::new(StaticPluginFactory::new(
-                "hirsel_shepherd_tools",
-                PluginSpec::new().with_tool_provider(Arc::clone(&tools)),
-            )));
+            let tavily_api_key = match CredentialStore::open().await {
+                Ok(store) => store.load("tavily_api_key").await.ok(),
+                Err(_) => None,
+            };
+            let plugin_factories =
+                embedded_tool_plugin_factories("hirsel_shepherd_tools", Arc::clone(&tools), tavily_api_key);
             let plugin_host = PluginHost::new(plugin_factories);
             let root_plugins = plugin_host
                 .build_session("root", execution_mode, None)

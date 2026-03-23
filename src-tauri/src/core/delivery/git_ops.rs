@@ -380,23 +380,23 @@ impl GitOperations {
 }
 
 /// Generate a delivery branch name from run name
-pub fn delivery_branch_name(run_name: &str) -> String {
-    format!("hirsel/{}", run_name)
+pub fn delivery_branch_name(runtime_name: &str) -> String {
+    format!("hirsel/{}", runtime_name)
 }
 
 /// Generate a PR title from run name
-pub fn pr_title(run_name: &str, summary: Option<&str>) -> String {
+pub fn pr_title(runtime_name: &str, summary: Option<&str>) -> String {
     match summary {
         Some(s) if !s.is_empty() => s.to_string(),
-        _ => format!("Changes from {}", run_name),
+        _ => format!("Changes from {}", runtime_name),
     }
 }
 
 /// Generate a PR body
-pub fn pr_body(run_name: &str, task_ids: &[String], eval_ids: &[String]) -> String {
+pub fn pr_body(runtime_name: &str, task_ids: &[String], eval_ids: &[String]) -> String {
     let mut body = String::new();
 
-    body.push_str(&format!("## Run: {}\n\n", run_name));
+    body.push_str(&format!("## Run: {}\n\n", runtime_name));
 
     if !task_ids.is_empty() {
         body.push_str("### Tasks\n");

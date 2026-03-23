@@ -14,7 +14,5 @@ export { ToolStatusPip } from './ToolStatusPip';
 export type { ToolStatusPipProps } from './ToolStatusPip';
 export { Dropdown, DropdownShell } from './Dropdown';
 export type { DropdownOption, DropdownProps } from './Dropdown';
-export { StatusBadge } from './StatusBadge';
-export type { StatusBadgeProps } from './StatusBadge';
 export { StatusDot } from './StatusDot';
 export { WorkerAvatar } from './WorkerAvatar';

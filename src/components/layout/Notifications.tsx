@@ -7,11 +7,12 @@ import { type Component, For, Show, createEffect, createSignal } from 'solid-js'
 import { useModalClosing } from '../../hooks';
 import type { UnreadNotification } from '../../lib/types';
 import { formatTimeShort } from '../../lib/utils/formatters';
-import { useProject, useWorkspace } from '../../stores';
+import { useProject, useRoute, useWorkspace } from '../../stores';
 import { Icon } from '../shared';
 
 export const NotificationsDropdown: Component = () => {
   const project = useProject();
+  const route = useRoute();
   const workspace = useWorkspace();
   const [open, setOpen] = createSignal(false);
   const [notifications, setNotifications] = createSignal<
@@ -51,9 +52,8 @@ export const NotificationsDropdown: Component = () => {
     // Persist each to backend
     for (const n of unreadNotifs) {
       try {
-        await invoke('mark_project_messages_read', {
-          projectId: n.projectId,
-          thread: n.thread,
+        await invoke('mark_worker_concern_read', {
+          concernId: n.concernId,
         });
       } catch (e) {
         console.error('Failed to mark notification read:', e);
@@ -70,23 +70,21 @@ export const NotificationsDropdown: Component = () => {
 
     // Persist to backend
     try {
-      await invoke('mark_project_messages_read', {
-        projectId: notification.projectId,
-        thread: notification.thread,
+      await invoke('mark_worker_concern_read', {
+        concernId: notification.concernId,
       });
     } catch (e) {
       console.error('Failed to mark notification read:', e);
     }
   };
 
-  const goToMessage = (projectId: number, thread: string) => {
+  const goToConcern = (projectId: number, routeId: number) => {
     // Find the project by ID and select it
     const targetProject = project.projects().find((p) => p.id === projectId);
     if (targetProject) {
       project.selectProject(targetProject);
     }
-    // Open worker/chat machinery and select the thread
-    workspace.setActiveThread(thread);
+    void route.setActiveRoute(routeId);
     workspace.setActiveMachineryTab('workers');
     workspace.setMachineryOpen(true);
   };
@@ -138,7 +136,7 @@ export const NotificationsDropdown: Component = () => {
                 <div
                   onClick={() => {
                     markOneRead(notif);
-                    goToMessage(notif.projectId, notif.thread);
+                    goToConcern(notif.projectId, notif.routeId);
                     setOpen(false);
                   }}
                   class="p-3 hover:bg-pasture-700 cursor-pointer border-b border-pasture-700 last:border-0 transition-all duration-300 group relative"
@@ -155,9 +153,9 @@ export const NotificationsDropdown: Component = () => {
                         'text-wool-500': notif.read,
                       }}
                     >
-                      {notif.runName}
+                      {notif.projectName}
                     </span>
-                    <span class="text-xs text-wool-600">{notif.thread}</span>
+                    <span class="text-xs text-wool-600">{notif.routeName}</span>
                     <span class="text-xs text-wool-600 ml-auto">
                       {formatTimeShort(notif.timestamp)}
                     </span>
@@ -187,9 +185,11 @@ export const NotificationsDropdown: Component = () => {
                       'text-wool-500': notif.read,
                     }}
                   >
-                    {notif.content}
+                    {notif.summary}
                   </p>
-                  <p class="text-xs text-wool-500 mt-0.5">{notif.sender}</p>
+                  <p class="text-xs text-wool-500 mt-0.5">
+                    {notif.workerName} · {notif.severity}
+                  </p>
                 </div>
               )}
             </For>

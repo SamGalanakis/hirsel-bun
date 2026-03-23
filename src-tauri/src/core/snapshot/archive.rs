@@ -10,8 +10,8 @@
 //! The trait uses a generic `key` parameter to identify archives, allowing
 //! callers to use naming conventions like:
 //!
-//! - Work directory: `"{run_name}/{worker_name}/workdir"`
-//! - Agent session: `"{run_name}/{worker_name}/session"`
+//! - Work directory: `"{runtime_name}/{worker_name}/workdir"`
+//! - Agent session: `"{runtime_name}/{worker_name}/session"`
 //!
 //! # Strategies
 //!

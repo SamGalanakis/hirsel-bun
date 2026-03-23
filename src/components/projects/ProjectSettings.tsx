@@ -368,11 +368,11 @@ export const ProjectSettings: Component = () => {
               </div>
             </Show>
 
-            {/* Run Configuration Section */}
+            {/* Worker Runtime Section */}
             <div>
               <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
                 <Icon name="play" class="w-4 h-4 text-wool-500" />
-                Run Configuration
+                Worker Runtime
               </h4>
 
               <div class="space-y-4">
@@ -406,7 +406,7 @@ export const ProjectSettings: Component = () => {
                         setIsDirty(true);
                       }}
                     />
-                    <p class="text-xs text-muted-foreground mt-1">Maximum run duration</p>
+                    <p class="text-xs text-muted-foreground mt-1">Maximum worker runtime duration</p>
                   </div>
 
                   {/* Runner - Basecoat Dropdown */}

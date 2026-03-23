@@ -2,7 +2,7 @@
 //!
 //! This module provides connection pool management for all database access:
 //! - Global pool for projects, credentials, delta state
-//! - Per-run pools for run-specific state
+//! - Per-runtime pools for route-runtime-local state
 
 use chrono::Utc;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
@@ -23,17 +23,17 @@ pub type DbPool = SqlitePool;
 /// Uses std::sync::OnceLock to avoid async deadlock issues with tokio::sync::OnceCell
 static GLOBAL_POOL: OnceLock<SqlitePool> = OnceLock::new();
 
-/// Per-run database pool entry with last-access tracking for eviction
+/// Per-runtime database pool entry with last-access tracking for eviction
 struct PoolEntry {
     pool: SqlitePool,
     last_accessed: Instant,
 }
 
-/// Per-run database pools
+/// Per-runtime database pools
 static RUN_POOLS: tokio::sync::OnceCell<Arc<RwLock<HashMap<String, PoolEntry>>>> =
     tokio::sync::OnceCell::const_new();
 
-/// Evict idle run pools after 10 minutes
+/// Evict idle runtime pools after 10 minutes
 const POOL_EVICTION_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Get the global database pool, initializing if needed.
@@ -43,7 +43,7 @@ const POOL_EVICTION_TIMEOUT: Duration = Duration::from_secs(600);
 /// - Credentials
 /// - Board state (board tree)
 /// - Shepherd chat history
-/// - Project messages
+/// - Worker concerns
 pub async fn global_pool() -> &'static SqlitePool {
     // Use get_or_init with blocking initialization to avoid async deadlocks
     GLOBAL_POOL.get_or_init(|| {
@@ -64,15 +64,15 @@ pub async fn global_pool() -> &'static SqlitePool {
     })
 }
 
-/// Get a per-run database pool, creating if needed.
+/// Get a per-runtime database pool, creating if needed.
 ///
-/// Each run has its own database at `~/.hirsel/runs/{run}/hirsel.db` storing:
-/// - Run state
+/// Each runtime has its own database at `~/.hirsel/runtimes/{runtime}/hirsel.db` storing:
+/// - Runtime state
 /// - Workers
-/// - Messages
 /// - Evals
 /// - Worker events
-pub async fn run_pool(run_name: &str) -> SqlitePool {
+/// - Scribe submissions
+pub async fn runtime_pool(runtime_name: &str) -> SqlitePool {
     let pools = RUN_POOLS
         .get_or_init(|| async { Arc::new(RwLock::new(HashMap::new())) })
         .await;
@@ -91,7 +91,7 @@ pub async fn run_pool(run_name: &str) -> SqlitePool {
     // Fast path: check if pool exists with read lock
     {
         let read = pools.read().await;
-        if let Some(entry) = read.get(run_name) {
+        if let Some(entry) = read.get(runtime_name) {
             return entry.pool.clone();
         }
     }
@@ -100,19 +100,19 @@ pub async fn run_pool(run_name: &str) -> SqlitePool {
     let mut write = pools.write().await;
 
     // Re-check under write lock to avoid creating duplicate pools
-    if let Some(entry) = write.get_mut(run_name) {
+    if let Some(entry) = write.get_mut(runtime_name) {
         entry.last_accessed = Instant::now();
         return entry.pool.clone();
     }
 
     // Create and insert atomically under the write lock
-    let db_path = crate::core::config::run_dir(run_name).join("hirsel.db");
+    let db_path = crate::core::config::runtime_dir(runtime_name).join("hirsel.db");
     let pool = create_pool(&db_path)
         .await
-        .expect("Failed to create run database pool");
+        .expect("Failed to create runtime database pool");
 
     write.insert(
-        run_name.to_string(),
+        runtime_name.to_string(),
         PoolEntry {
             pool: pool.clone(),
             last_accessed: Instant::now(),
@@ -138,13 +138,13 @@ async fn evict_idle_pools(pools: &Arc<RwLock<HashMap<String, PoolEntry>>>) {
     }
 }
 
-/// Close a per-run database pool.
+/// Close a per-runtime database pool.
 ///
-/// Call this when a run is deleted or no longer needed to free resources.
-pub async fn close_run_pool(run_name: &str) {
+/// Call this when a runtime is deleted or no longer needed to free resources.
+pub async fn close_runtime_pool(runtime_name: &str) {
     if let Some(pools) = RUN_POOLS.get() {
         let mut write = pools.write().await;
-        if let Some(entry) = write.remove(run_name) {
+        if let Some(entry) = write.remove(runtime_name) {
             entry.pool.close().await;
         }
     }

@@ -23,8 +23,8 @@ pub fn agent_session_dir(home_override: Option<&Path>) -> PathBuf {
 /// Get the host-side path for a worker's session mount.
 ///
 /// This is where Docker containers should mount from.
-pub fn host_session_path(run_dir: &Path, worker_name: &str) -> PathBuf {
-    run_dir.join("agent-sessions").join(worker_name)
+pub fn host_session_path(runtime_dir: &Path, worker_name: &str) -> PathBuf {
+    runtime_dir.join("agent-sessions").join(worker_name)
 }
 
 #[cfg(test)]

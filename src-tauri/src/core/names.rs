@@ -29,7 +29,7 @@ const RUN_NOUNS: &[&str] = &[
 /// Generate a random friendly run name like "curious-fox" or "swift-eagle"
 ///
 /// Uses system time for pseudo-randomness to avoid requiring the full rand RNG.
-pub fn generate_run_name() -> String {
+pub fn generate_runtime_name() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     // Simple pseudo-random based on system time
@@ -267,8 +267,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_generate_run_name() {
-        let name = generate_run_name();
+    fn test_generate_runtime_name() {
+        let name = generate_runtime_name();
         assert!(name.contains('-'));
         let parts: Vec<&str> = name.split('-').collect();
         assert_eq!(parts.len(), 2);

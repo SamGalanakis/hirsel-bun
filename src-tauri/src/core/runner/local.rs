@@ -1,7 +1,7 @@
 //! Local runner implementation - spawns workers as local processes.
 //!
 //! This runner spawns worker processes on the local machine using the
-//! hirsel __worker-run command as a detached subprocess. Optionally supports
+//! hirsel __worker-runtime command as a detached subprocess. Optionally supports
 //! running workers inside Docker containers.
 
 use async_trait::async_trait;
@@ -54,7 +54,7 @@ impl LocalRunner {
         // Build environment for worker subprocess
         let mut env: HashMap<String, String> = std::env::vars().collect();
         env.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
-        env.insert("HIRSEL_RUN".to_string(), config.run_name.clone());
+        env.insert("HIRSEL_RUNTIME".to_string(), config.runtime_name.clone());
         env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
 
         // Set agent command for lifecycle manager in worker subprocess
@@ -73,21 +73,21 @@ impl LocalRunner {
         let hirsel_exe = std::env::current_exe()
             .map_err(|e| RunnerError::SpawnFailed(format!("Failed to get current exe: {}", e)))?;
 
-        // Build args for hirsel __worker-run
+        // Build args for hirsel __worker-runtime.
         let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
             RunnerError::SpawnFailed(format!("Failed to serialize agent command: {}", e))
         })?;
 
         let mut args = vec![
-            "__worker-run".to_string(),
-            "--run".to_string(),
-            config.run_name.clone(),
+            "__worker-runtime".to_string(),
+            "--runtime".to_string(),
+            config.runtime_name.clone(),
             "--worker".to_string(),
             config.worker_name.clone(),
             "--work-dir".to_string(),
             config.work_dir.to_string_lossy().to_string(),
-            "--run-dir".to_string(),
-            config.run_dir.to_string_lossy().to_string(),
+            "--runtime-dir".to_string(),
+            config.runtime_dir.to_string_lossy().to_string(),
             "--agent-command".to_string(),
             agent_command_json,
         ];
@@ -166,9 +166,9 @@ impl LocalRunner {
             "Spawned local worker {} ({}, PID {})",
             config.worker_name,
             if use_nix {
-                "nix develop + hirsel __worker-run"
+                "nix develop + hirsel __worker-runtime"
             } else {
-                "hirsel __worker-run"
+                "hirsel __worker-runtime"
             },
             pid
         );
@@ -191,7 +191,7 @@ impl LocalRunner {
     ///
     /// Mounts:
     /// - /work: work directory (project files)
-    /// - /hirsel: run directory (spec, db, etc.)
+    /// - /hirsel: runtime directory (workspace state, db, logs)
     /// - /tmp/home: worker home directory for transient state
     async fn spawn_docker(
         &self,
@@ -199,11 +199,11 @@ impl LocalRunner {
         container: &ContainerConfig,
     ) -> RunnerResult<SpawnResult> {
         let work_dir_str = config.work_dir.to_string_lossy().to_string();
-        let run_dir_str = config.run_dir.to_string_lossy().to_string();
+        let runtime_dir_str = config.runtime_dir.to_string_lossy().to_string();
 
         // Create worker home directory on host for persistent session state.
         let session_path = config
-            .run_dir
+            .runtime_dir
             .join("agent-sessions")
             .join(&config.worker_name);
         std::fs::create_dir_all(&session_path).map_err(|e| {
@@ -242,11 +242,11 @@ impl LocalRunner {
 
         // Build worker args
         let mut worker_cmd_parts = vec![
-            "hirsel __worker-run".to_string(),
-            format!("--run '{}'", config.run_name),
+            "hirsel __worker-runtime".to_string(),
+            format!("--runtime '{}'", config.runtime_name),
             format!("--worker '{}'", config.worker_name),
             "--work-dir '/work'".to_string(),
-            "--run-dir '/hirsel'".to_string(),
+            "--runtime-dir '/hirsel'".to_string(),
             format!(
                 "--agent-command '{}'",
                 agent_command_json.replace('\'', "'\\''")
@@ -472,7 +472,7 @@ exec env HOME=/tmp/home {worker_cmd}
             "-d".to_string(),
             "--rm".to_string(),
             "--name".to_string(),
-            format!("hirsel-{}-{}", config.run_name, config.worker_name),
+            format!("hirsel-{}-{}", config.runtime_name, config.worker_name),
             // Run as current user to avoid root-owned files in mounted volumes
             "--user".to_string(),
             format!("{}:{}", unsafe { libc::getuid() }, unsafe {
@@ -484,7 +484,7 @@ exec env HOME=/tmp/home {worker_cmd}
             "-v".to_string(),
             format!("{}:/work", work_dir_str),
             "-v".to_string(),
-            format!("{}:/hirsel", run_dir_str),
+            format!("{}:/hirsel", runtime_dir_str),
             // Mount worker HOME for persistent runtime state across restarts.
             "-v".to_string(),
             format!("{}:/tmp/home", session_path_str),
@@ -493,7 +493,7 @@ exec env HOME=/tmp/home {worker_cmd}
         ];
 
         // Pass through environment variables
-        // Note: HIRSEL_RUN, HIRSEL_WORKER, HIRSEL_API_URL are passed as CLI args to the worker.
+        // Note: HIRSEL_RUNTIME, HIRSEL_WORKER, HIRSEL_API_URL are passed as CLI args to the worker.
         // The worker sets these as env vars for child processes (MCP server, agent).
         let mut env_to_pass: HashMap<String, String> = HashMap::new();
         env_to_pass.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());

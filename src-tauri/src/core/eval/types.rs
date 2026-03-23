@@ -34,11 +34,11 @@ pub enum EvalError {
 /// Configuration for running an eval.
 #[derive(Debug, Clone)]
 pub struct EvalAcpConfig {
-    pub run_name: String,
+    pub runtime_name: String,
     pub eval_name: String,
     pub eval_id: i64,
     pub work_dir: PathBuf,
-    pub run_dir: PathBuf,
+    pub runtime_dir: PathBuf,
     pub result_file: PathBuf,
     pub log_file: PathBuf,
     pub timeout_secs: u64,

@@ -9,18 +9,18 @@ use super::types::{EvalAcpConfig, EvalAcpResult, EvalError};
 pub async fn run_eval(config: EvalAcpConfig) -> Result<EvalAcpResult, EvalError> {
     Err(EvalError::ProcessFailed(format!(
         "Eval runner not migrated to lash yet (run='{}', eval='{}', id={})",
-        config.run_name, config.eval_name, config.eval_id
+        config.runtime_name, config.eval_name, config.eval_id
     )))
 }
 
 /// Entry point used by `hirsel __eval-run`.
 pub async fn run_eval_from_args(
-    run_name: &str,
-    _run_dir: &str,
+    runtime_name: &str,
+    _runtime_dir: &str,
     _agent_command_json: &str,
 ) -> Result<(), EvalError> {
     Err(EvalError::ProcessFailed(format!(
         "Eval runner for '{}' is not available until lash migration is complete",
-        run_name
+        runtime_name
     )))
 }

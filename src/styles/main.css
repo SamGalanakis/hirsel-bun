@@ -1353,7 +1353,7 @@ section.flex-1.flex.flex-col {
   color: var(--wool-300);
 }
 
-/* Compact mode — smaller text/spacing for side panel and SpecBoard */
+/* Compact mode — smaller text/spacing for side panel previews */
 .markdown-preview.compact {
   font-size: 0.75rem;
   line-height: 1.5;
@@ -2257,7 +2257,7 @@ section.flex-1.flex.flex-col {
 }
 
 /* ============================================
-   SpecBoard Node Card Styling
+   Work Item Card Styling
    ============================================ */
 :root {
   /* Node card backgrounds (gradients) */
@@ -2299,7 +2299,7 @@ section.flex-1.flex.flex-col {
   --cm-active-line-bg: rgba(255, 255, 255, 0.03);
 }
 
-/* Light theme overrides for SpecBoard */
+/* Light theme overrides for work-item cards */
 :root.light,
 :root[data-theme="light"],
 :root[data-theme="hirsel-light"] {
@@ -3144,42 +3144,6 @@ section.flex-1.flex.flex-col {
 .route-item.active {
   color: var(--amber-400);
   background-color: rgba(212, 165, 116, 0.1);
-}
-
-/* ============================================
-   Radial Menu Styles
-   ============================================ */
-
-/* Radial menu - inline pie menu */
-.radial-menu {
-  animation: radial-expand 150ms ease-out;
-}
-
-.radial-menu button {
-  animation: radial-item-in 200ms ease-out backwards;
-}
-
-.radial-menu button:nth-child(1) { animation-delay: 0ms; }
-.radial-menu button:nth-child(2) { animation-delay: 25ms; }
-.radial-menu button:nth-child(3) { animation-delay: 50ms; }
-.radial-menu button:nth-child(4) { animation-delay: 75ms; }
-.radial-menu button:nth-child(5) { animation-delay: 100ms; }
-.radial-menu button:nth-child(6) { animation-delay: 125ms; }
-
-@keyframes radial-expand {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes radial-item-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.8);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
 }
 
 @keyframes halfmoon-enter {

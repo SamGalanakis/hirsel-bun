@@ -1287,7 +1287,7 @@
             </div>
           </article>
           <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Docs / memory</div></div>
+            <div class="ve-card__head"><div class="ve-card__label">Retained context</div></div>
             <div class="ve-card__body">
               <h3>Retained understanding</h3>
               <p>The broader project state promoted into durable references: conventions, architecture notes, usage guidance, and lessons.</p>
@@ -1311,7 +1311,7 @@
             <div class="ve-card__head"><div class="ve-card__label">Delivery</div></div>
             <div class="ve-card__body">
               <h3>Publication boundary</h3>
-              <p>Delivery becomes the act of crystallizing project outcomes into code, PRs, docs, and promoted memory, not merely pushing a branch.</p>
+              <p>Delivery becomes the act of crystallizing project outcomes into code, PRs, docs, and retained context, not merely pushing a branch.</p>
             </div>
           </article>
         </div>
@@ -1321,9 +1321,9 @@
         <div class="section-label">5 — Current vs Target</div>
         <h2>The target architecture is new in emphasis, not completely new in ingredients.</h2>
         <p class="section-intro">
-          The current product already contains most of the substrate: Shepherd chat, projects, routes, SpecBoard, docs,
-          messaging, and delivery. The change is that these should be re-read through a product architecture where
-          Shepherd and the project focus view sit on top of the machinery instead of beside it.
+          The current product already contains most of the substrate: Shepherd chat, projects, routes, route work trees,
+          worker concerns, retained context, and delivery. The change is that these are now organized around a
+          project-level focus surface with machinery below it rather than around a route-first canvas.
         </p>
 
         <div class="matrix">
@@ -1347,31 +1347,31 @@
                 <td>Promote it from overlay utility to the product’s primary input pane.</td>
               </tr>
               <tr>
-                <td><code>SpecBoard</code></td>
+                <td><code>WorkTreePane</code></td>
                 <td>
-                  Primary canvas showing board nodes, routes, and worker-driven execution detail.
+                  Route-scoped machinery pane showing the selected route's work tree and run rollup.
                   <div style="margin-top:8px"><span class="status current">Current</span></div>
                 </td>
                 <td>Machinery view and lower-level reveal.</td>
-                <td>Keep its statefulness and task graph power, but position it below the project focus view rather than as the first thing the user authors.</td>
+                <td>Keep route-scoped execution state, but place it behind the machinery reveal instead of making it the primary authoring surface.</td>
               </tr>
               <tr>
-                <td>Route-scoped docs and files</td>
+                <td>Project focus + retained context artifacts</td>
                 <td>
-                  Each route already owns docs and board task content files.
+                  The backend stores a project focus HTML artifact plus project retained context in the global DB.
                   <div style="margin-top:8px"><span class="status bridge">Bridge</span></div>
                 </td>
-                <td>Foundation for dynamic focus views, async docs, and route-local execution context.</td>
-                <td>Keep route scoping as the execution boundary, but make routes subordinate to the project and lifecycle-managed by Shepherd.</td>
+                <td>Foundation for dynamic focus views, async docs, and durable project memory.</td>
+                <td>Keep routes as execution branches, but keep user-facing synthesis and durable context at the project level.</td>
               </tr>
               <tr>
-                <td>Docs panel / messaging panel</td>
+                <td><code>WorkersPane</code> + worker concerns</td>
                 <td>
-                  Secondary right-side panels that open beside the board.
+                  Route-scoped worker views and structured escalations.
                   <div style="margin-top:8px"><span class="status bridge">Bridge</span></div>
                 </td>
-                <td>Supporting material around the project rather than parallel surfaces competing for attention.</td>
-                <td>Promote docs into “retained understanding” and keep messaging tied to execution when needed.</td>
+                <td>Supporting machinery for execution rather than a parallel user chat surface.</td>
+                <td>Workers report blockers, risks, and decisions upward; the user stays in the single Shepherd conversation.</td>
               </tr>
               <tr>
                 <td>Task / worker / eval runtime</td>
@@ -1417,7 +1417,7 @@
               <ul class="clean">
                 <li><code>Layout.tsx</code> now renders a persistent <code>ShepherdConsole</code> plus a project-level focus surface</li>
                 <li><code>ProjectSurface.tsx</code> owns the right-hand HTML artifact and the machinery reveal</li>
-                <li><code>SpecBoard</code>, runs, workers, memory, and route switching now live under machinery tabs instead of driving the whole shell</li>
+                <li><code>ProjectSurface.tsx</code> now reveals machinery as a route-scoped <code>Work</code>/<code>Workers</code> split</li>
               </ul>
             </div>
           </article>
@@ -1427,8 +1427,8 @@
             <div class="ve-card__body">
               <h3>Routes already provide the right persistence boundary</h3>
               <ul class="clean">
-                <li>Global DB stores projects, routes, board nodes, and Shepherd history</li>
-                <li>Route folders already hold scoped docs and task content files</li>
+                <li>Global DB stores projects, routes, project focus views, retained context, work items, and Shepherd history</li>
+                <li>Routes carry their own work tree state, concerns, and per-route project-run linkage</li>
                 <li>Delivery already operates at the route/version level</li>
               </ul>
             </div>
@@ -1440,7 +1440,7 @@
               <h3>Shepherd and workers remain runtime-backed</h3>
               <ul class="clean">
                 <li>Shepherd messages execute real turns and stream events to the UI</li>
-                <li>Workers remain isolated execution contexts operating on assigned board work</li>
+                <li>Workers remain isolated execution contexts operating on assigned route work items</li>
                 <li>The project focus view now sits above this runtime instead of replacing it</li>
               </ul>
             </div>
@@ -1485,8 +1485,8 @@
                         <tr><td>Modify run state</td><td><code>src-tauri/src/core/state/mod.rs</code> and <code>src-tauri/src/core/state/types.rs</code></td></tr>
                         <tr><td>Add runner type</td><td><code>src-tauri/src/core/runner/mod.rs</code> and a new runner implementation</td></tr>
                         <tr><td>Modify lifecycle</td><td><code>src-tauri/src/core/lifecycle/mod.rs</code> and <code>local.rs</code></td></tr>
-                        <tr><td>Add board node behavior</td><td><code>src-tauri/src/core/delta/state/nodes.rs</code> and <code>src-tauri/src/gui/commands/delta.rs</code></td></tr>
-                        <tr><td>Modify board UI</td><td><code>src/components/specflow/SpecBoard.tsx</code> and <code>src/components/layout/CanvasToolbar.tsx</code></td></tr>
+                        <tr><td>Add route work-item behavior</td><td><code>src-tauri/src/core/delta/state/nodes.rs</code>, <code>src-tauri/src/core/worktree.rs</code>, and <code>src-tauri/src/gui/commands/worktree.rs</code></td></tr>
+                        <tr><td>Modify route machinery UI</td><td><code>src/components/project/ProjectSurface.tsx</code>, <code>src/components/worktree/WorkTreePane.tsx</code>, and <code>src/components/workers/WorkersPane.tsx</code></td></tr>
                         <tr><td>Add backend config command</td><td><code>src-tauri/src/gui/commands/config_cmd.rs</code> and <code>src/components/modals/settings/</code></td></tr>
                       </tbody>
                     </table>
@@ -1533,17 +1533,17 @@
                       </tr>
                     </thead>
                     <tbody>
-                      <tr><td><code>state/</code></td><td>Per-run SQLite state: runs, workers, messages, events, evals, history, scribe integration</td></tr>
+                      <tr><td><code>state/</code></td><td>Per-run SQLite state: runs, workers, worker events, evals, history, and scribe submissions</td></tr>
                       <tr><td><code>project/</code></td><td>Project registry and per-project metadata</td></tr>
-                      <tr><td><code>delta/</code></td><td>Unified route-scoped board tree, dispatch, export, and persistent project runs</td></tr>
-                      <tr><td><code>route/</code></td><td>Parallel route management, forking, active-route state, and route file layout</td></tr>
+                      <tr><td><code>delta/</code></td><td>Route-scoped work-item persistence, project runs, delivery versions, and legacy compatibility paths</td></tr>
+                      <tr><td><code>route/</code></td><td>Parallel route management, forking, selection, archiving, and route file layout</td></tr>
                       <tr><td><code>delivery/</code></td><td>Board delivery orchestration, git operations, workspace resolution</td></tr>
-                      <tr><td><code>orchestrator/</code></td><td>Local and daemon-backed orchestration backends</td></tr>
-                      <tr><td><code>lifecycle/</code></td><td>Event-driven lifecycle transitions and scaling behavior</td></tr>
+                      <tr><td><code>orchestrator/</code></td><td>Local and remote orchestration backends for run and worker control</td></tr>
+                      <tr><td><code>lifecycle/</code></td><td>Event-driven lifecycle transitions and worker supervision behavior</td></tr>
                       <tr><td><code>runner/</code></td><td>Single-host worker execution with optional containerized runners</td></tr>
                       <tr><td><code>run_manager/</code></td><td>Unified run management over orchestration plus lifecycle</td></tr>
-                      <tr><td><code>server/</code></td><td>Shared HTTP API, auth, board, worker, and eval routes</td></tr>
-                      <tr><td><code>shepherd_chat.rs</code> / <code>project_messages.rs</code></td><td>Project-level Shepherd history plus route-scoped Sheepfold messaging</td></tr>
+                      <tr><td><code>server/</code></td><td>Shared HTTP API, auth, config, worker, and eval routes</td></tr>
+                      <tr><td><code>shepherd_chat.rs</code> / <code>worker_concerns.rs</code></td><td>Project-level Shepherd history plus route-scoped worker concern/report storage</td></tr>
                     </tbody>
                   </table>
                 </div>
@@ -1554,8 +1554,8 @@
                   <div class="subhead">Worker subprocess layer</div>
                   <ul class="clean">
                     <li><code>worker/lash_runner.rs</code> bootstraps the embedded lash runtime</li>
-                    <li><code>worker/runner.rs</code> exposes MCP-backed worker operations</li>
-                    <li><code>worker/mcp.rs</code> hosts worker tools including eval pass/fail signaling</li>
+                    <li><code>worker/runner.rs</code> exposes worker execution operations, concern reporting, and progress signaling</li>
+                    <li><code>worker/mcp.rs</code> hosts the optional worker MCP compatibility surface including eval pass/fail signaling</li>
                     <li><code>worker/eval_mcp.rs</code> provides the eval-task MCP surface</li>
                     <li>Worker state is local to the backend host; there is no separate remote worker transport layer in the current design</li>
                   </ul>
@@ -1564,12 +1564,13 @@
                 <div class="compact-card">
                   <div class="subhead">Frontend structure</div>
                   <ul class="clean">
-                    <li><code>components/layout/</code> for shell, toolbars, drawer, overlays, welcome state</li>
-                    <li><code>components/project/</code> owns the project focus surface and route machinery summary</li>
-                    <li><code>components/specflow/</code> for SpecBoard, delivery, route dialogs, and node editing under machinery</li>
-                    <li><code>components/chat/</code> and <code>components/messaging/</code> cover Shepherd and route-scoped worker messaging</li>
-                    <li><code>components/runs/</code>, <code>projects/</code>, <code>route/</code>, <code>modals/</code>, <code>shared/</code>, and <code>tasks/</code> support the rest of the UI</li>
-                    <li><code>stores/</code> and <code>hooks/</code> coordinate app, project, route, run, and delta state</li>
+                    <li><code>components/layout/</code> for the shell and notifications</li>
+                    <li><code>components/project/</code> owns the project focus surface and route machinery controls</li>
+                    <li><code>components/worktree/</code> and <code>components/workers/</code> render the route work tree and route-scoped worker escalations</li>
+                    <li><code>components/chat/</code> covers Shepherd, and <code>components/workers/</code> covers worker state plus orchestrator-facing concerns</li>
+                    <li><code>components/runs/</code> is now legacy naming only and holds reusable worker cards/modals; the product no longer has a standalone runtime workspace</li>
+                    <li><code>projects/</code>, <code>modals/</code>, and <code>shared/</code> support the rest of the UI shell</li>
+                    <li><code>stores/</code> and <code>hooks/</code> coordinate app, project, route, and work-tree state</li>
                   </ul>
                 </div>
               </div>
@@ -1578,19 +1579,19 @@
                 <div class="compact-card">
                   <div class="subhead">Tauri GUI command families</div>
                   <ul class="clean">
-                    <li><code>runs</code>, <code>drafts</code>, <code>workers</code>, <code>events</code>, <code>messages</code>, <code>logs</code></li>
-                    <li><code>delta</code>, <code>delivery</code>, <code>routes</code>, <code>projects</code>, <code>project_messages</code></li>
+                    <li><code>workers</code>, <code>events</code>, <code>concerns</code>, <code>worktree</code></li>
+                    <li><code>delivery</code>, <code>routes</code>, <code>projects</code></li>
                     <li><code>shepherd</code> for session lifecycle and message streaming</li>
-                    <li><code>config_cmd</code>, <code>credentials</code>, <code>filesystem</code>, <code>debug</code>, <code>ide</code>, <code>files</code></li>
+                    <li><code>config_cmd</code>, <code>credentials</code>, <code>filesystem</code>, <code>debug</code>, <code>files</code></li>
                   </ul>
-                  <p style="margin-top:10px">The current handler set also includes newer commands such as <code>get_runs_if_changed</code>, Codex device auth helpers, project update commands, delivery validation, route repo management, and profiling/debug helpers.</p>
+                  <p style="margin-top:10px">The handler set centers on project/route state, worker inspection, delivery, backend configuration, Codex auth helpers, and profiling/debug utilities.</p>
                 </div>
 
                 <div class="compact-card">
-                  <div class="subhead">Backend and daemon surfaces</div>
+                  <div class="subhead">Backend surfaces</div>
                   <ul class="clean">
-                    <li><code>src-tauri/src/cli/</code> now holds a minimal admin parser for <code>hirsel serve</code> plus hidden worker/daemon subprocess entrypoints</li>
-                    <li>The daemon lives in <code>src-tauri/src/daemon/</code> with socket/PID handling in <code>mod.rs</code>, the TCP/HTTP server in <code>server.rs</code>, lifecycle polling in <code>lifecycle.rs</code>, and a matching client in <code>client.rs</code></li>
+                    <li><code>src-tauri/src/cli/</code> holds the minimal self-hosting surface for <code>hirsel serve</code> plus hidden worker/eval/scribe subprocess entrypoints</li>
+                    <li><code>src-tauri/src/daemon/</code> still exists as an internal local supervisor path, but it is no longer a product-facing concept in the UI</li>
                   </ul>
                 </div>
               </div>
@@ -1602,14 +1603,14 @@
             <div class="details-body">
               <div class="grid two">
                 <div class="compact-card">
-                  <div class="subhead">Run and worker state</div>
+                  <div class="subhead">Runtime and worker state</div>
                   <div class="matrix">
                     <table>
                       <thead>
                         <tr><th>Type</th><th>Values</th></tr>
                       </thead>
                       <tbody>
-                        <tr><td>Run status</td><td><code>draft</code>, <code>working</code>, <code>paused</code>, <code>failed</code>, <code>eval</code>, <code>done</code>, <code>delivered</code></td></tr>
+                        <tr><td>Runtime status</td><td><code>draft</code>, <code>working</code>, <code>paused</code>, <code>failed</code>, <code>eval</code>, <code>done</code>, <code>delivered</code></td></tr>
                         <tr><td>Failure reason</td><td><code>iteration_limit</code>, <code>time_limit</code>, <code>eval_failed</code>, <code>manual</code></td></tr>
                         <tr><td>Worker status</td><td><code>working</code>, <code>awaiting</code>, <code>paused</code>, <code>error</code></td></tr>
                         <tr><td>Delivery status</td><td><code>pending</code>, <code>pushed</code>, <code>pr_open</code>, <code>merged</code>, <code>abandoned</code></td></tr>
@@ -1619,17 +1620,17 @@
                 </div>
 
                 <div class="compact-card">
-                  <div class="subhead">Board model</div>
+                  <div class="subhead">Work-item model</div>
                   <div class="matrix">
                     <table>
                       <thead>
                         <tr><th>Type</th><th>Values</th></tr>
                       </thead>
                       <tbody>
-                        <tr><td>Node kind</td><td><code>feature</code>, <code>task</code>, <code>check</code>, <code>plan</code></td></tr>
-                        <tr><td>Node status</td><td><code>draft</code>, <code>pending</code>, <code>working</code>, <code>done</code>, <code>awaiting_check</code>, <code>validated</code>, <code>needs_repair</code>, <code>failed</code></td></tr>
-                        <tr><td>Node source</td><td><code>user</code>, <code>plan</code>, <code>worker</code>, <code>system</code></td></tr>
-                        <tr><td>Project run status</td><td><code>paused</code>, <code>working</code>, <code>failed</code></td></tr>
+                        <tr><td>Work item kind</td><td>Stored in the delta tables as unified work-tree nodes</td></tr>
+                        <tr><td>Work item status</td><td><code>draft</code>, <code>pending</code>, <code>working</code>, <code>done</code>, <code>awaiting_check</code>, <code>validated</code>, <code>needs_repair</code>, <code>failed</code></td></tr>
+                        <tr><td>Assignee</td><td>Optional <code>agent_kind</code> + <code>agent_id</code> stored on each work item</td></tr>
+                        <tr><td>Route runtime status</td><td><code>paused</code>, <code>working</code>, <code>failed</code></td></tr>
                       </tbody>
                     </table>
                   </div>
@@ -1640,21 +1641,22 @@
                 <div class="compact-card">
                   <div class="subhead">Routes system</div>
                   <ul class="clean">
-                    <li>Main route is created automatically for each project</li>
-                    <li>Forked routes copy board state plus route-scoped files from their parent</li>
-                    <li>Route scope applies to board nodes, validation/blocking edges, project messages, retained route artifacts, and board task content files</li>
-                    <li>The frontend route tree, active-route switching, and project-run dispatch all key off <code>route_id</code></li>
+                    <li>A main route is created automatically for each project</li>
+                    <li>Forked routes inherit route-owned state and can be archived out of the normal route list</li>
+                    <li>Route scope applies to work items, validation/blocking edges, worker concerns, delivery state, and route repo metadata</li>
+                    <li>The frontend route selector and machinery context key off <code>route_id</code></li>
                   </ul>
                 </div>
 
                 <div class="compact-card">
                   <div class="subhead">File layout</div>
                   <ul class="clean">
-                    <li><code>~/.hirsel/hirsel.db</code> stores global config, credentials, projects, routes, board state, and Shepherd history</li>
+                    <li><code>~/.hirsel/hirsel.db</code> stores global config, credentials, projects, routes, work-item state, retained project artifacts, and Shepherd history</li>
                     <li><code>project_focus_views</code> in the global DB stores the project-level HTML focus artifact</li>
-                    <li><code>~/.hirsel/projects/{project_id}/routes/{route_name}/</code> stores route-scoped board content files and retained route artifacts</li>
-                    <li><code>~/.hirsel/runs/{run_name}/hirsel.db</code> stores per-run lifecycle state, workers, events, evals, and history</li>
-                    <li>Run workspaces live under <code>~/.hirsel/runs/{run_name}/work/</code> with staging and worker-specific worktrees</li>
+                    <li><code>project_retained_contexts</code> in the global DB stores durable project markdown context</li>
+                    <li><code>~/.hirsel/projects/{project_id}/routes/{route_name}/</code> stores route-scoped repo/workspace material</li>
+                    <li><code>~/.hirsel/runtimes/{runtime_name}/hirsel.db</code> stores per-runtime lifecycle state, workers, events, evals, and history</li>
+                    <li>Runtime workspaces live under <code>~/.hirsel/runtimes/{runtime_name}/work/</code> with staging and worker-specific worktrees</li>
                   </ul>
                 </div>
               </div>
@@ -1664,16 +1666,16 @@
                   <div class="subhead">Global database tables</div>
                   <ul class="clean">
                     <li><code>config</code>, <code>credentials</code>, <code>projects</code>, <code>routes</code></li>
-                    <li><code>shepherd_chat_messages</code>, <code>project_messages</code></li>
-                    <li><code>board_nodes</code>, <code>board_node_validated_by</code>, <code>board_node_blocked_by</code></li>
-                    <li><code>project_runs</code>, <code>board_versions</code>, <code>deliveries</code>, <code>delivery_attempts</code></li>
+                    <li><code>shepherd_chat_messages</code>, <code>worker_concerns</code>, <code>worker_concern_reads</code></li>
+                    <li><code>board_nodes</code>, <code>board_node_checked_by</code>, <code>board_node_blocked_by</code>, <code>work_item_events</code></li>
+                    <li><code>route_runtimes</code>, <code>board_versions</code>, <code>deliveries</code>, <code>delivery_attempts</code></li>
                   </ul>
                 </div>
 
                 <div class="compact-card">
-                  <div class="subhead">Run database tables</div>
+                  <div class="subhead">Runtime database tables</div>
                   <ul class="clean">
-                    <li><code>state</code>, <code>workers</code>, <code>messages</code>, <code>message_reads</code></li>
+                    <li><code>state</code>, <code>workers</code>, <code>worker_events</code>, <code>scribe_submissions</code></li>
                     <li><code>worker_events</code>, <code>evals</code>, <code>history</code>, <code>amendments</code></li>
                   </ul>
                 </div>
@@ -1688,8 +1690,8 @@
                 <div class="compact-card">
                   <div class="subhead">Core traits</div>
                   <ul class="clean">
-                    <li><code>Orchestrator</code> has local, daemon, and remote implementations</li>
-                    <li><code>LifecycleManager</code> has local and remote variants</li>
+                    <li><code>Orchestrator</code> has local and remote implementations</li>
+                    <li><code>LifecycleManager</code> is local to the backend runtime</li>
                     <li><code>Runner</code> covers host execution plus optional containerized execution on that host</li>
                     <li>Workspace and archive behavior are abstracted behind provider / strategy traits</li>
                   </ul>
@@ -1710,7 +1712,7 @@
                     <li>Error handling is centralized under <code>core/error.rs</code> with categorized error kinds</li>
                     <li>Process management utilities live in <code>core/process.rs</code></li>
                     <li><code>state_access.rs</code> abstracts worker access over SQLite or HTTP</li>
-                    <li>Board export/import bridges the route tree to filesystem-editable artifacts for AI tooling</li>
+                    <li>The project focus view is a DB-backed HTML artifact updated through constrained Shepherd tools</li>
                   </ul>
                 </div>
               </div>
@@ -1722,21 +1724,20 @@
             <div class="details-body">
               <div class="grid two">
                 <div class="compact-card">
-                  <div class="subhead">Run and worker HTTP families</div>
+                  <div class="subhead">Runtime and worker HTTP families</div>
                   <ul class="clean">
-                    <li><code>/api/runs</code> for run CRUD, workspace initialization, spawn, pause, resume, and delivery</li>
-                    <li><code>/api/runs/{name}/workers/*</code> for worker listing, restart, spawn, resume, and event access</li>
-                    <li><code>/api/runs/{name}/evals</code>, <code>/history</code>, and message thread endpoints support run-specific inspection and coordination</li>
+                    <li><code>/api/runtimes</code> for runtime CRUD, workspace initialization, spawn, pause, resume, and delivery</li>
+                    <li><code>/api/runtimes/{name}/workers/*</code> for worker listing, restart, spawn, resume, and event access</li>
+                    <li><code>/api/runtimes/{name}/evals</code>, <code>/history</code>, and worker event endpoints support runtime-specific inspection</li>
                   </ul>
                 </div>
 
                 <div class="compact-card">
                   <div class="subhead">Board, config, and IPC families</div>
                   <ul class="clean">
-                    <li><code>/api/board/{project_id}/*</code> covers board export/import and task-file operations</li>
                     <li><code>/api/config</code> and <code>/api/credentials/*</code> cover config and credential CRUD</li>
-                    <li>Tauri IPC is the primary frontend surface for runs, drafts, workers, delta board operations, Shepherd chat, docs, project messages, routes, delivery, and IDE integration</li>
-                    <li>Shared route builders split between <code>build_shared_routes()</code>, config-only routes, board-only routes, and daemon-specific inline endpoints</li>
+                    <li>Tauri IPC is the primary frontend surface for projects, routes, worker inspection, route work-tree operations, Shepherd chat, worker concerns, focus/retained-context artifacts, delivery, and backend configuration</li>
+                    <li>Shared route builders split between <code>build_shared_routes()</code>, config-only routes, and the internal local-supervisor endpoints</li>
                   </ul>
                 </div>
               </div>

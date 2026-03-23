@@ -1,8 +1,8 @@
-//! Coordinator-facing run management for creating runs, spawning workers, and lifecycle.
+//! Coordinator-facing runtime management for creating runtimes, spawning workers, and lifecycle.
 //!
 //! This module provides the `Orchestrator` trait that abstracts high-level
-//! operations for managing runs across the entire system. The CLI and GUI use
-//! this trait to create runs, spawn workers, and control run lifecycle without
+//! operations for managing runtimes across the entire system. The CLI and GUI use
+//! this trait to create runtimes, spawn workers, and control runtime lifecycle without
 //! knowing if they're operating locally or against a remote server.
 //!
 //! ## Implementations
@@ -15,19 +15,19 @@
 //!
 //! These two traits serve different purposes:
 //!
-//! - **`Orchestrator`** (this module): Coordinator-side, cross-run management
-//!   - Creating and deleting runs
+//! - **`Orchestrator`** (this module): Coordinator-side, cross-runtime management
+//!   - Creating and deleting runtimes
 //!   - Spawning workers
-//!   - Managing run lifecycle (pause, resume, deliver)
-//!   - Listing runs and their status
+//!   - Managing runtime lifecycle (pause, resume, deliver)
+//!   - Listing runtimes and their status
 //!
-//! - **`StateAccess`** (see `state_access` module): Worker-side, per-run operations
+//! - **`StateAccess`** (see `state_access` module): Worker-side, per-runtime operations
 //!   - Task claiming and completion
 //!   - Worker heartbeats and status updates
-//!   - Message sending between workers
-//!   - Reading/writing run configuration
+//!   - Raising progress updates and concerns to the orchestrator
+//!   - Reading/writing runtime configuration
 //!
-//! The CLI/GUI uses `Box<dyn Orchestrator>` for run management commands.
+//! The CLI/GUI uses `Box<dyn Orchestrator>` for runtime management commands.
 //! Workers receive a `Box<dyn StateAccess>` for runtime state operations.
 
 #[cfg(feature = "server")]
@@ -117,7 +117,7 @@ pub type OrchestratorResult<T> = Result<T, OrchestratorError>;
 // DTOs for API communication
 // =============================================================================
 
-/// Resume run request
+/// Resume runtime request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResumeRunRequest {
@@ -329,7 +329,7 @@ pub trait Orchestrator: Send + Sync {
     async fn delete_project(&self, id: i64) -> OrchestratorResult<()>;
 
     /// List runs for a project
-    async fn list_project_runs(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>>;
+    async fn list_route_runtimes(&self, project_id: i64) -> OrchestratorResult<Vec<RunSummary>>;
 
     /// Start a run (unified entry point for CLI and GUI)
     ///
@@ -358,10 +358,10 @@ pub trait Orchestrator: Send + Sync {
     /// The run must already exist and not have active workers.
     async fn init_workspace(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         request: InitWorkspaceRequest,
     ) -> OrchestratorResult<InitWorkspaceResponse> {
-        let _ = (run_name, request);
+        let _ = (runtime_name, request);
         Err(OrchestratorError::Other(
             "init_workspace not implemented for this orchestrator".to_string(),
         ))
@@ -378,7 +378,7 @@ pub trait Orchestrator: Send + Sync {
     /// the configured host/container runner.
     async fn spawn_single_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,
@@ -398,7 +398,7 @@ pub trait Orchestrator: Send + Sync {
     /// running to avoid duplicate container errors.
     async fn resume_worker(
         &self,
-        run_name: &str,
+        runtime_name: &str,
         worker_name: &str,
         work_dir: &std::path::Path,
         resume_session_id: Option<&str>,

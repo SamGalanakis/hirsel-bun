@@ -12,16 +12,20 @@ use crate::core::config;
 // GUI-Specific Types (not needed by orchestrator/server)
 // =============================================================================
 
-/// Unread notification aggregated across all runs
+/// Unread worker concern notification aggregated across projects/routes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UnreadNotification {
     pub id: String,
+    pub concern_id: i64,
     pub project_id: i64,
-    pub run_name: String,
-    pub thread: String,
-    pub sender: String,
-    pub content: String,
+    pub project_name: String,
+    pub route_id: i64,
+    pub route_name: String,
+    pub worker_name: String,
+    pub kind: String,
+    pub severity: String,
+    pub summary: String,
     pub timestamp: String,
 }
 
@@ -107,7 +111,6 @@ pub struct ConfigUpdateRequest {
     pub agent_command: Option<Vec<String>>,
     pub eval_timeout: Option<u32>,
     pub auto_learn: Option<bool>,
-    pub user_message_pause: Option<String>,
     pub human_in_the_loop: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
@@ -134,21 +137,6 @@ pub struct RepoValidation {
     pub url_branch_valid: bool,
     pub needs_dir_create: bool,
     pub needs_git_init: bool,
-}
-
-/// Draft update request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DraftUpdateRequest {
-    pub spec: Option<String>,
-    pub worker_scale: Option<String>,
-    pub time_limit_minutes: Option<i64>,
-    pub human_in_the_loop: Option<bool>,
-    pub project_path: Option<String>,
-    pub branch: Option<String>,
-    pub name: Option<String>,
-    pub runner: Option<String>,
-    pub worker_runners: Option<std::collections::HashMap<String, String>>,
 }
 
 /// Parsed log line

@@ -6,34 +6,27 @@
  * - Project focus surface on the right
  * - Machinery revealed underneath on demand
  */
-import { type Component, Show, createEffect, onCleanup } from 'solid-js';
-import { useProject, useRuns } from '../../stores';
+import { type Component, Show } from 'solid-js';
+import { useProject, useWorkspace } from '../../stores';
 import { TitleBar } from './TitleBar';
 import { StatusBar } from './StatusBar';
 import { SvgDefinitions } from './SvgDefinitions';
 import { ProjectSelector } from './ProjectSelector';
-import { RadialMenu } from './RadialMenu';
 import { WelcomeScreen } from './WelcomeScreen';
 import { ProjectSetup } from '../projects/ProjectSetup';
 import { ProjectSettings } from '../projects/ProjectSettings';
 import { ShepherdConsole } from '../chat/ShepherdConsole';
 import { WorkerOutputViewer } from '../workers/WorkerOutputViewer';
-import { AttachPicker } from '../modals/AttachPicker';
 import { SettingsModal } from '../modals/SettingsModal';
 import { ConfirmDialog } from '../modals/ConfirmDialog';
 import { Toaster } from '../shared/Toaster';
 import { DebugPanel } from '../shared/DebugPanel';
 import { ProjectSurface } from '../project/ProjectSurface';
+import { Icon } from '../shared';
 
 export const Layout: Component = () => {
   const project = useProject();
-  const runs = useRuns();
-
-  // Subscribe to runs polling
-  createEffect(() => {
-    const unsubscribe = runs.subscribe();
-    onCleanup(unsubscribe);
-  });
+  const workspace = useWorkspace();
 
   return (
     <>
@@ -57,9 +50,26 @@ export const Layout: Component = () => {
               </Show>
             </div>
             <Show when={project.selectedProject()}>
-              <div class="w-[380px] min-w-[320px] max-w-[420px] border-l border-pasture-700/60 bg-pasture-800/90">
-                <ShepherdConsole />
-              </div>
+              <Show
+                when={!workspace.shepherdMinimized()}
+                fallback={
+                  <button
+                    type="button"
+                    onClick={() => workspace.setShepherdMinimized(false)}
+                    class="shrink-0 w-10 border-l border-pasture-700/60 bg-pasture-800/90 flex flex-col items-center pt-2 gap-2 hover:bg-pasture-700/60 transition-colors cursor-pointer"
+                    title="Expand chat"
+                  >
+                    <Icon name="message-square" class="w-4 h-4 text-wool-500" />
+                    <span class="text-[10px] text-wool-600 uppercase tracking-widest [writing-mode:vertical-lr]">
+                      Chat
+                    </span>
+                  </button>
+                }
+              >
+                <div class="w-[380px] min-w-[320px] max-w-[420px] border-l border-pasture-700/60 bg-pasture-800/90">
+                  <ShepherdConsole />
+                </div>
+              </Show>
             </Show>
           </div>
         </Show>
@@ -77,14 +87,10 @@ export const Layout: Component = () => {
 
       {/* Modals and overlays */}
       <WorkerOutputViewer />
-      <AttachPicker />
       <SettingsModal />
       <ConfirmDialog />
       <Toaster />
       <DebugPanel />
-
-      {/* Pie Menu - global overlay triggered by Alt+Space */}
-      <RadialMenu />
 
       {/* Project Selector dropdown */}
       <ProjectSelector dropdownOnly />

@@ -22,7 +22,7 @@ impl DeltaState {
         let blocked_by_map = self.load_blocked_by(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
+            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used, assigned_agent_kind, assigned_agent_id, capability_profile, archived_at
              FROM board_nodes
              WHERE project_id = ? AND route_id = ?
              ORDER BY parent_id NULLS FIRST, position",
@@ -58,7 +58,7 @@ impl DeltaState {
         let blocked_by = self.load_node_blocked_by(pool, id).await?;
 
         let row = sqlx::query(
-            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
+            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used, assigned_agent_kind, assigned_agent_id, capability_profile, archived_at
              FROM board_nodes
              WHERE id = ? AND project_id = ? AND route_id = ?",
         )
@@ -96,6 +96,12 @@ impl DeltaState {
                 .and_then(|s| CheckResult::from_str(&s)),
             check_feedback: row.get("check_feedback"),
             tokens_used: row.get("tokens_used"),
+            assigned_agent_kind: row.get("assigned_agent_kind"),
+            assigned_agent_id: row.get("assigned_agent_id"),
+            capability_profile: row
+                .get::<Option<String>, _>("capability_profile")
+                .and_then(|value| crate::core::CapabilityProfile::from_str(&value)),
+            archived_at: row.get("archived_at"),
         })
     }
 
@@ -130,7 +136,7 @@ impl DeltaState {
         let blocked_by_map = self.load_blocked_by(pool).await?;
 
         let rows = sqlx::query(
-            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used
+            "SELECT id, project_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at, completed_at, last_commit_sha, resolves, claimed_by, claimed_at, completed_by, check_result, check_feedback, tokens_used, assigned_agent_kind, assigned_agent_id, capability_profile, archived_at
              FROM board_nodes
              WHERE parent_id = ? AND project_id = ? AND route_id = ?
              ORDER BY position",
@@ -240,7 +246,7 @@ impl DeltaState {
         let pool = self.pool().await?;
 
         let total: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM board_nodes WHERE project_id = ? AND route_id = ? AND status != 'draft'",
+            "SELECT COUNT(*) FROM board_nodes WHERE project_id = ? AND route_id = ? AND status != 'draft' AND archived_at IS NULL",
         )
         .bind(self.project_id)
         .bind(self.route_id)
@@ -248,7 +254,7 @@ impl DeltaState {
         .await?;
 
         let done: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM board_nodes WHERE project_id = ? AND route_id = ? AND status IN ('done', 'validated')",
+            "SELECT COUNT(*) FROM board_nodes WHERE project_id = ? AND route_id = ? AND status IN ('done', 'validated') AND archived_at IS NULL",
         )
         .bind(self.project_id)
         .bind(self.route_id)
@@ -631,6 +637,213 @@ impl DeltaState {
         self.get_node(id).await
     }
 
+    /// Create a new work item under the route root or a supplied parent.
+    pub async fn create_work_item(
+        &self,
+        title: &str,
+        parent_id: Option<&str>,
+        description: &str,
+        blocked_by: &[String],
+    ) -> DeltaStateResult<BoardNode> {
+        let pool = self.pool().await?;
+        let now = utc_now();
+        let target_parent = match parent_id {
+            Some(id) => Some(id.to_string()),
+            None => self.get_root_node_id().await?,
+        };
+
+        if let Some(ref pid) = target_parent {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM board_nodes WHERE id = ? AND project_id = ? AND route_id = ?)",
+            )
+            .bind(pid)
+            .bind(self.project_id)
+            .bind(self.route_id)
+            .fetch_one(pool)
+            .await?;
+            if !exists {
+                return Err(DeltaStateError::ParentNodeNotFound(pid.clone()));
+            }
+        }
+
+        let id = self.generate_slug(pool, title).await?;
+        let position = self.next_position(pool, target_parent.as_deref()).await?;
+        sqlx::query(
+            "INSERT INTO board_nodes (
+                id, project_id, route_id, parent_id, position, name, kind, source,
+                content, difficulty, status, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, 'task', 'user', ?, 'medium', 'pending', ?, ?)",
+        )
+        .bind(&id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .bind(target_parent.as_deref())
+        .bind(position)
+        .bind(title)
+        .bind(description)
+        .bind(&now)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        for blocker_id in blocked_by {
+            sqlx::query(
+                "INSERT INTO board_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
+            )
+            .bind(&id)
+            .bind(blocker_id)
+            .bind(self.project_id)
+            .bind(self.route_id)
+            .execute(pool)
+            .await?;
+        }
+
+        self.bump_tree_generation().await?;
+        self.get_node(&id).await
+    }
+
+    /// Assign an item to a sub-orchestrator or worker.
+    pub async fn assign_work_item(
+        &self,
+        id: &str,
+        agent_kind: Option<&str>,
+        agent_id: Option<&str>,
+        capability_profile: Option<crate::core::CapabilityProfile>,
+    ) -> DeltaStateResult<BoardNode> {
+        let pool = self.pool().await?;
+        let _ = self.get_node(id).await?;
+        let now = utc_now();
+
+        sqlx::query(
+            "UPDATE board_nodes
+             SET assigned_agent_kind = ?, assigned_agent_id = ?, capability_profile = ?, updated_at = ?
+             WHERE id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(agent_kind)
+        .bind(agent_id)
+        .bind(capability_profile.map(|profile| profile.as_str()))
+        .bind(&now)
+        .bind(id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+
+        self.bump_tree_generation().await?;
+        self.get_node(id).await
+    }
+
+    /// Reopen an item so it can be worked again.
+    pub async fn reopen_work_item(&self, id: &str) -> DeltaStateResult<BoardNode> {
+        let pool = self.pool().await?;
+        let _ = self.get_node(id).await?;
+        let now = utc_now();
+
+        sqlx::query(
+            "UPDATE board_nodes
+             SET status = 'pending',
+                 claimed_by = NULL,
+                 claimed_at = NULL,
+                 completed_by = NULL,
+                 completed_at = NULL,
+                 check_result = NULL,
+                 check_feedback = NULL,
+                 capability_profile = NULL,
+                 archived_at = NULL,
+                 updated_at = ?
+             WHERE id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(&now)
+        .bind(id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+
+        self.bump_tree_generation().await?;
+        self.get_node(id).await
+    }
+
+    /// Archive an item and its descendants.
+    pub async fn archive_work_item(&self, id: &str) -> DeltaStateResult<()> {
+        let pool = self.pool().await?;
+        let node = self.get_node(id).await?;
+        if node.parent_id.is_none() {
+            return Err(DeltaStateError::NodeNotFound(
+                "Cannot archive root item".to_string(),
+            ));
+        }
+
+        let now = utc_now();
+        let mut to_archive = vec![id.to_string()];
+        let mut i = 0;
+        while i < to_archive.len() {
+            let parent_id = &to_archive[i];
+            let children: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM board_nodes WHERE parent_id = ? AND project_id = ? AND route_id = ? AND archived_at IS NULL",
+            )
+            .bind(parent_id)
+            .bind(self.project_id)
+            .bind(self.route_id)
+            .fetch_all(pool)
+            .await?;
+            to_archive.extend(children);
+            i += 1;
+        }
+
+        for node_id in &to_archive {
+            sqlx::query(
+                "UPDATE board_nodes
+                 SET archived_at = ?, assigned_agent_kind = NULL, assigned_agent_id = NULL, capability_profile = NULL, updated_at = ?
+                 WHERE id = ? AND project_id = ? AND route_id = ?",
+            )
+            .bind(&now)
+            .bind(&now)
+            .bind(node_id)
+            .bind(self.project_id)
+            .bind(self.route_id)
+            .execute(pool)
+            .await?;
+        }
+
+        self.bump_tree_generation().await?;
+        Ok(())
+    }
+
+    /// Record routine item activity without creating a separate escalation.
+    pub async fn record_item_event(
+        &self,
+        item_id: &str,
+        agent_kind: &str,
+        agent_id: &str,
+        event_kind: &str,
+        summary: &str,
+        details: Option<&str>,
+    ) -> DeltaStateResult<()> {
+        let pool = self.pool().await?;
+        let _ = self.get_node(item_id).await?;
+        let now = utc_now();
+
+        sqlx::query(
+            "INSERT INTO work_item_events (
+                project_id, route_id, item_id, agent_kind, agent_id, event_kind, summary, details, created_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .bind(item_id)
+        .bind(agent_kind)
+        .bind(agent_id)
+        .bind(event_kind)
+        .bind(summary)
+        .bind(details)
+        .bind(&now)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Move a node to a new parent and/or position
     pub async fn move_node(
         &self,
@@ -832,6 +1045,10 @@ impl DeltaState {
                 check_result: node.check_result,
                 check_feedback: node.check_feedback.clone(),
                 tokens_used: node.tokens_used,
+                assigned_agent_kind: node.assigned_agent_kind.clone(),
+                assigned_agent_id: node.assigned_agent_id.clone(),
+                capability_profile: node.capability_profile,
+                archived_at: node.archived_at.clone(),
             }
         }
 
@@ -954,6 +1171,12 @@ impl DeltaState {
                 .and_then(|s| CheckResult::from_str(&s)),
             check_feedback: row.get("check_feedback"),
             tokens_used: row.get("tokens_used"),
+            assigned_agent_kind: row.get("assigned_agent_kind"),
+            assigned_agent_id: row.get("assigned_agent_id"),
+            capability_profile: row
+                .get::<Option<String>, _>("capability_profile")
+                .and_then(|value| crate::core::CapabilityProfile::from_str(&value)),
+            archived_at: row.get("archived_at"),
         }
     }
 }

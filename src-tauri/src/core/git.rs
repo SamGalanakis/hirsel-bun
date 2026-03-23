@@ -459,18 +459,22 @@ pub fn list_unmerged_branches(work_dir: &Path) -> Result<Vec<String>> {
 
 /// Create the main workspace directory with staging branch
 ///
-/// Copies the project to `runs/<run_name>/work/staging/` with full git history,
+/// Copies the project to `runtimes/<runtime_name>/work/staging/` with full git history,
 /// creates "staging" branch, and sets up receive.denyCurrentBranch for worker pushes.
-pub fn create_workspace(run_name: &str, project_path: &Path, runs_dir: &Path) -> Result<PathBuf> {
-    let run_dir = runs_dir.join(run_name);
-    let staging_dir = run_dir.join("work").join("staging");
+pub fn create_workspace(
+    runtime_name: &str,
+    project_path: &Path,
+    runtimes_dir: &Path,
+) -> Result<PathBuf> {
+    let runtime_dir = runtimes_dir.join(runtime_name);
+    let staging_dir = runtime_dir.join("work").join("staging");
 
     if staging_dir.exists() {
         info!("Workspace already exists: {:?}", staging_dir);
         return Ok(staging_dir);
     }
 
-    fs::create_dir_all(&run_dir)?;
+    fs::create_dir_all(&runtime_dir)?;
 
     // Copy entire project including .git
     copy_dir_recursive(project_path, &staging_dir)?;
@@ -536,20 +540,20 @@ pub fn create_workspace(run_name: &str, project_path: &Path, runs_dir: &Path) ->
 
 /// Create a worker clone that tracks staging
 ///
-/// Copies project files to `runs/<run_name>/work/<worker_name>/`, initializes
+/// Copies project files to `runtimes/<runtime_name>/work/<worker_name>/`, initializes
 /// a fresh git repo, and sets up origin pointing to staging_dir.
 pub fn create_worker_clone(
-    run_name: &str,
+    runtime_name: &str,
     project_path: &Path,
     worker_name: &str,
     staging_dir: Option<&Path>,
-    runs_dir: &Path,
+    runtimes_dir: &Path,
 ) -> Result<PathBuf> {
-    let run_dir = runs_dir.join(run_name);
+    let runtime_dir = runtimes_dir.join(runtime_name);
     let staging = staging_dir
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| run_dir.join("work").join("staging"));
-    let worker_dir = run_dir.join("work").join(worker_name);
+        .unwrap_or_else(|| runtime_dir.join("work").join("staging"));
+    let worker_dir = runtime_dir.join("work").join(worker_name);
 
     if worker_dir.exists() {
         info!("Worker clone already exists: {:?}", worker_dir);

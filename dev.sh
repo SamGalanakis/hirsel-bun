@@ -5,26 +5,61 @@
 #
 # Usage:
 #   ./dev.sh              - Normal dev mode with hot reload
+#   ./dev.sh --remote     - Local remote-backend mode (serve + GUI over localhost)
 #   ./dev.sh --mcp        - MCP mode for tauri-driver automation
 #   ./dev.sh --profiling  - Dev mode with profiling (backend traces + frontend IPC timing)
+#   ./dev.sh --remote --profiling  - Remote-backend mode with profiling
 #   ./dev.sh --mcp --profiling  - MCP mode with profiling
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/dev.log"
 TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
 BINARY="$SCRIPT_DIR/src-tauri/target/debug/hirsel"
+REMOTE_PORT="${HIRSEL_DEV_REMOTE_PORT:-8080}"
+REMOTE_ROOT_DEFAULT="$SCRIPT_DIR/.hirsel-remote-dev"
+
+remote_mode=false
+mcp_mode=false
+profiling_mode=false
+server_pid=""
+
+cleanup() {
+    if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+        echo ""
+        echo "Stopping local hirsel serve (PID $server_pid)..."
+        kill "$server_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
+    fi
+
+    if [[ "$profiling_mode" == true ]]; then
+        echo ""
+        echo "Profiling data saved to: $SESSION_DIR"
+        ls -lh "$SESSION_DIR" 2>/dev/null || true
+        echo ""
+        echo "Run: scripts/profiling-report.py $SESSION_DIR"
+    fi
+}
+
+trap cleanup EXIT
 
 # Validate arguments
 for arg in "$@"; do
     case "$arg" in
-        --mcp|--profiling) ;;
+        --mcp) mcp_mode=true ;;
+        --profiling) profiling_mode=true ;;
+        --remote) remote_mode=true ;;
         *) echo "Error: Unknown flag '$arg'. Usage: ./dev.sh [--mcp] [--profiling]"; exit 1 ;;
     esac
 done
 
+if [[ "$remote_mode" == true ]] && [[ "$mcp_mode" == true ]]; then
+    echo "Error: --remote and --mcp are mutually exclusive" >&2
+    exit 1
+fi
+
 # Profiling mode
 CARGO_FEATURES=""
-if [[ "$*" == *"--profiling"* ]]; then
+if [[ "$profiling_mode" == true ]]; then
     export HIRSEL_PROFILING=1
     export RUST_LOG="${RUST_LOG:-hirsel=debug}"
     CARGO_FEATURES="--features profiling"
@@ -36,7 +71,6 @@ if [[ "$*" == *"--profiling"* ]]; then
     echo "  Backend trace: trace.json  (open in ui.perfetto.dev)"
     echo "  Frontend IPC:  frontend.json"
     echo ""
-    trap 'echo ""; echo "Profiling data saved to: $SESSION_DIR"; ls -lh "$SESSION_DIR" 2>/dev/null; echo ""; echo "Run: scripts/profiling-report.py $SESSION_DIR"' EXIT
 else
     export RUST_LOG="${RUST_LOG:-hirsel=info}"
 fi
@@ -92,7 +126,57 @@ if [[ "$*" == *"--mcp"* ]]; then
     # Keep script running
     wait
 else
-    echo "Running tauri dev (daemon will auto-start on first use)..."
+    if [[ "$remote_mode" == true ]]; then
+        export HIRSEL_API_KEY="${HIRSEL_API_KEY:-${HIRSEL_DEV_API_KEY:-dev-test-key}}"
+        export HIRSEL_ROOT="${HIRSEL_ROOT:-$REMOTE_ROOT_DEFAULT}"
+
+        mkdir -p "$HIRSEL_ROOT"
+        cat > "$HIRSEL_ROOT/config.toml" <<EOF
+[backend]
+url = "http://127.0.0.1:$REMOTE_PORT"
+api_key = "$HIRSEL_API_KEY"
+EOF
+
+        echo "Remote-backend dev mode"
+        echo "  Root: $HIRSEL_ROOT"
+        echo "  Backend URL: http://127.0.0.1:$REMOTE_PORT"
+        echo "  API key: $HIRSEL_API_KEY"
+        echo ""
+        echo "Building latest binary for local server..."
+        cargo build --manifest-path "$SCRIPT_DIR/src-tauri/Cargo.toml" $CARGO_FEATURES 2>&1 | tee -a "$LOG_FILE"
+        if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+            echo "Build failed!"
+            exit 1
+        fi
+
+        echo "Starting local hirsel serve..."
+        "$BINARY" serve --port "$REMOTE_PORT" >> "$LOG_FILE" 2>&1 &
+        server_pid=$!
+
+        for _ in $(seq 1 30); do
+            if curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
+                break
+            fi
+
+            if ! kill -0 "$server_pid" 2>/dev/null; then
+                echo "hirsel serve exited early; tailing dev log:" >&2
+                tail -n 50 "$LOG_FILE" >&2 || true
+                exit 1
+            fi
+
+            sleep 0.2
+        done
+
+        if ! curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
+            echo "hirsel serve did not become healthy on port $REMOTE_PORT" >&2
+            exit 1
+        fi
+
+        echo "Running tauri dev against local hirsel serve..."
+    else
+        echo "Running tauri dev (daemon will auto-start on first use)..."
+    fi
+
     if [[ -n "$CARGO_FEATURES" ]]; then
         GDK_BACKEND=x11 bunx tauri dev $CARGO_FEATURES 2>&1 | tee -a "$LOG_FILE"
     else

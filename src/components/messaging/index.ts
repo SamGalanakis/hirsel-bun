@@ -1,1 +1,0 @@
-export { MessagingPanel } from './MessagingPanel';

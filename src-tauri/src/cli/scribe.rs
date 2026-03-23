@@ -10,10 +10,10 @@ use crate::core::{
 use tracing::{info, warn};
 
 /// Execute the scribe command for a run
-pub async fn execute(run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn execute(runtime_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Check run exists
-    if !config::run_exists(run_name) {
-        return Err(format!("Run '{}' not found", run_name).into());
+    if !config::runtime_exists(runtime_name) {
+        return Err(format!("Run '{}' not found", runtime_name).into());
     }
 
     // Load config
@@ -26,20 +26,20 @@ pub async fn execute(run_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Run scribe processing
-    let result = match process_scribe_batch(run_name).await {
+    let result = match process_scribe_batch(runtime_name).await {
         Ok(result) => {
             info!(
                 "Processed scribe batch {} for run '{}': {} submissions",
-                result.batch_id, run_name, result.submissions_processed
+                result.batch_id, runtime_name, result.submissions_processed
             );
             Ok(())
         }
         Err(ScribeError::NoPending) => {
-            info!("No pending scribe submissions for run '{}'", run_name);
+            info!("No pending scribe submissions for run '{}'", runtime_name);
             Ok(())
         }
         Err(e) => {
-            warn!("Scribe processing failed for run '{}': {}", run_name, e);
+            warn!("Scribe processing failed for run '{}': {}", runtime_name, e);
             Err(e.into())
         }
     };

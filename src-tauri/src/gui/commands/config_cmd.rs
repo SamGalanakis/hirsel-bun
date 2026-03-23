@@ -59,9 +59,6 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     if let Some(auto) = updates.auto_learn {
         cfg.auto_learn = auto;
     }
-    if let Some(pause) = updates.user_message_pause {
-        cfg.user_message_pause = pause;
-    }
     if let Some(hitl) = updates.human_in_the_loop {
         cfg.human_in_the_loop = hitl;
     }

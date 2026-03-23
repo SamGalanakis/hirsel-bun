@@ -35,9 +35,9 @@ export const ACTION_COLORS: Record<string, string> = {
   eval_passed: 'text-sage',
   eval_failed: 'text-terra',
 
-  // Message actions
-  message_sent: 'text-sky-400',
-  message_received: 'text-wool-300',
+  // Concern actions
+  concern_reported: 'text-sky-400',
+  concern_resolved: 'text-sage',
 
   // Default
   default: 'text-wool-400',
@@ -89,9 +89,9 @@ export const ACTION_ICONS: Record<string, string> = {
   eval_passed: 'check-circle',
   eval_failed: 'x-circle',
 
-  // Message actions
-  message_sent: 'send',
-  message_received: 'message-square',
+  // Concern actions
+  concern_reported: 'alert-circle',
+  concern_resolved: 'check-circle',
 
   // Default
   default: 'activity',

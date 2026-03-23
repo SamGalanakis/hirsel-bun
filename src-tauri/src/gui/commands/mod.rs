@@ -1,29 +1,24 @@
 //! Tauri IPC commands for the Hirsel GUI
 //!
-//! This module provides the bridge between the frontend (Alpine.js/TypeScript)
+//! This module provides the bridge between the frontend (SolidJS/TypeScript)
 //! and the backend (Rust). All commands are exposed via Tauri's IPC system.
 //!
 //! Types are designed to match the TypeScript definitions in src/lib/types.ts.
 
+mod concerns;
 mod config_cmd;
 mod credentials;
 mod debug;
 mod delivery;
-mod delta;
-mod drafts;
 mod events;
 mod files;
 mod filesystem;
-mod ide;
-mod logs;
-mod messages;
-mod project_messages;
 mod projects;
 mod routes;
-mod runs;
 mod shepherd;
 pub mod types;
 mod workers;
+mod worktree;
 
 // Re-export types for use by other modules
 pub use types::*;
@@ -48,84 +43,28 @@ impl<T, E: ToString> ResultExt<T, E> for Result<T, E> {
     }
 }
 
-/// Helper to get SQLiteState for a run, with standard error handling
-pub async fn get_run_state(run_name: &str) -> Result<crate::core::state::SQLiteState, String> {
-    let db_path = crate::core::config::run_dir(run_name).join("hirsel.db");
-    if !db_path.exists() {
-        return Err(format!("Run '{}' not found", run_name));
-    }
-    crate::core::state::SQLiteState::new(run_name)
-        .await
-        .context("Failed to open database")
-}
-
-/// Helper to get the work directory for a run, with validation
-pub fn get_run_work_dir(run_name: &str) -> Result<std::path::PathBuf, String> {
-    let run_path = crate::core::hirsel_dir().join("runs").join(run_name);
-    if !run_path.exists() {
-        return Err(format!("Run not found: {}", run_name));
-    }
-    let work_dir = run_path.join("work");
-    if !work_dir.exists() {
-        return Err(format!("Run work directory not found: {}", run_name));
-    }
-    Ok(work_dir)
-}
-
 /// Generate the Tauri invoke handler with all commands
 pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'static {
     tauri::generate_handler![
-        // Run commands
-        runs::get_runs,
-        runs::get_runs_if_changed,
-        runs::get_run_detail,
-        runs::pause_run,
-        runs::resume_run,
-        runs::delete_run,
-        runs::delete_all_runs,
-        runs::deliver_run,
-        // Draft commands
-        drafts::validate_repo,
-        drafts::create_draft,
-        drafts::clone_run,
-        drafts::update_draft,
-        drafts::start_draft,
-        drafts::change_starting_point,
-        // Spec/Eval file commands
-        files::read_spec_file,
-        files::write_spec_file,
-        files::read_eval_file,
-        files::write_eval_file,
-        // Asset commands (run-level)
-        files::save_asset,
-        files::import_asset_from_path,
-        files::open_assets_folder,
-        files::get_assets_path,
         // Asset commands (project-level)
         files::save_project_asset,
         files::get_project_assets_path,
         files::open_project_assets_folder,
-        // Worker commands
-        workers::get_workers,
-        workers::attach_worker,
-        workers::open_worker_terminal,
-        workers::detach_worker,
-        workers::restart_worker,
-        // Eval log commands
-        logs::get_eval_log,
-        logs::get_eval_log_by_path,
-        // History commands
-        logs::get_history,
-        // Eval commands
-        logs::get_eval_spec,
-        logs::get_evals,
-        // Worker events commands (streaming)
-        events::get_worker_events,
-        events::clear_worker_events,
-        events::start_worker_event_stream,
-        events::stop_worker_event_stream,
-        // Message commands
-        messages::get_all_unread_notifications,
+        // Route worker commands
+        workers::get_route_workers,
+        workers::open_route_worker_terminal,
+        workers::restart_route_worker,
+        // Route worker events commands (streaming)
+        events::get_route_worker_events,
+        events::clear_route_worker_events,
+        events::start_route_worker_event_stream,
+        events::stop_route_worker_event_stream,
+        // Concern / notification commands
+        concerns::get_worker_concerns,
+        concerns::mark_worker_concern_read,
+        concerns::mark_route_concerns_read,
+        concerns::resolve_worker_concern,
+        concerns::get_all_unread_notifications,
         // Config commands
         config_cmd::get_config,
         config_cmd::get_config_defaults,
@@ -147,14 +86,13 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         debug::get_version,
         debug::get_process_counts,
         debug::kill_orphaned_worker_processes,
-        debug::get_daemon_health,
-        debug::ensure_daemon_running,
         debug::get_profiling_enabled,
         debug::save_profiling_data,
         debug::get_process_memory,
         // Filesystem commands
         filesystem::pick_folder,
         filesystem::suggest_paths,
+        filesystem::validate_repo,
         // Project management commands
         projects::list_projects,
         projects::get_project,
@@ -190,19 +128,14 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         delivery::get_delivery_attempts,
         delivery::complete_board_delivery,
         delivery::abandon_board_delivery,
-        // Board tree commands (unified board with spec/task/eval nodes)
-        delta::get_board_tree,
-        delta::create_board_node,
-        delta::update_board_node,
-        delta::delete_board_node,
-        delta::move_board_node,
-        delta::reset_project_tree,
-        delta::start_shepherd_run,
-        delta::get_project_run,
-        delta::complete_board_node,
-        delta::sync_shepherd_changes,
-        delta::sync_and_get_shepherd_view,
-        delta::sync_and_get_shepherd_view_if_changed,
+        // Route work-tree commands
+        worktree::get_route_work_tree,
+        worktree::create_work_item,
+        worktree::reparent_work_item,
+        worktree::split_work_item,
+        worktree::assign_work_item,
+        worktree::reopen_work_item,
+        worktree::archive_work_item,
         // Shepherd chat commands
         shepherd::commands::start_shepherd_session,
         shepherd::commands::send_shepherd_message,
@@ -211,16 +144,9 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         shepherd::commands::get_shepherd_history,
         shepherd::commands::clear_shepherd_history,
         shepherd::commands::save_shepherd_message,
-        // Project Messages (Sheepfold) commands
-        project_messages::get_project_messages,
-        project_messages::get_project_threads,
-        project_messages::send_project_message,
-        project_messages::mark_project_messages_read,
-        project_messages::get_project_unread_count,
-        // IDE commands
-        ide::open_in_ide,
         // Route commands
         routes::list_routes,
+        routes::list_archived_routes,
         routes::get_route,
         routes::get_route_by_name,
         routes::get_route_tree,
@@ -230,7 +156,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         routes::delete_route_repo,
         routes::set_default_route_repo,
         routes::create_route,
-        routes::delete_route,
+        routes::archive_route,
         routes::set_active_route,
         routes::get_active_route,
     ]
