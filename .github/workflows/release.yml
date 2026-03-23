@@ -1,21 +1,15 @@
 name: Release
 
-# Triggers on version tags (v*)
-# Production tags (v1.2.3) must be on main branch
-# Pre-release tags (v1.2.3-rc.1, v1.2.3-staging.1) can be on any branch
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
-# Required for creating releases
 permissions:
   contents: write
 
 jobs:
-  # Verify tag is on main branch (for production releases)
-  verify-branch:
+  verify-tag:
     runs-on: ubuntu-latest
     outputs:
       is_prerelease: ${{ steps.check.outputs.is_prerelease }}
@@ -30,38 +24,48 @@ jobs:
         run: |
           TAG="${{ github.ref_name }}"
 
-          # Check if this is a pre-release tag (contains hyphen after version)
           if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-.+ ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "Pre-release tag detected: $TAG"
           else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
             echo "Production tag detected: $TAG"
 
-            # Production tags must be on main
             if ! git branch -r --contains "${{ github.sha }}" | grep -q 'origin/main'; then
-              echo "::error::Production release tags (v*.*.* without suffix) must be on main branch"
-              echo "::error::Use pre-release tags (e.g., v0.3.0-rc.1, v0.3.0-staging.1) for non-main branches"
+              echo "::error::Production release tags must point at main"
               exit 1
             fi
-            echo "Tag is on main branch ✓"
           fi
 
-  publish-tauri:
-    needs: verify-branch
+  build-desktop:
+    needs: verify-tag
     strategy:
       fail-fast: false
       matrix:
         include:
-          # macOS Apple Silicon (M1+)
-          - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-          # macOS Intel (use macos-15-intel for native Intel build)
-          - platform: macos-15-intel
-            args: '--target x86_64-apple-darwin'
-          # Linux x64
           - platform: ubuntu-22.04
             args: ''
+            rust_targets: ''
+            asset_script: |
+              mkdir -p dist
+              cp "$(find src-tauri/target/release/bundle/deb -name '*.deb' | head -n1)" \
+                dist/hirsel-desktop-linux-amd64.deb
+              cp "$(find src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -n1)" \
+                dist/hirsel-desktop-linux-amd64.AppImage
+          - platform: macos-latest
+            args: '--target aarch64-apple-darwin'
+            rust_targets: 'aarch64-apple-darwin'
+            asset_script: |
+              mkdir -p dist
+              cp "$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name '*.dmg' | head -n1)" \
+                dist/hirsel-desktop-macos-arm64.dmg
+          - platform: macos-15-intel
+            args: '--target x86_64-apple-darwin'
+            rust_targets: 'x86_64-apple-darwin'
+            asset_script: |
+              mkdir -p dist
+              cp "$(find src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -name '*.dmg' | head -n1)" \
+                dist/hirsel-desktop-macos-x86_64.dmg
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -95,8 +99,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          # Install both macOS targets on macOS runners
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust_targets }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -106,50 +109,32 @@ jobs:
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
 
-      - name: Build and release
+      - name: Build desktop app
         uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional: macOS code signing
-          # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          # APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          # APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          # APPLE_ID: ${{ secrets.APPLE_ID }}
-          # APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          # APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Hirsel ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download and install.'
-          releaseDraft: true
-          prerelease: ${{ needs.verify-branch.outputs.is_prerelease == 'true' }}
           args: ${{ matrix.args }}
 
-      - name: Create Linux tarball
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          cd src-tauri/target/release
-          tar -czvf hirsel-linux-x86_64.tar.gz hirsel
-          mv hirsel-linux-x86_64.tar.gz ../../../
+      - name: Prepare release assets
+        shell: bash
+        run: ${{ matrix.asset_script }}
 
-      - name: Upload Linux tarball
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: softprops/action-gh-release@v2
+      - name: Upload desktop assets
+        uses: actions/upload-artifact@v4
         with:
-          files: hirsel-linux-x86_64.tar.gz
-          tag_name: ${{ github.ref_name }}
+          name: desktop-${{ matrix.platform }}
+          path: dist/*
 
-  # Build headless worker and backend-server binaries
   build-headless:
-    needs: verify-branch
+    needs: verify-tag
     runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - feature: worker
-            name: worker
           - feature: server
-            name: server
+            asset: hirsel-server-linux-amd64.tar.gz
+          - feature: worker
+            asset: hirsel-worker-linux-amd64.tar.gz
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -161,25 +146,82 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: headless-${{ matrix.feature }}
+          key: release-${{ matrix.feature }}
 
-      - name: Build ${{ matrix.name }} binary
+      - name: Build ${{ matrix.feature }} binary
+        working-directory: src-tauri
+        run: cargo build --release --no-default-features --features ${{ matrix.feature }}
+
+      - name: Package release asset
         run: |
-          cd src-tauri
-          cargo build --release --no-default-features --features ${{ matrix.feature }}
+          mkdir -p dist
+          tar -czf "dist/${{ matrix.asset }}" -C src-tauri/target/release hirsel
 
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+      - name: Upload headless assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-${{ matrix.feature }}
+          path: dist/*
 
-      - name: Package binary
+  publish-release:
+    needs: [verify-tag, build-desktop, build-headless]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Render installer
         run: |
-          cd src-tauri/target/release
-          cp hirsel hirsel-${{ matrix.name }}-${{ steps.version.outputs.version }}-linux-amd64
-          chmod +x hirsel-${{ matrix.name }}-${{ steps.version.outputs.version }}-linux-amd64
+          sed \
+            -e "s|__REPO__|${{ github.repository }}|g" \
+            -e "s|__TAG__|${{ github.ref_name }}|g" \
+            deploy/install_hirsel.sh > release-assets/install_hirsel.sh
+          chmod +x release-assets/install_hirsel.sh
 
-      - name: Upload to release
+      - name: Generate checksums
+        run: |
+          cd release-assets
+          sha256sum * > SHA256SUMS
+
+      - name: Write release notes
+        run: |
+          cat > RELEASE_BODY.md <<'EOF'
+          ## Downloads
+
+          Desktop:
+          - `hirsel-desktop-macos-arm64.dmg`
+          - `hirsel-desktop-macos-x86_64.dmg`
+          - `hirsel-desktop-linux-amd64.deb`
+          - `hirsel-desktop-linux-amd64.AppImage`
+
+          Self-hosted backend:
+          - `install_hirsel.sh`
+          - `hirsel-server-linux-amd64.tar.gz`
+
+          Worker runtime:
+          - `hirsel-worker-linux-amd64.tar.gz`
+
+          Checksums:
+          - `SHA256SUMS`
+
+          Quick install for a Linux backend:
+
+          ```bash
+          curl -fsSL https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/install_hirsel.sh | sh
+          ```
+          EOF
+
+      - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/target/release/hirsel-${{ matrix.name }}-${{ steps.version.outputs.version }}-linux-amd64
           tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ needs.verify-tag.outputs.is_prerelease == 'true' }}
+          body_path: RELEASE_BODY.md
+          files: release-assets/*

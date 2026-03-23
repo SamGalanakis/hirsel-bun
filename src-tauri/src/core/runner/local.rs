@@ -401,6 +401,7 @@ ensure_downloader
 need_cmd uname
 need_cmd chmod
 need_cmd mkdir
+need_cmd tar
 
 # Set up HOME directory
 export HOME=/tmp/home
@@ -424,10 +425,11 @@ case "$ARCH" in
     *) echo "ERROR: Unsupported architecture: $ARCH" >&2; exit 1 ;;
 esac
 
-# Download hirsel binary directly (simpler than install script)
-HIRSEL_URL="https://github.com/SamGalanakis/hirsel/releases/download/${{HIRSEL_TAG}}/hirsel-${{HIRSEL_BINARY_TYPE}}-${{HIRSEL_TAG#v}}-linux-${{HIRSEL_ARCH}}"
+# Download the packaged worker binary from the matching Hirsel release
+HIRSEL_URL="https://github.com/SamGalanakis/hirsel/releases/download/${{HIRSEL_TAG}}/hirsel-${{HIRSEL_BINARY_TYPE}}-linux-${{HIRSEL_ARCH}}.tar.gz"
 echo "Downloading from: $HIRSEL_URL"
-download "$HIRSEL_URL" "/tmp/bin/hirsel"
+download "$HIRSEL_URL" "/tmp/hirsel.tar.gz"
+tar -xzf /tmp/hirsel.tar.gz -C /tmp/bin
 chmod +x /tmp/bin/hirsel
 
 # Verify hirsel
