@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use lash::plugin::{PluginFactory, StaticPluginFactory};
@@ -5,8 +6,9 @@ use lash::tools::{
     ApplyPatchTool, FetchUrl, Glob, Grep, Ls, ReadFilePluginFactory, StandardShell, WebSearch,
 };
 use lash::{
-    BuiltinToolResultProjectionPluginFactory, FsInstructionSource, InstructionSource, PluginSpec,
-    PromptContribution, ToolProvider,
+    attach_mcp_servers, BuiltinToolResultProjectionPluginFactory, DynamicToolProvider,
+    FsInstructionSource, InstructionSource, McpServerConfig, PluginSpec, PromptContribution,
+    ToolProvider,
 };
 
 fn shell_prompt_contributions() -> Vec<PromptContribution> {
@@ -77,4 +79,13 @@ pub(crate) fn embedded_tool_plugin_factories(
         PluginSpec::new().with_tool_provider(custom_tool_provider),
     )) as Arc<dyn PluginFactory>);
     factories
+}
+
+pub(crate) async fn attach_embedded_mcp_servers(
+    dynamic_tools: &DynamicToolProvider,
+    servers: &BTreeMap<String, McpServerConfig>,
+) -> Result<(), String> {
+    attach_mcp_servers(dynamic_tools, servers)
+        .await
+        .map_err(|e| format!("failed to attach MCP servers: {}", e))
 }

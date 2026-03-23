@@ -17,7 +17,7 @@ use crate::core::api_types::{
     WorkerLocation, WorkerStatus,
 };
 use crate::core::config::{self, Config};
-use crate::core::credentials::{load_forwarded_credentials, CredentialStore};
+use crate::core::credentials::load_forwarded_credentials;
 use crate::core::delta::{DeltaState, NodeKind, RouteRuntimeStatus};
 use crate::core::draft::create_workspace_provider;
 use crate::core::names::{get_available_names, slugify};
@@ -220,7 +220,6 @@ impl Orchestrator for LocalOrchestrator {
 
         let request = state.get_request().await.ok().flatten();
         let project_path = state.get_project_path().await.ok().flatten();
-        let worker_scale = state.get_worker_scale().await.ok().flatten();
         let time_limit_minutes = state
             .get_time_limit_minutes()
             .await
@@ -274,11 +273,9 @@ impl Orchestrator for LocalOrchestrator {
             .count() as u32;
         // workers_total is the actual number of worker records.
         let workers_total = workers.len() as u32;
-        // workers_desired is derived from worker_scale, falling back to workers_total.
-        let workers_desired = worker_scale
-            .as_ref()
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(workers_total);
+        // In the explicit-delegation model, desired workers just reflects the
+        // currently tracked workers rather than an autoscaling target.
+        let workers_desired = workers_total;
 
         // Calculate elapsed minutes
         let elapsed_minutes = if let Ok(Some(time_info)) = state.get_time_info().await {
@@ -295,10 +292,6 @@ impl Orchestrator for LocalOrchestrator {
         let agent_type = self.config.agent.agent_type();
         let metrics_available = agent_type.supports_context_tracking();
 
-        // Get runner configuration
-        let runner = state.get_default_runner().await.ok().flatten();
-        let worker_runners = state.get_worker_runners().await.ok().flatten();
-
         Ok(RunDetail {
             name: name.to_string(),
             status: run_status,
@@ -306,7 +299,6 @@ impl Orchestrator for LocalOrchestrator {
             project_path,
             remote_url,
             branch,
-            worker_scale,
             time_limit_minutes,
             started_at,
             summary,
@@ -324,8 +316,6 @@ impl Orchestrator for LocalOrchestrator {
             elapsed_minutes,
             agent_type: format!("{:?}", agent_type).to_lowercase(),
             metrics_available,
-            runner,
-            worker_runners,
             project_id: state.get_project_id().await.ok().flatten(),
             project_name: state.get_project_name().await.ok().flatten(),
         })
@@ -772,47 +762,10 @@ impl Orchestrator for LocalOrchestrator {
     // -------------------------------------------------------------------------
 
     async fn get_config(&self) -> OrchestratorResult<ConfigResponse> {
-        let runtimes_dir = self.config.runtimes_dir().to_string_lossy().to_string();
-
         Ok(ConfigResponse {
-            runtimes_dir,
-            agent_command: self.config.agent.command.clone(),
-            eval_timeout: self.config.eval_timeout,
-            auto_learn: self.config.auto_learn,
-            human_in_the_loop: self.config.human_in_the_loop,
-            context_warning_threshold: self.config.context_warning_threshold,
-            coordinator_port: self.config.coordinator_port,
             llm: self.config.llm.clone().into(),
-            runners: self
-                .config
-                .runners
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone().into()))
-                .collect(),
-            default_runner: self.config.default_runner.clone(),
-            worker_runners: self.config.worker_runners.clone(),
             backend: self.config.backend.clone().into(),
-            git: {
-                use crate::core::api_types::{GitConfigResponse, GitProviderResponse};
-
-                // Check which providers have tokens configured
-                let mut configured = Vec::new();
-                if let Ok(store) = CredentialStore::open().await {
-                    if store.load("git_github_token").await.is_ok() {
-                        configured.push(GitProviderResponse::Github);
-                    }
-                }
-
-                GitConfigResponse {
-                    default_provider: self.config.git.default_provider.map(|p| p.into()),
-                    configured_providers: configured,
-                }
-            },
-            tavily_configured: match CredentialStore::open().await {
-                Ok(store) => store.load("tavily_api_key").await.is_ok(),
-                Err(_) => std::env::var("TAVILY_API_KEY").is_ok(),
-            },
-            storage: (&self.config.storage).into(),
+            mcp_servers: self.config.mcp_servers.clone(),
         })
     }
 
@@ -1042,18 +995,6 @@ impl Orchestrator for LocalOrchestrator {
                 .map_err(|e| OrchestratorError::Other(format!("Failed to set branch: {}", e)))?;
         }
 
-        let scale_max = request.worker_scale.unwrap_or_else(|| {
-            route
-                .worker_scale
-                .as_deref()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(5)
-        });
-        state
-            .set_worker_scale(&scale_max.to_string())
-            .await
-            .map_err(|e| OrchestratorError::Other(format!("Failed to set worker scale: {}", e)))?;
-
         if let Some(limit) = request.time_limit_minutes.or(route.time_limit_minutes) {
             state
                 .set_time_limit_minutes(Some(limit))
@@ -1069,65 +1010,13 @@ impl Orchestrator for LocalOrchestrator {
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to set HITL: {}", e)))?;
 
-        let effective_runner = request.runner.clone().or(route.runner.clone());
-
-        // Set default runner if specified
-        if let Some(ref runner) = effective_runner {
-            state.set_default_runner(Some(runner)).await.map_err(|e| {
-                OrchestratorError::Other(format!("Failed to set default runner: {}", e))
-            })?;
-        }
-
-        // Set per-worker runner assignments if specified
-        if let Some(ref worker_runners) = request.worker_runners {
-            state
-                .set_worker_runners(Some(worker_runners))
-                .await
-                .map_err(|e| {
-                    OrchestratorError::Other(format!("Failed to set worker runners: {}", e))
-                })?;
-        }
-
-        // Store full runner configs (capture at run creation time)
-        // This ensures config changes don't affect in-progress runs
-        {
-            let mut runner_configs = HashMap::new();
-
-            // Add default runner config
-            let default_runner_name = effective_runner.as_deref().unwrap_or("local");
-            if let Some(config) = self.config.get_runner(default_runner_name) {
-                runner_configs.insert(default_runner_name.to_string(), config);
-            }
-
-            // Add per-worker runner configs
-            if let Some(ref worker_runners) = request.worker_runners {
-                for runner_name in worker_runners.values() {
-                    if !runner_configs.contains_key(runner_name) {
-                        if let Some(config) = self.config.get_runner(runner_name) {
-                            runner_configs.insert(runner_name.clone(), config);
-                        }
-                    }
-                }
-            }
-
-            // Store configs if we have any
-            if !runner_configs.is_empty() {
-                state
-                    .set_runner_configs(Some(&runner_configs))
-                    .await
-                    .map_err(|e| {
-                        OrchestratorError::Other(format!("Failed to set runner configs: {}", e))
-                    })?;
-            }
-        }
-
-        // 6. Parse worker scale and generate worker names
-        // Always start with 1, autoscaling will add more based on scale_max
+        // 6. Start with one explicit worker. Additional workers are now
+        // delegated explicitly rather than inferred from a scale target.
         let initial_count = 1u32;
         let worker_names = get_available_names(initial_count, &[]);
 
-        // Determine if multi-worker mode (current or potential via autoscale)
-        let (is_multi_worker, leader_name) = compute_multi_worker_config(&worker_names, scale_max);
+        let (is_multi_worker, leader_name) =
+            compute_multi_worker_config(&worker_names, initial_count);
         let first_worker = &worker_names[0];
 
         // Pre-claim first available board node for first worker
@@ -1172,8 +1061,9 @@ impl Orchestrator for LocalOrchestrator {
         let setup_result = setup_run_workspace(&setup_config)
             .map_err(|e| OrchestratorError::Other(format!("Failed to setup workspace: {}", e)))?;
 
-        // 8. Register workers in state (use runner name as location)
-        let worker_location = effective_runner.as_deref().unwrap_or("local");
+        // 8. Register workers in state using the configured sandbox execution kind.
+        let sandbox_config = self.config.sandbox_config();
+        let worker_location = sandbox_config.execution_kind();
         register_workers(&state, &setup_result.worker_dirs, worker_location)
             .await
             .map_err(|e| OrchestratorError::Other(format!("Failed to register workers: {}", e)))?;
@@ -1200,13 +1090,7 @@ impl Orchestrator for LocalOrchestrator {
                     None
                 };
 
-                // Get runner config for this worker (from stored configs)
-                let runner_config = state
-                    .get_runner_config_for_worker(worker_name)
-                    .await
-                    .unwrap_or_default();
-
-                let runner: Box<dyn Runner> = create_runner(&runner_config);
+                let runner: Box<dyn Runner> = create_runner(&sandbox_config);
 
                 // Get assigned task for this worker (first worker gets pre-claimed task)
                 let (assigned_task_id, is_plan_task) = if i == 0 {
@@ -1305,16 +1189,8 @@ impl Orchestrator for LocalOrchestrator {
         // Get all workers for leader/teammates info
         let workers = state.get_workers().await?;
 
-        // Determine if multi-worker mode
-        let is_multi_worker = workers.len() > 1
-            || state
-                .get_worker_scale()
-                .await
-                .ok()
-                .flatten()
-                .and_then(|s| s.parse::<usize>().ok())
-                .map(|max| max > 1)
-                .unwrap_or(false);
+        // Determine if multi-worker mode based on actual tracked workers.
+        let is_multi_worker = workers.len() > 1;
 
         let leader_name = workers.first().map(|w| w.name.clone());
 
@@ -1331,13 +1207,8 @@ impl Orchestrator for LocalOrchestrator {
             None
         };
 
-        // Get runner config for this worker (from stored configs)
-        let runner_config = state
-            .get_runner_config_for_worker(worker_name)
-            .await
-            .unwrap_or_default();
-
-        let runner: Box<dyn Runner> = create_runner(&runner_config);
+        let sandbox_config = self.config.sandbox_config();
+        let runner: Box<dyn Runner> = create_runner(&sandbox_config);
 
         // Build spawn config
         let agent_command = get_agent_command();
@@ -1466,13 +1337,8 @@ impl Orchestrator for LocalOrchestrator {
             .await?
             .ok_or_else(|| OrchestratorError::WorkerNotFound(worker_name.to_string()))?;
 
-        // Get runner config for this worker (from stored configs)
-        let runner_config = state
-            .get_runner_config_for_worker(worker_name)
-            .await
-            .unwrap_or_default();
-
-        let runner: Box<dyn Runner> = create_runner(&runner_config);
+        let sandbox_config = self.config.sandbox_config();
+        let runner: Box<dyn Runner> = create_runner(&sandbox_config);
 
         // 1. Kill any stale process before resuming
         // If we're resuming, any existing process is stale and should be killed
@@ -1504,7 +1370,7 @@ impl Orchestrator for LocalOrchestrator {
 
         // 2. Restore archives using unified archive strategy (for ephemeral runners)
         if runner.is_ephemeral() {
-            match create_archive_strategy(&runner_config, &self.config.storage).await {
+            match create_archive_strategy(&sandbox_config, &self.config.storage).await {
                 Ok(strategy) => {
                     // Skip if no-op strategy (files persist on disk)
                     if !strategy.is_noop() {
@@ -1621,16 +1487,8 @@ impl Orchestrator for LocalOrchestrator {
         // 5. Get all workers for leader/teammates info
         let workers = state.get_workers().await?;
 
-        // Determine if multi-worker mode
-        let is_multi_worker = workers.len() > 1
-            || state
-                .get_worker_scale()
-                .await
-                .ok()
-                .flatten()
-                .and_then(|s| s.parse::<usize>().ok())
-                .map(|max| max > 1)
-                .unwrap_or(false);
+        // Determine if multi-worker mode based on actual tracked workers.
+        let is_multi_worker = workers.len() > 1;
 
         let leader_name = workers.first().map(|w| w.name.clone());
 

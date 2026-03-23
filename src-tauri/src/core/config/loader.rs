@@ -4,9 +4,10 @@ use std::fs;
 use std::path::Path;
 
 use super::{
-    BackendConfig, Config, ConfigError, GitConfig, GitProvider, LlmConfig, LlmProvider, S3Config,
+    BackendConfig, Config, ConfigError, LlmConfig, LlmProvider, McpServerConfig, S3Config,
     StorageBackend, StorageConfig, StorageProvider,
 };
+use std::collections::BTreeMap;
 
 /// Parse an S3Config from a TOML table
 fn parse_s3_config(table: &toml::Table) -> S3Config {
@@ -132,18 +133,6 @@ pub fn load_config_file(
         }
     }
 
-    // Load auto_learn
-    if let Some(val) = table.get("auto_learn") {
-        if let Some(b) = val.as_bool() {
-            config.auto_learn = b;
-        } else {
-            warnings.push(format!(
-                "Config warning: auto_learn should be a boolean, got {}",
-                val.type_str()
-            ));
-        }
-    }
-
     // Load human_in_the_loop
     if let Some(val) = table.get("human_in_the_loop") {
         if let Some(b) = val.as_bool() {
@@ -192,56 +181,22 @@ pub fn load_config_file(
     // Load LLM configuration
     load_llm_config(&table, &mut config.llm);
 
-    // Load runners configuration
-    if let Some(runners_data) = table.get("runners") {
-        if let Some(runners_table) = runners_data.as_table() {
-            for (name, runner_data) in runners_table {
-                // Serialize TOML value to string, then parse as RunnerConfig
-                let toml_str = toml::to_string(runner_data).unwrap_or_default();
-                match toml::from_str::<crate::core::runner::RunnerConfig>(&toml_str) {
-                    Ok(runner_config) => {
-                        config.runners.insert(name.clone(), runner_config);
-                    }
-                    Err(e) => {
-                        warnings.push(format!(
-                            "Config warning: [runners.{}] invalid config: {}",
-                            name, e
-                        ));
-                    }
-                }
+    // Load sandbox configuration
+    if let Some(sandbox_data) = table.get("sandbox") {
+        let toml_str = toml::to_string(sandbox_data).unwrap_or_default();
+        match toml::from_str::<crate::core::runner::RunnerConfig>(&toml_str) {
+            Ok(sandbox) => {
+                config.sandbox = sandbox;
             }
-        }
-    }
-
-    // Load default_runner
-    if let Some(val) = table.get("default_runner") {
-        if let Some(s) = val.as_str() {
-            if s == "local" || s.is_empty() {
-                config.default_runner = None;
-            } else {
-                config.default_runner = Some(s.to_string());
-            }
-        }
-    }
-
-    // Load worker_runners assignments
-    if let Some(worker_runners_data) = table.get("worker_runners") {
-        if let Some(worker_runners_table) = worker_runners_data.as_table() {
-            for (worker_name, runner_name_val) in worker_runners_table {
-                if let Some(runner_name) = runner_name_val.as_str() {
-                    config
-                        .worker_runners
-                        .insert(worker_name.clone(), runner_name.to_string());
-                }
-            }
+            Err(e) => warnings.push(format!("Config warning: [sandbox] invalid config: {}", e)),
         }
     }
 
     // Load backend connection
     load_backend_config(&table, &mut config.backend, &mut warnings);
 
-    // Load git configuration
-    load_git_config(&table, &mut config.git, &mut warnings);
+    // Load MCP server imports
+    load_mcp_servers(&table, &mut config.mcp_servers, &mut warnings);
 
     // Load storage configuration
     load_storage_config(&table, &mut config.storage, &mut warnings);
@@ -273,6 +228,24 @@ fn load_llm_config(table: &toml::Table, llm: &mut LlmConfig) {
     }
 }
 
+fn load_mcp_servers(
+    table: &toml::Table,
+    mcp_servers: &mut BTreeMap<String, McpServerConfig>,
+    warnings: &mut Vec<String>,
+) {
+    let Some(mcp_data) = table.get("mcp_servers") else {
+        return;
+    };
+    let toml_str = toml::to_string(mcp_data).unwrap_or_default();
+    match toml::from_str::<BTreeMap<String, McpServerConfig>>(&toml_str) {
+        Ok(parsed) => *mcp_servers = parsed,
+        Err(err) => warnings.push(format!(
+            "Config warning: [mcp_servers] invalid config: {}",
+            err
+        )),
+    }
+}
+
 fn load_backend_config(
     table: &toml::Table,
     backend: &mut BackendConfig,
@@ -290,25 +263,6 @@ fn load_backend_config(
                 .map(String::from);
         } else {
             warnings.push("Config warning: [backend] must be a table".to_string());
-        }
-    }
-}
-
-fn load_git_config(table: &toml::Table, git: &mut GitConfig, warnings: &mut Vec<String>) {
-    if let Some(git_data) = table.get("git") {
-        if let Some(git_table) = git_data.as_table() {
-            if let Some(provider_str) = git_table.get("default_provider").and_then(|v| v.as_str()) {
-                git.default_provider = match provider_str.to_lowercase().as_str() {
-                    "github" => Some(GitProvider::Github),
-                    _ => {
-                        warnings.push(format!(
-                            "Config warning: unknown git provider '{}', ignoring",
-                            provider_str
-                        ));
-                        None
-                    }
-                };
-            }
         }
     }
 }

@@ -344,27 +344,6 @@ impl SQLiteState {
         Ok(())
     }
 
-    /// Get worker scale
-    pub async fn get_worker_scale(&self) -> StateResult<Option<String>> {
-        let pool = self.pool().await;
-        let result: Option<Option<String>> =
-            sqlx::query_scalar("SELECT worker_scale FROM state WHERE id = 1")
-                .fetch_optional(&pool)
-                .await?;
-        Ok(result.flatten())
-    }
-
-    /// Set worker scale
-    pub async fn set_worker_scale(&self, scale: &str) -> StateResult<()> {
-        let pool = self.pool().await;
-        sqlx::query("UPDATE state SET worker_scale = ?, updated_at = ? WHERE id = 1")
-            .bind(scale)
-            .bind(utc_now())
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-
     /// Get human in the loop setting
     pub async fn get_human_in_the_loop(&self) -> StateResult<bool> {
         let pool = self.pool().await;
@@ -623,135 +602,6 @@ impl SQLiteState {
             .execute(&pool)
             .await?;
         Ok(())
-    }
-
-    // =========================================================================
-    // Runner Configuration
-    // =========================================================================
-
-    /// Get the default runner for this run
-    pub async fn get_default_runner(&self) -> StateResult<Option<String>> {
-        let pool = self.pool().await;
-        let result: Option<Option<String>> =
-            sqlx::query_scalar("SELECT default_runner FROM state WHERE id = 1")
-                .fetch_optional(&pool)
-                .await?;
-        Ok(result.flatten())
-    }
-
-    /// Set the default runner for this run
-    pub async fn set_default_runner(&self, runner: Option<&str>) -> StateResult<()> {
-        let pool = self.pool().await;
-        sqlx::query("UPDATE state SET default_runner = ?, updated_at = ? WHERE id = 1")
-            .bind(runner)
-            .bind(utc_now())
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Get per-worker runner assignments as JSON
-    pub async fn get_worker_runners(
-        &self,
-    ) -> StateResult<Option<std::collections::HashMap<String, String>>> {
-        let pool = self.pool().await;
-        let result: Option<Option<String>> =
-            sqlx::query_scalar("SELECT worker_runners FROM state WHERE id = 1")
-                .fetch_optional(&pool)
-                .await?;
-        match result.flatten() {
-            Some(json) => {
-                let map: std::collections::HashMap<String, String> =
-                    serde_json::from_str(&json).unwrap_or_default();
-                Ok(Some(map))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Set per-worker runner assignments as JSON
-    pub async fn set_worker_runners(
-        &self,
-        runners: Option<&std::collections::HashMap<String, String>>,
-    ) -> StateResult<()> {
-        let pool = self.pool().await;
-        let json = runners.map(|r| serde_json::to_string(r).unwrap_or_default());
-        sqlx::query("UPDATE state SET worker_runners = ?, updated_at = ? WHERE id = 1")
-            .bind(json)
-            .bind(utc_now())
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Get the runner name for a specific worker (falls back to default_runner, then "local")
-    pub async fn get_runner_for_worker(&self, worker_name: &str) -> StateResult<String> {
-        // First check per-worker assignments
-        if let Some(runners) = self.get_worker_runners().await? {
-            if let Some(runner) = runners.get(worker_name) {
-                return Ok(runner.clone());
-            }
-        }
-        // Fall back to default runner
-        if let Some(default) = self.get_default_runner().await? {
-            return Ok(default);
-        }
-        // Ultimate fallback
-        Ok("local".to_string())
-    }
-
-    /// Get runner configs stored at run creation time.
-    pub async fn get_runner_configs(
-        &self,
-    ) -> StateResult<Option<std::collections::HashMap<String, crate::core::runner::RunnerConfig>>>
-    {
-        let pool = self.pool().await;
-        let result: Option<Option<String>> =
-            sqlx::query_scalar("SELECT runner_configs FROM state WHERE id = 1")
-                .fetch_optional(&pool)
-                .await?;
-        match result.flatten() {
-            Some(json) => {
-                let map: std::collections::HashMap<String, crate::core::runner::RunnerConfig> =
-                    serde_json::from_str(&json).unwrap_or_default();
-                Ok(Some(map))
-            }
-            None => Ok(None),
-        }
-    }
-
-    /// Set runner configs at run creation time.
-    pub async fn set_runner_configs(
-        &self,
-        configs: Option<&std::collections::HashMap<String, crate::core::runner::RunnerConfig>>,
-    ) -> StateResult<()> {
-        let pool = self.pool().await;
-        let json = configs.map(|c| serde_json::to_string(c).unwrap_or_default());
-        sqlx::query("UPDATE state SET runner_configs = ?, updated_at = ? WHERE id = 1")
-            .bind(json)
-            .bind(utc_now())
-            .execute(&pool)
-            .await?;
-        Ok(())
-    }
-
-    /// Get the resolved runner config for a specific worker.
-    pub async fn get_runner_config_for_worker(
-        &self,
-        worker_name: &str,
-    ) -> StateResult<crate::core::runner::RunnerConfig> {
-        // Get the runner name for this worker
-        let runner_name = self.get_runner_for_worker(worker_name).await?;
-
-        // Look up from stored configs
-        if let Some(configs) = self.get_runner_configs().await? {
-            if let Some(config) = configs.get(&runner_name) {
-                return Ok(config.clone());
-            }
-        }
-
-        // No stored config - use local runner
-        Ok(crate::core::runner::RunnerConfig::local())
     }
 
     // =========================================================================
@@ -1108,7 +958,7 @@ impl SQLiteState {
 
         // Query 1: Get all needed state columns in one query
         let state_row = sqlx::query(
-            "SELECT status, created_at, updated_at, started_at, time_limit_minutes, worker_scale FROM state WHERE id = 1",
+            "SELECT status, created_at, updated_at, started_at, time_limit_minutes FROM state WHERE id = 1",
         )
         .fetch_one(&pool)
         .await?;
@@ -1118,8 +968,6 @@ impl SQLiteState {
         let updated_at: Option<String> = state_row.get("updated_at");
         let started_at: Option<String> = state_row.get("started_at");
         let time_limit_minutes: Option<i64> = state_row.get("time_limit_minutes");
-        let worker_scale: Option<String> = state_row.get("worker_scale");
-
         // Query 2: Get worker counts
         let worker_row = sqlx::query(
             "SELECT COUNT(*) as total, SUM(CASE WHEN status = 'working' THEN 1 ELSE 0 END) as active FROM workers",
@@ -1133,10 +981,7 @@ impl SQLiteState {
         // workers_total is the actual number of worker records for the run.
         let workers_total = workers_registered as u32;
 
-        // workers_desired is derived from worker_scale, falling back to workers_total.
-        let workers_desired = worker_scale
-            .and_then(|s| s.parse::<u32>().ok())
-            .unwrap_or(workers_total);
+        let workers_desired = workers_total;
 
         // Parse status
         let status = super::types::Status::from_str(&status).unwrap_or(super::types::Status::Draft);

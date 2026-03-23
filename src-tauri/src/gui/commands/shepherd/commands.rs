@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use lash::{
-    default_context_strategy, default_execution_mode, AgentStateEnvelope, HostProfile, InputItem,
-    OutputState, PluginHost, RuntimeHostConfig, RuntimeServices, SessionPolicy, ToolProvider,
-    TurnInput, TurnStatus,
+    default_context_strategy, default_execution_mode, AgentStateEnvelope, EventSink, ExecutionMode,
+    HostProfile, InputItem, LashRuntime, OutputState, PluginHost, RuntimeHostConfig,
+    RuntimeServices, SessionPolicy, ToolProvider, TurnInput, TurnStatus,
 };
 use tauri::Emitter;
 use tokio::sync::Mutex;
@@ -15,10 +15,9 @@ use super::history::{
     decode_png_images, load_scope_messages, save_message, validate_chunks, RUNTIME_HISTORY_LIMIT,
 };
 use super::runtime::{
-    build_assistant_chunks, build_scope, build_user_turn_text, load_shepherd_provider,
-    looks_like_runtime_traceback, resolve_runtime_cwd, resolve_scope_project_id,
-    resolve_scope_workspace, shepherd_prompt_overrides, AssistantDraft, ShepherdEvent,
-    ShepherdLashSink,
+    build_assistant_chunks, build_scope, build_user_turn_text, looks_like_runtime_traceback,
+    resolve_runtime_cwd, resolve_scope_project_id, resolve_scope_workspace,
+    shepherd_prompt_overrides, AssistantDraft, ShepherdEvent, ShepherdLashSink,
 };
 use super::session::{sessions, ShepherdSession};
 use super::tools::ShepherdToolProvider;
@@ -27,8 +26,15 @@ use super::types::{
     StartShepherdSessionResponse,
 };
 use crate::core::credentials::CredentialStore;
-use crate::core::ShepherdChatMessage;
-use crate::lash_tools::embedded_tool_plugin_factories;
+use crate::core::{llm_provider, ShepherdChatMessage};
+use crate::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
+
+struct SilentLashSink;
+
+#[async_trait::async_trait]
+impl EventSink for SilentLashSink {
+    async fn emit(&self, _event: lash::AgentEvent) {}
+}
 
 /// Start a Shepherd session.
 #[tauri::command]
@@ -53,14 +59,221 @@ pub async fn start_shepherd_session(
     Ok(StartShepherdSessionResponse { session_id, scope })
 }
 
+async fn load_tavily_api_key() -> Option<String> {
+    match CredentialStore::open().await {
+        Ok(store) => store.load("tavily_api_key").await.ok(),
+        Err(_) => None,
+    }
+}
+
+async fn build_runtime_services(
+    app: &tauri::AppHandle,
+    default_project_id: Option<i64>,
+    agent_id: &str,
+    execution_mode: ExecutionMode,
+) -> Result<RuntimeServices, String> {
+    let tools: Arc<dyn ToolProvider> =
+        Arc::new(ShepherdToolProvider::new(app.clone(), default_project_id));
+    let (hirsel_config, _) =
+        crate::core::config::Config::load().map_err(|e| format!("failed to load config: {}", e))?;
+    let plugin_factories = embedded_tool_plugin_factories(
+        "hirsel_shepherd_tools",
+        Arc::clone(&tools),
+        load_tavily_api_key().await,
+    );
+    let plugin_host = PluginHost::new(plugin_factories).with_dynamic_tools();
+    let root_plugins = plugin_host
+        .build_session(agent_id, execution_mode, None)
+        .map_err(|e| format!("failed to build shepherd tool session: {}", e))?;
+    let dynamic_tools = root_plugins
+        .dynamic_tools()
+        .ok_or_else(|| "shepherd dynamic tool provider was not initialized".to_string())?;
+    attach_embedded_mcp_servers(&dynamic_tools, &hirsel_config.mcp_servers).await?;
+    Ok(RuntimeServices::new(root_plugins))
+}
+
+async fn create_runtime_from_history(
+    app: &tauri::AppHandle,
+    runtime_id: &str,
+    scope: &ShepherdScope,
+    focus: Option<&ShepherdTaskFocus>,
+    scope_project_id: Option<i64>,
+    cwd: &std::path::Path,
+    history: &[ShepherdChatMessage],
+) -> Result<LashRuntime, String> {
+    let (hirsel_config, _) =
+        crate::core::config::Config::load().map_err(|e| format!("failed to load config: {}", e))?;
+    let provider = llm_provider::resolve_provider(&hirsel_config).await?;
+    let (model, model_variant) = provider
+        .default_agent_model("high")
+        .map(|(m, variant)| (m.to_string(), variant.map(str::to_string)))
+        .unwrap_or_else(|| {
+            let model = provider.default_model().to_string();
+            let variant = provider.default_model_variant(&model).map(str::to_string);
+            (model, variant)
+        });
+    let execution_mode = default_execution_mode();
+    let context_strategy = default_context_strategy();
+    let session_policy = SessionPolicy {
+        model: model.clone(),
+        provider,
+        max_context_tokens: Some(crate::core::config::get_context_window(&model) as usize),
+        model_variant,
+        session_id: Some(runtime_id.to_string()),
+        execution_mode,
+        context_strategy,
+        ..Default::default()
+    };
+    let host_config = RuntimeHostConfig {
+        host_profile: HostProfile::Embedded,
+        base_dir: Some(cwd.to_path_buf()),
+        prompt_overrides: shepherd_prompt_overrides(scope, focus, cwd),
+        ..RuntimeHostConfig::default()
+    };
+    let state = AgentStateEnvelope {
+        agent_id: format!("shepherd-{}", runtime_id),
+        policy: session_policy.clone(),
+        messages: build_runtime_messages(history),
+        ..AgentStateEnvelope::default()
+    };
+    let services = build_runtime_services(
+        app,
+        scope_project_id,
+        &state.agent_id,
+        session_policy.execution_mode,
+    )
+    .await?;
+
+    LashRuntime::from_state(session_policy, host_config, services, state)
+        .await
+        .map_err(|e| format!("failed to create shepherd lash runtime: {}", e))
+}
+
+async fn create_runtime_from_state(
+    app: &tauri::AppHandle,
+    runtime_id: &str,
+    scope: &ShepherdScope,
+    focus: Option<&ShepherdTaskFocus>,
+    scope_project_id: Option<i64>,
+    cwd: &std::path::Path,
+    mut state: AgentStateEnvelope,
+) -> Result<LashRuntime, String> {
+    state.agent_id = format!("shepherd-{}", runtime_id);
+    state.policy.session_id = Some(runtime_id.to_string());
+    let session_policy = state.policy.clone();
+    let host_config = RuntimeHostConfig {
+        host_profile: HostProfile::Embedded,
+        base_dir: Some(cwd.to_path_buf()),
+        prompt_overrides: shepherd_prompt_overrides(scope, focus, cwd),
+        ..RuntimeHostConfig::default()
+    };
+    let services = build_runtime_services(
+        app,
+        scope_project_id,
+        &state.agent_id,
+        session_policy.execution_mode,
+    )
+    .await?;
+
+    LashRuntime::from_state(session_policy, host_config, services, state)
+        .await
+        .map_err(|e| format!("failed to create shepherd branch runtime: {}", e))
+}
+
+fn truncate_internal_note(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+    let mut out = trimmed.chars().take(max_chars).collect::<String>();
+    out.push_str("...");
+    out
+}
+
+async fn run_private_branch_turn(
+    app: &tauri::AppHandle,
+    parent_session_id: &str,
+    parent_scope: &ShepherdScope,
+    parent_focus: Option<ShepherdTaskFocus>,
+    user_turn_text: &str,
+    user_images_png: &[Vec<u8>],
+    cancel: tokio_util::sync::CancellationToken,
+    parent_state: AgentStateEnvelope,
+) -> Result<Option<String>, String> {
+    let ShepherdScope::Project {
+        project_id,
+        workspace_path,
+        ..
+    } = parent_scope
+    else {
+        return Ok(None);
+    };
+
+    let branch_id = uuid::Uuid::new_v4().to_string();
+    let branch_scope = ShepherdScope::Branch {
+        project_id: *project_id,
+        branch_id: branch_id.clone(),
+        parent_session_id: parent_session_id.to_string(),
+        goal: "Think through the latest user request, inspect Hirsel state, use tools if needed, and return a private conclusion for the channel.".to_string(),
+        workspace_path: workspace_path.clone(),
+        focus: parent_focus,
+    };
+    let cwd = resolve_runtime_cwd(resolve_scope_workspace(&branch_scope).await);
+    let scope_project_id = resolve_scope_project_id(&branch_scope).await;
+    let mut branch_runtime = create_runtime_from_state(
+        app,
+        &branch_id,
+        &branch_scope,
+        match &branch_scope {
+            ShepherdScope::Branch { focus, .. } => focus.as_ref(),
+            _ => None,
+        },
+        scope_project_id,
+        &cwd,
+        parent_state,
+    )
+    .await?;
+
+    let mut turn_items = vec![InputItem::Text {
+        text: user_turn_text.to_string(),
+    }];
+    let mut image_blobs = HashMap::new();
+    for (idx, bytes) in user_images_png.iter().enumerate() {
+        let id = format!("branch-image-{}", idx + 1);
+        turn_items.push(InputItem::ImageRef { id: id.clone() });
+        image_blobs.insert(id, bytes.clone());
+    }
+
+    let turn = branch_runtime
+        .stream_turn(
+            TurnInput {
+                items: turn_items,
+                image_blobs,
+                mode: None,
+            },
+            &SilentLashSink,
+            cancel,
+        )
+        .await
+        .map_err(|e| format!("failed to run private shepherd branch: {}", e))?;
+
+    let conclusion =
+        super::runtime::ShepherdLashSink::sanitize_assistant_text(&turn.assistant_output.safe_text);
+    if conclusion.trim().is_empty() || looks_like_runtime_traceback(&conclusion) {
+        return Ok(None);
+    }
+
+    Ok(Some(truncate_internal_note(&conclusion, 4000)))
+}
+
 /// Send a message to Shepherd and stream a lash response.
-#[tauri::command]
-pub async fn send_shepherd_message(
+async fn run_shepherd_turn(
     app: tauri::AppHandle,
     session_id: String,
     content: Option<String>,
     chunks: Option<Vec<ShepherdMessageChunk>>,
     focus: Option<ShepherdTaskFocus>,
+    persist_input_message: bool,
 ) -> Result<(), String> {
     let (scope, cancel, mut session_runtime) = {
         let mut guard = sessions()
@@ -81,7 +294,9 @@ pub async fn send_shepherd_message(
 
     let result = async {
         let focus = focus.or_else(|| match &scope {
-            ShepherdScope::Project { focus, .. } => focus.clone(),
+            ShepherdScope::Project { focus, .. } | ShepherdScope::Branch { focus, .. } => {
+                focus.clone()
+            }
             _ => None,
         });
 
@@ -97,78 +312,69 @@ pub async fn send_shepherd_message(
         };
         let cwd = resolve_runtime_cwd(resolve_scope_workspace(&scope).await);
         let scope_project_id = resolve_scope_project_id(&scope).await;
-        let prompt_overrides = shepherd_prompt_overrides(&scope, focus.as_ref(), &cwd);
 
         if session_runtime.is_none() {
-            let tools: Arc<dyn ToolProvider> =
-                Arc::new(ShepherdToolProvider::new(app.clone(), scope_project_id));
-            let provider = load_shepherd_provider().await?;
-            let (model, model_variant) = provider
-                .default_agent_model("high")
-                .map(|(m, variant)| (m.to_string(), variant.map(str::to_string)))
-                .unwrap_or_else(|| {
-                    let model = provider.default_model().to_string();
-                    let variant = provider.default_model_variant(&model).map(str::to_string);
-                    (model, variant)
-                });
-            let execution_mode = default_execution_mode();
-            let context_strategy = default_context_strategy();
-            let tavily_api_key = match CredentialStore::open().await {
-                Ok(store) => store.load("tavily_api_key").await.ok(),
-                Err(_) => None,
-            };
-            let plugin_factories =
-                embedded_tool_plugin_factories("hirsel_shepherd_tools", Arc::clone(&tools), tavily_api_key);
-            let plugin_host = PluginHost::new(plugin_factories);
-            let root_plugins = plugin_host
-                .build_session("root", execution_mode, None)
-                .map_err(|e| format!("failed to build shepherd tool session: {}", e))?;
-            let session_policy = SessionPolicy {
-                model: model.clone(),
-                provider,
-                max_context_tokens: Some(crate::core::config::get_context_window(&model) as usize),
-                model_variant,
-                session_id: Some(session_id.clone()),
-                execution_mode,
-                context_strategy,
-                ..Default::default()
-            };
-            let host_config = RuntimeHostConfig {
-                host_profile: HostProfile::Embedded,
-                base_dir: Some(cwd.clone()),
-                prompt_overrides,
-                ..RuntimeHostConfig::default()
-            };
-            let state = AgentStateEnvelope {
-                agent_id: format!("shepherd-{}", session_id),
-                policy: session_policy.clone(),
-                messages: build_runtime_messages(&history),
-                ..AgentStateEnvelope::default()
-            };
-
-            let runtime = lash::LashRuntime::from_state(
-                session_policy,
-                host_config,
-                RuntimeServices::new(root_plugins),
-                state,
-            )
-            .await
-            .map_err(|e| format!("failed to create shepherd lash runtime: {}", e))?;
-            session_runtime = Some(runtime);
+            session_runtime = Some(
+                create_runtime_from_history(
+                    &app,
+                    &session_id,
+                    &scope,
+                    focus.as_ref(),
+                    scope_project_id,
+                    &cwd,
+                    &history,
+                )
+                .await?,
+            );
         }
 
         let runtime = session_runtime
             .as_mut()
             .ok_or_else(|| "failed to initialize shepherd runtime".to_string())?;
 
-        save_message(&scope, "user", &user_chunks_json).await?;
+        if persist_input_message {
+            save_message(&scope, "user", &user_chunks_json).await?;
+        }
+
+        let branch_conclusion = if persist_input_message {
+            let parent_state = runtime.export_state();
+            match run_private_branch_turn(
+                &app,
+                &session_id,
+                &scope,
+                focus.clone(),
+                &user_turn_text,
+                &user_images_png,
+                cancel.clone(),
+                parent_state,
+            )
+            .await
+            {
+                Ok(conclusion) => conclusion,
+                Err(error) => {
+                    warn!("failed to run private shepherd branch: {}", error);
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let draft = Arc::new(Mutex::new(AssistantDraft::default()));
         let sink = ShepherdLashSink::new(app.clone(), session_id.clone(), draft.clone());
 
-        let mut turn_items = vec![InputItem::Text {
+        let mut turn_items = Vec::new();
+        if let Some(branch_conclusion) = branch_conclusion.as_ref() {
+            turn_items.push(InputItem::Text {
+                text: format!(
+                    "Private branch conclusion for this turn. Use it as internal reasoning context only. Do not mention branching, hidden analysis, or this note to the user.\n\n{}",
+                    branch_conclusion
+                ),
+            });
+        }
+        turn_items.push(InputItem::Text {
             text: user_turn_text.clone(),
-        }];
+        });
         let mut image_blobs: HashMap<String, Vec<u8>> = HashMap::new();
         for (idx, bytes) in user_images_png.into_iter().enumerate() {
             let id = format!("image-{}", idx + 1);
@@ -394,6 +600,73 @@ pub async fn send_shepherd_message(
     }
 
     result
+}
+
+/// Send a user-visible message to Shepherd and stream a lash response.
+#[tauri::command]
+pub async fn send_shepherd_message(
+    app: tauri::AppHandle,
+    session_id: String,
+    content: Option<String>,
+    chunks: Option<Vec<ShepherdMessageChunk>>,
+    focus: Option<ShepherdTaskFocus>,
+) -> Result<(), String> {
+    run_shepherd_turn(app, session_id, content, chunks, focus, true).await
+}
+
+/// Run a hidden background prompt against the active Shepherd session.
+#[tauri::command]
+pub async fn run_shepherd_background_prompt(
+    app: tauri::AppHandle,
+    session_id: String,
+    content: String,
+    focus: Option<ShepherdTaskFocus>,
+) -> Result<(), String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return Err("background prompt content is empty".to_string());
+    }
+
+    run_shepherd_turn(
+        app,
+        session_id,
+        Some(trimmed.to_string()),
+        None,
+        focus,
+        false,
+    )
+    .await
+}
+
+/// Cancel the active turn without destroying the session.
+///
+/// The session and its LashRuntime stay alive so the user can immediately
+/// send another message.
+#[tauri::command]
+pub async fn cancel_shepherd_turn(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
+    let cancelled = {
+        let mut guard = sessions()
+            .lock()
+            .map_err(|_| "failed to lock Shepherd session map".to_string())?;
+
+        let session = guard
+            .get_mut(&session_id)
+            .ok_or_else(|| format!("Unknown Shepherd session: {}", session_id))?;
+
+        session.active_turn.take()
+    };
+
+    if let Some(cancel) = cancelled {
+        cancel.cancel();
+    }
+
+    // Emit MessageComplete so the frontend finalizes the streaming message
+    let event = ShepherdEvent::MessageComplete {
+        session_id: session_id.clone(),
+    };
+    let _ = app.emit("shepherd-event", (&session_id, &event));
+
+    Ok(())
 }
 
 /// Stop an active Shepherd session.

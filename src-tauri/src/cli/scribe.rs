@@ -4,7 +4,7 @@
 //! worker learnings into project-level retained context.
 
 use crate::core::{
-    config::{self, Config},
+    config,
     scribe::{process_scribe_batch, ScribeError},
 };
 use tracing::{info, warn};
@@ -14,15 +14,6 @@ pub async fn execute(runtime_name: &str) -> Result<(), Box<dyn std::error::Error
     // Check run exists
     if !config::runtime_exists(runtime_name) {
         return Err(format!("Run '{}' not found", runtime_name).into());
-    }
-
-    // Load config
-    let (global_config, _) = Config::load().unwrap_or_else(|_| (Config::default(), vec![]));
-
-    // Check if scribe is enabled
-    if !global_config.scribe_enabled {
-        info!("Scribe disabled in config, skipping");
-        return Ok(());
     }
 
     // Run scribe processing

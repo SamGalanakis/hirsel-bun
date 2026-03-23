@@ -374,44 +374,10 @@ pub async fn get_config(State(state): State<Arc<AppState>>) -> Result<Json<Confi
 // =============================================================================
 
 use crate::core::api_types::{
-    mask_credential, AgentConfigRequest, CredentialStatusResponse, GeneralConfigRequest,
-    GitConfigRequest, LlmConfigRequest, RunnerConfigResponse, StoreCredentialRequest,
+    mask_credential, CredentialStatusResponse, LlmConfigRequest, StoreCredentialRequest,
 };
 use crate::core::config::BackendConfig;
 use crate::core::credentials::CredentialStore;
-use crate::core::runner::RunnerConfig;
-
-/// Patch general configuration settings
-pub async fn patch_general_config(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<GeneralConfigRequest>,
-) -> Result<StatusCode> {
-    let mut config = state.config.write().await;
-    config.update_general(
-        body.eval_timeout,
-        body.auto_learn,
-        body.human_in_the_loop,
-        body.default_runner,
-        body.coordinator_port,
-    );
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Patch agent configuration settings
-pub async fn patch_agent_config(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<AgentConfigRequest>,
-) -> Result<StatusCode> {
-    let mut config = state.config.write().await;
-    config.update_agent(body.command);
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
 
 /// Patch LLM configuration
 pub async fn patch_llm_config(
@@ -420,109 +386,6 @@ pub async fn patch_llm_config(
 ) -> Result<StatusCode> {
     let mut config = state.config.write().await;
     body.apply(&mut config.llm);
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-// =============================================================================
-// Runners CRUD
-// =============================================================================
-
-/// List all configured runners
-pub async fn list_runners(
-    State(state): State<Arc<AppState>>,
-) -> Result<Json<std::collections::HashMap<String, RunnerConfigResponse>>> {
-    let config = state.config.read().await;
-    let mut runners = std::collections::HashMap::new();
-
-    // Always include "local" as a built-in runner
-    runners.insert(
-        "local".to_string(),
-        RunnerConfigResponse { container: None },
-    );
-
-    // Add configured runners
-    for (name, runner_config) in &config.runners {
-        runners.insert(name.clone(), runner_config.clone().into());
-    }
-
-    Ok(Json(runners))
-}
-
-/// Get a specific runner by name
-pub async fn get_runner(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<Json<RunnerConfigResponse>> {
-    let config = state.config.read().await;
-
-    if name == "local" {
-        return Ok(Json(RunnerConfigResponse { container: None }));
-    }
-
-    let runner = config
-        .runners
-        .get(&name)
-        .ok_or_else(|| OrchestratorError::Other(format!("Runner '{}' not found", name)))?;
-
-    Ok(Json(runner.clone().into()))
-}
-
-/// Create or update a runner
-pub async fn put_runner(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-    Json(body): Json<RunnerConfigResponse>,
-) -> Result<StatusCode> {
-    if name == "local" {
-        return Err(OrchestratorError::InvalidOperation(
-            "Cannot modify built-in 'local' runner".into(),
-        ));
-    }
-
-    let mut config = state.config.write().await;
-    let runner_config: RunnerConfig = body.into();
-    config.runners.insert(name, runner_config);
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-/// Delete a runner
-pub async fn delete_runner(
-    State(state): State<Arc<AppState>>,
-    Path(name): Path<String>,
-) -> Result<StatusCode> {
-    if name == "local" {
-        return Err(OrchestratorError::InvalidOperation(
-            "Cannot delete built-in 'local' runner".into(),
-        ));
-    }
-
-    let mut config = state.config.write().await;
-    config.runners.remove(&name);
-    config
-        .save()
-        .map_err(|e| OrchestratorError::Config(e.to_string()))?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-// =============================================================================
-// Git Config
-// =============================================================================
-
-/// Patch git configuration
-pub async fn patch_git_config(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<GitConfigRequest>,
-) -> Result<StatusCode> {
-    let mut config = state.config.write().await;
-    if let Some(provider) = body.default_provider {
-        config.git.default_provider = Some(provider.into());
-    }
     config
         .save()
         .map_err(|e| OrchestratorError::Config(e.to_string()))?;
@@ -699,30 +562,14 @@ pub async fn codex_device_exchange(
 // Config - Full Replace/Merge
 // =============================================================================
 
-use crate::core::config::PartialConfig;
-
 /// Request body for PUT /api/config (full config replacement)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PutConfigRequest {
     #[serde(default)]
-    pub runners: Option<std::collections::HashMap<String, RunnerConfig>>,
-    #[serde(default)]
-    pub default_runner: Option<Option<String>>,
-    #[serde(default)]
     pub backend: Option<BackendConfig>,
     #[serde(default)]
-    pub eval_timeout: Option<u32>,
-    #[serde(default)]
-    pub auto_learn: Option<bool>,
-    #[serde(default)]
-    pub human_in_the_loop: Option<bool>,
-    #[serde(default)]
-    pub coordinator_port: Option<u16>,
-    #[serde(default)]
     pub llm: Option<crate::core::config::LlmConfig>,
-    #[serde(default)]
-    pub storage: Option<crate::core::config::StorageConfig>,
 }
 
 /// Replace entire config (PUT /api/config)
@@ -736,32 +583,11 @@ pub async fn put_config(
     let mut config = state.config.write().await;
 
     // Apply all provided fields
-    if let Some(runners) = body.runners {
-        config.runners = runners;
-    }
-    if let Some(default_runner) = body.default_runner {
-        config.default_runner = default_runner;
-    }
     if let Some(backend) = body.backend {
         config.backend = backend;
     }
-    if let Some(eval_timeout) = body.eval_timeout {
-        config.eval_timeout = eval_timeout;
-    }
-    if let Some(auto_learn) = body.auto_learn {
-        config.auto_learn = auto_learn;
-    }
-    if let Some(human_in_the_loop) = body.human_in_the_loop {
-        config.human_in_the_loop = human_in_the_loop;
-    }
-    if let Some(coordinator_port) = body.coordinator_port {
-        config.coordinator_port = coordinator_port;
-    }
     if let Some(llm) = body.llm {
         config.llm = llm;
-    }
-    if let Some(storage) = body.storage {
-        config.storage = storage;
     }
 
     // Save to database (primary) and file
@@ -778,12 +604,16 @@ pub async fn put_config(
 /// Only provided fields are updated. Saves to both file and database.
 pub async fn patch_config(
     State(state): State<Arc<AppState>>,
-    Json(body): Json<PartialConfig>,
+    Json(body): Json<PutConfigRequest>,
 ) -> Result<StatusCode> {
     let mut config = state.config.write().await;
 
-    // Merge partial config
-    config.merge_from(body);
+    if let Some(backend) = body.backend {
+        config.backend = backend;
+    }
+    if let Some(llm) = body.llm {
+        config.llm = llm;
+    }
 
     // Save to database (primary) and file
     config

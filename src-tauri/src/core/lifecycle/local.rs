@@ -121,12 +121,6 @@ impl LocalLifecycleManager {
         (kind_rank, 0, node.position)
     }
 
-    fn pick_best_claimable_node(claimable: &[BoardNode]) -> Option<BoardNode> {
-        let mut sorted = claimable.to_vec();
-        sorted.sort_by_key(Self::claim_priority);
-        sorted.into_iter().next()
-    }
-
     fn generate_ephemeral_worker_name(used: &HashSet<String>) -> String {
         loop {
             let base = crate::core::names::generate_worker_name();
@@ -252,11 +246,7 @@ impl LocalLifecycleManager {
             }
 
             // Build unified state handle from work dir snapshot and agent session
-            let runner_config = self
-                .state
-                .get_runner_config_for_worker(&worker.name)
-                .await
-                .unwrap_or_default();
+            let runner_config = config.sandbox_config();
             let mut state_handle = WorkerStateHandle::new();
 
             // Create unified archive strategy
@@ -493,159 +483,11 @@ impl LocalLifecycleManager {
         Ok(actions)
     }
 
-    /// Try to scale up workers if autoscale is enabled and tasks are available.
+    /// Autoscaling is disabled in the explicit-delegation runtime.
     ///
-    /// Returns a `SpawnWorker` action if a new worker should be spawned.
-    /// The caller (daemon) handles actual spawning via the orchestrator.
+    /// New workers are spawned only through orchestrator delegation.
     async fn maybe_scale_up_internal(&self) -> LifecycleResult<Option<LifecycleAction>> {
-        use crate::core::git::create_worker_clone;
-        use crate::core::workers::WorkerScale;
-
-        // Check if autoscaling is enabled
-        let scale_str = match self.state.get_worker_scale().await? {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-
-        let scale = match WorkerScale::parse(&scale_str) {
-            Some(s) => s,
-            None => return Ok(None),
-        };
-
-        // Don't scale up if run is paused
-        let status = self.state.status().await?;
-        if status == Status::Paused {
-            debug!("maybe_scale_up: run is paused, not scaling");
-            return Ok(None);
-        }
-
-        // Get current workers and eagerly prune finished ephemeral workers.
-        let workers = self.state.get_workers().await?;
-        for worker in workers.iter().filter(|w| {
-            !w.hitl_waiting && w.status != WorkerStatus::Working && w.assigned_task_id.is_none()
-        }) {
-            if let Err(e) = self.state.delete_worker(&worker.name).await {
-                warn!(
-                    "maybe_scale_up: failed to delete finished worker {}: {}",
-                    worker.name, e
-                );
-            }
-        }
-        let workers = self.state.get_workers().await?;
-        let current_count = workers
-            .iter()
-            .filter(|w| w.status == WorkerStatus::Working || w.assigned_task_id.is_some())
-            .count();
-        let claimable = self.get_claimable_nodes().await?;
-        let claimable_count = claimable.len();
-
-        debug!(
-            "maybe_scale_up: {} claimable nodes, {} workers, max {}",
-            claimable_count, current_count, scale.max
-        );
-
-        // Scale up if: we have claimable tasks AND we haven't hit max workers
-        if claimable_count == 0 || !scale.can_scale_up(current_count) {
-            return Ok(None);
-        }
-
-        let existing_names: HashSet<String> = workers.iter().map(|w| w.name.clone()).collect();
-
-        // Get project path
-        let project_path_str = match self.state.get_project_path().await? {
-            Some(p) => p,
-            None => {
-                warn!("maybe_scale_up: no project path, cannot scale");
-                return Ok(None);
-            }
-        };
-
-        let project_path = PathBuf::from(&project_path_str);
-        let staging_dir = self.context.runtime_dir.join("work").join("staging");
-
-        // Pick the best claimable node to assign to this worker
-        let node = match Self::pick_best_claimable_node(&claimable) {
-            Some(n) => n,
-            None => {
-                warn!("maybe_scale_up: no claimable nodes available (race condition?)");
-                return Ok(None);
-            }
-        };
-        let new_name = Self::generate_ephemeral_worker_name(&existing_names);
-
-        // Create worker clone
-        let worker_dir = match create_worker_clone(
-            &self.context.runtime_name,
-            &project_path,
-            &new_name,
-            Some(&staging_dir),
-            &self.context.runtime_dir,
-        ) {
-            Ok(dir) => dir,
-            Err(e) => {
-                warn!("maybe_scale_up: failed to create worker clone: {}", e);
-                return Ok(None);
-            }
-        };
-
-        // Add worker to state (status will be set to Working by spawn_single_worker)
-        // Use the default runner from the run config, not hardcoded "local"
-        let location = self
-            .state
-            .get_default_runner()
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_else(|| "local".to_string());
-        self.state
-            .add_worker(
-                &new_name,
-                worker_dir.to_str().unwrap_or("."),
-                &location,
-                None,
-            )
-            .await?;
-
-        // Claim node for new worker
-        if let Err(e) = self.claim_node(&node.id, &new_name).await {
-            warn!(
-                "maybe_scale_up: failed to claim node {} for worker {}: {}",
-                node.id, new_name, e
-            );
-            // Clean up the worker we just added
-            let _ = self.state.delete_worker(&new_name).await;
-            return Ok(None);
-        }
-
-        // Set assigned_task_id for new worker
-        if let Err(e) = self
-            .state
-            .update_worker(
-                &new_name,
-                WorkerUpdate {
-                    assigned_task_id: Some(Some(node.id.clone())),
-                    ..Default::default()
-                },
-            )
-            .await
-        {
-            warn!(
-                "maybe_scale_up: failed to set assigned_task_id for {}: {}",
-                new_name, e
-            );
-        }
-
-        info!(
-            "maybe_scale_up: spawning worker {} with task {}",
-            new_name, node.id
-        );
-
-        // Return the SpawnWorker action - daemon will handle actual spawning via orchestrator
-        Ok(Some(LifecycleAction::SpawnWorker {
-            worker_name: new_name,
-            work_dir: worker_dir,
-            assigned_task_id: Some(node.id.clone()),
-        }))
+        Ok(None)
     }
 
     /// Evaluate scaling needs and return actions for spawning/waking workers.
@@ -654,7 +496,6 @@ impl LocalLifecycleManager {
     /// approach. It's called when the scaling_check_requested flag is set.
     pub async fn evaluate_scaling(&self) -> LifecycleResult<Vec<LifecycleAction>> {
         use crate::core::git::create_worker_clone;
-        use crate::core::workers::WorkerScale;
 
         // Don't scale if run is paused
         let status = self.state.status().await?;
@@ -663,21 +504,14 @@ impl LocalLifecycleManager {
             return Ok(vec![]);
         }
 
-        // Get scaling configuration
-        let scale_str = match self.state.get_worker_scale().await? {
-            Some(s) => s,
-            None => return Ok(vec![]),
-        };
-        let scale = match WorkerScale::parse(&scale_str) {
-            Some(s) => s,
-            None => return Ok(vec![]),
-        };
-        let max_workers = scale.max;
-
         let mut claimable = self.get_claimable_nodes().await?;
         claimable.sort_by_key(Self::claim_priority);
 
         let workers = self.state.get_workers().await?;
+        let max_workers = workers
+            .iter()
+            .filter(|w| w.status == WorkerStatus::Working || w.assigned_task_id.is_some())
+            .count();
         let all_nodes = self.get_all_nodes().await?;
         let mut actions = vec![];
         let mut used_names: HashSet<String> = workers.iter().map(|w| w.name.clone()).collect();
@@ -797,13 +631,9 @@ impl LocalLifecycleManager {
                 }
             };
 
-            let location = self
-                .state
-                .get_default_runner()
-                .await
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "local".to_string());
+            let location = Config::load()
+                .map(|(cfg, _)| cfg.sandbox_config().execution_kind().to_string())
+                .unwrap_or_else(|_| "local".to_string());
 
             if let Err(e) = self
                 .state
@@ -1333,26 +1163,7 @@ impl LifecycleManager for LocalLifecycleManager {
     }
 
     async fn can_scale_up(&self) -> LifecycleResult<bool> {
-        use crate::core::workers::WorkerScale;
-
-        // Check if autoscaling is enabled
-        let scale_str = match self.state.get_worker_scale().await? {
-            Some(s) => s,
-            None => return Ok(false),
-        };
-
-        let scale = match WorkerScale::parse(&scale_str) {
-            Some(s) => s,
-            None => return Ok(false),
-        };
-
-        // Get current count
-        let workers = self.state.get_workers().await?;
-
-        // Check if we have claimable nodes
-        let claimable = self.get_claimable_nodes().await?;
-
-        Ok(!claimable.is_empty() && scale.can_scale_up(workers.len()))
+        Ok(false)
     }
 
     async fn run_status(&self) -> LifecycleResult<Status> {

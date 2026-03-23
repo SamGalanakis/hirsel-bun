@@ -5,6 +5,11 @@ type EventMap = {
   'project-created': unknown;
   'cancel-project-setup': undefined;
   'close-settings': undefined;
+  'open-backend-settings':
+    | {
+        section?: 'connection' | 'llm' | 'services';
+      }
+    | undefined;
   'switch-tab': string;
   'theme-changed': { themeId: string; theme: unknown };
   'shortcuts-changed': undefined;
@@ -12,6 +17,7 @@ type EventMap = {
   'shortcut-action': string;
   'shepherd-focus-node': { id: string; name: string };
   'shepherd-editing-islands': unknown;
+  'start-project-sync': { force?: boolean } | undefined;
 };
 
 export function emit<K extends keyof EventMap>(

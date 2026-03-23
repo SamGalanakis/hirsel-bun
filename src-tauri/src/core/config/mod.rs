@@ -3,12 +3,11 @@
 //! This module provides the configuration system for hirsel, including:
 //! - Agent configuration (command, type detection)
 //! - Authentication configuration (env vars, API keys, OAuth)
-//! - Worker scaling and runner configuration
+//! - Worker sandbox configuration
 //! - Backend connection configuration
 //! - Main Config struct with all settings
 
 mod agent;
-mod git;
 mod llm;
 mod loader;
 mod orchestrator;
@@ -17,10 +16,9 @@ mod saver;
 mod storage;
 pub mod store;
 mod types;
-mod workers;
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::env;
 use std::future::Future;
 use std::path::PathBuf;
@@ -42,7 +40,7 @@ fn block_on<F: Future>(f: F) -> F::Output {
 
 // Re-export all public types
 pub use agent::AgentConfig;
-pub use git::{GitConfig, GitProvider};
+pub use lash::McpServerConfig;
 pub use llm::{LlmConfig, LlmProvider};
 pub use orchestrator::BackendConfig;
 pub use paths::{
@@ -51,7 +49,6 @@ pub use paths::{
 pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
 pub use store::{ConfigStore, ConfigStoreError, PartialConfig};
 pub use types::AgentType;
-pub use workers::WorkerScale;
 
 // Re-export model context window constants
 pub use super::constants::{CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW};
@@ -79,12 +76,6 @@ pub enum ConfigError {
 
     #[error("Failed to read config file {path}: {message}")]
     ReadError { path: PathBuf, message: String },
-
-    #[error("Invalid workers format: '{value}'. Use a number like '4' for max workers")]
-    InvalidWorkerScale { value: String },
-
-    #[error("Worker count must be at least 1")]
-    WorkerCountTooLow,
 
     #[error("Run name cannot be empty")]
     EmptyRunName,
@@ -122,10 +113,6 @@ fn default_coordinator_port() -> u16 {
     19700
 }
 
-fn default_scribe_enabled() -> bool {
-    true
-}
-
 fn default_scribe_batch_window() -> u32 {
     3
 }
@@ -143,9 +130,6 @@ pub struct Config {
     #[serde(default = "default_eval_timeout")]
     pub eval_timeout: u32,
 
-    #[serde(default)]
-    pub auto_learn: bool,
-
     #[serde(default = "default_human_in_the_loop")]
     pub human_in_the_loop: bool,
 
@@ -158,42 +142,25 @@ pub struct Config {
     #[serde(default)]
     pub llm: LlmConfig,
 
-    /// Named runners that can be referenced by workers
+    /// Worker sandbox configuration for the backend host.
     #[serde(default)]
-    pub runners: HashMap<String, crate::core::runner::RunnerConfig>,
-
-    /// Default runner for workers (defaults to "local")
-    #[serde(default)]
-    pub default_runner: Option<String>,
-
-    /// Per-worker runner assignments (worker_name -> runner_name)
-    #[serde(default)]
-    pub worker_runners: HashMap<String, String>,
+    pub sandbox: crate::core::runner::RunnerConfig,
 
     /// Backend connection used by remote clients.
     #[serde(default)]
     pub backend: BackendConfig,
 
-    /// Git provider configuration
+    /// MCP servers imported into embedded lash sessions.
     #[serde(default)]
-    pub git: GitConfig,
+    pub mcp_servers: BTreeMap<String, McpServerConfig>,
 
     /// Storage configuration for files and database
     #[serde(default)]
     pub storage: StorageConfig,
 
-    /// Whether to enable the scribe system for retained-context updates (default: true)
-    #[serde(default = "default_scribe_enabled")]
-    pub scribe_enabled: bool,
-
     /// How long to wait (in seconds) for more submissions before processing a scribe batch (default: 3)
     #[serde(default = "default_scribe_batch_window")]
     pub scribe_batch_window_seconds: u32,
-
-    /// Preferred IDE for "Open in IDE" feature
-    /// Options: "cursor", "code", "zed", "nvim"
-    #[serde(default)]
-    pub preferred_ide: Option<String>,
 }
 
 impl Default for Config {
@@ -203,20 +170,15 @@ impl Default for Config {
             run: None,
             agent: AgentConfig::default(),
             eval_timeout: default_eval_timeout(),
-            auto_learn: true,
             human_in_the_loop: default_human_in_the_loop(),
             context_warning_threshold: default_context_warning_threshold(),
             coordinator_port: default_coordinator_port(),
             llm: LlmConfig::default(),
-            runners: HashMap::new(),
-            default_runner: None,
-            worker_runners: HashMap::new(),
+            sandbox: crate::core::runner::RunnerConfig::local(),
             backend: BackendConfig::default(),
-            git: GitConfig::default(),
+            mcp_servers: BTreeMap::new(),
             storage: StorageConfig::default(),
-            scribe_enabled: default_scribe_enabled(),
             scribe_batch_window_seconds: default_scribe_batch_window(),
-            preferred_ide: None,
         }
     }
 }
@@ -288,9 +250,6 @@ impl Config {
         if let Some(eval_timeout) = partial.eval_timeout {
             self.eval_timeout = eval_timeout;
         }
-        if let Some(auto_learn) = partial.auto_learn {
-            self.auto_learn = auto_learn;
-        }
         if let Some(human_in_the_loop) = partial.human_in_the_loop {
             self.human_in_the_loop = human_in_the_loop;
         }
@@ -303,26 +262,17 @@ impl Config {
         if let Some(llm) = partial.llm {
             self.llm = llm;
         }
-        if let Some(runners) = partial.runners {
-            self.runners = runners;
-        }
-        if let Some(default_runner) = partial.default_runner {
-            self.default_runner = default_runner;
-        }
-        if let Some(worker_runners) = partial.worker_runners {
-            self.worker_runners = worker_runners;
+        if let Some(sandbox) = partial.sandbox {
+            self.sandbox = sandbox;
         }
         if let Some(backend) = partial.backend {
             self.backend = backend;
         }
-        if let Some(git) = partial.git {
-            self.git = git;
+        if let Some(mcp_servers) = partial.mcp_servers {
+            self.mcp_servers = mcp_servers;
         }
         if let Some(storage) = partial.storage {
             self.storage = storage;
-        }
-        if let Some(preferred_ide) = partial.preferred_ide {
-            self.preferred_ide = preferred_ide;
         }
     }
 
@@ -394,47 +344,9 @@ impl Config {
         Ok(())
     }
 
-    /// Get the runner configuration for a specific worker
-    ///
-    /// Checks worker_runners first for a specific assignment,
-    /// then falls back to default_runner, then to local.
-    pub fn get_runner_for_worker(&self, worker_name: &str) -> crate::core::runner::RunnerConfig {
-        // Check for specific worker assignment
-        if let Some(runner_name) = self.worker_runners.get(worker_name) {
-            if let Some(runner_config) = self.runners.get(runner_name) {
-                return runner_config.clone();
-            }
-        }
-
-        // Check default runner
-        if let Some(ref default_name) = self.default_runner {
-            if let Some(runner_config) = self.runners.get(default_name) {
-                return runner_config.clone();
-            }
-        }
-
-        // Fall back to local
-        crate::core::runner::RunnerConfig::local()
-    }
-
-    /// Get a runner by name
-    pub fn get_runner(&self, name: &str) -> Option<crate::core::runner::RunnerConfig> {
-        if name == "local" {
-            return Some(crate::core::runner::RunnerConfig::local());
-        }
-        self.runners.get(name).cloned()
-    }
-
-    /// Check if a named runner exists
-    pub fn has_runner(&self, name: &str) -> bool {
-        name == "local" || self.runners.contains_key(name)
-    }
-
-    /// Get all configured runner names
-    pub fn runner_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.runners.keys().cloned().collect();
-        names.insert(0, "local".to_string());
-        names
+    /// Get the backend sandbox configuration used for workers.
+    pub fn sandbox_config(&self) -> crate::core::runner::RunnerConfig {
+        self.sandbox.clone()
     }
 
     /// Save the current configuration to config.toml and database
@@ -456,26 +368,18 @@ impl Config {
         Ok(())
     }
 
-    /// Update general settings (default_runner, etc.)
+    /// Update general settings.
     pub fn update_general(
         &mut self,
         eval_timeout: Option<u32>,
-        auto_learn: Option<bool>,
         human_in_the_loop: Option<bool>,
-        default_runner: Option<Option<String>>,
         coordinator_port: Option<u16>,
     ) {
         if let Some(v) = eval_timeout {
             self.eval_timeout = v;
         }
-        if let Some(v) = auto_learn {
-            self.auto_learn = v;
-        }
         if let Some(v) = human_in_the_loop {
             self.human_in_the_loop = v;
-        }
-        if let Some(v) = default_runner {
-            self.default_runner = v;
         }
         if let Some(v) = coordinator_port {
             self.coordinator_port = v;
@@ -499,16 +403,14 @@ impl Config {
 ///
 /// let env = TestEnv::new()
 ///     .with_config(r#"
-///         [runners.docker]
-///         host = "local"
-///         [runners.docker.container]
+///         [sandbox.container]
 ///         image = "rust:latest"
 ///     "#)
 ///     .build();
 ///
 /// // HIRSEL_ROOT is now set to a temp directory
 /// let (config, _) = Config::load().unwrap();
-/// assert!(config.runners.contains_key("docker"));
+/// assert!(config.sandbox.uses_container());
 /// ```
 #[cfg(test)]
 pub mod testing {

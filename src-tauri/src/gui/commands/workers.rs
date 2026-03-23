@@ -59,6 +59,16 @@ pub(crate) async fn delegate_route_worker(
     capability_profile: CapabilityProfile,
     worker_name: Option<String>,
 ) -> Result<Worker, String> {
+    if !matches!(
+        capability_profile,
+        CapabilityProfile::CodeWorker | CapabilityProfile::OpsWorker
+    ) {
+        return Err(format!(
+            "Only sandbox worker profiles can be delegated here (got {})",
+            capability_profile.as_str()
+        ));
+    }
+
     let runtime = ensure_route_runtime(project_id, route_id).await?;
     let delta = DeltaState::with_route(project_id, route_id);
     let used_names = runtime
@@ -117,17 +127,15 @@ pub(crate) async fn delegate_route_worker(
     };
 
     if existing_worker.is_none() {
-        let runner_name = runtime
-            .state
-            .get_runner_for_worker(&worker_name)
-            .await
-            .str_err()?;
+        let (cfg, _) = crate::core::config::Config::load()
+            .unwrap_or_else(|_| (crate::core::config::Config::default(), vec![]));
+        let execution_kind = cfg.sandbox.execution_kind().to_string();
         runtime
             .state
             .add_worker(
                 &worker_name,
                 worker_dir.to_str().unwrap_or("."),
-                &runner_name,
+                &execution_kind,
                 Some(capability_profile),
             )
             .await
@@ -151,11 +159,9 @@ pub(crate) async fn delegate_route_worker(
         runtime.state.set_status(Status::Working).await.str_err()?;
     }
 
-    let runner_config = runtime
-        .state
-        .get_runner_config_for_worker(&worker_name)
-        .await
-        .str_err()?;
+    let (cfg, _) = crate::core::config::Config::load()
+        .unwrap_or_else(|_| (crate::core::config::Config::default(), vec![]));
+    let runner_config = cfg.sandbox_config();
     let runner = create_runner(&runner_config);
     let result = runner
         .spawn(&RunnerSpawnConfig {

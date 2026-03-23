@@ -2,7 +2,7 @@
 //!
 //! Commands for reading and writing application configuration.
 
-use super::types::{ConfigDefaults, ConfigUpdateRequest};
+use super::types::ConfigUpdateRequest;
 use super::ResultExt;
 use crate::core::api_types::ConfigResponse;
 use crate::core::config;
@@ -20,73 +20,17 @@ pub async fn get_config() -> Result<ConfigResponse, String> {
     LocalOrchestrator::new(config).get_config().await.str_err()
 }
 
-/// Get global config defaults for project settings inheritance
-///
-/// Returns default values that projects inherit when they don't have
-/// project-specific settings. This allows the UI to show what values
-/// will be used when a project setting is empty.
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_config_defaults() -> Result<ConfigDefaults, String> {
-    let (cfg, _) = config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
-
-    Ok(ConfigDefaults {
-        worker_scale: "5".to_string(),
-        time_limit_minutes: None,
-        human_in_the_loop: cfg.human_in_the_loop,
-        runners: cfg.runner_names(),
-        default_runner: cfg.default_runner.clone(),
-    })
-}
-
 /// Save application configuration
 #[tracing::instrument(skip(updates))]
 #[tauri::command]
 pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
-    let config_path = config::hirsel_dir().join("config.toml");
-
     // Load existing config or create default
     let (mut cfg, _) =
         config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
 
-    // Apply updates
-    if let Some(cmd) = updates.agent_command {
-        cfg.agent.command = cmd;
-    }
-    if let Some(timeout) = updates.eval_timeout {
-        cfg.eval_timeout = timeout;
-    }
-    if let Some(auto) = updates.auto_learn {
-        cfg.auto_learn = auto;
-    }
-    if let Some(hitl) = updates.human_in_the_loop {
-        cfg.human_in_the_loop = hitl;
-    }
-    if let Some(warning) = updates.context_warning_threshold {
-        cfg.context_warning_threshold = warning;
-    }
-    if let Some(port) = updates.coordinator_port {
-        cfg.coordinator_port = port;
-    }
-
     // Apply LLM updates
     if let Some(llm_update) = updates.llm {
         llm_update.apply(&mut cfg.llm);
-    }
-
-    // Apply runners updates (replace entire map if provided)
-    if let Some(runners) = updates.runners {
-        cfg.runners = runners.into_iter().map(|(k, v)| (k, v.into())).collect();
-    }
-
-    // Apply default_runner update
-    if let Some(default_runner) = updates.default_runner {
-        cfg.default_runner = default_runner;
-    }
-
-    // Apply worker_runners update
-    if let Some(worker_runners) = updates.worker_runners {
-        cfg.worker_runners = worker_runners;
     }
 
     // Apply backend connection update
@@ -94,21 +38,12 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
         cfg.backend = backend.into();
     }
 
-    // Apply git config update
-    if let Some(git_update) = updates.git {
-        cfg.git = git_update.into();
+    // Apply MCP server imports
+    if let Some(mcp_servers) = updates.mcp_servers {
+        cfg.mcp_servers = mcp_servers;
     }
 
-    // Apply storage config update
-    if let Some(storage_update) = updates.storage {
-        cfg.storage = storage_update.into();
-    }
-
-    // Serialize to TOML
-    let toml_str = toml::to_string_pretty(&cfg).context("Failed to serialize config")?;
-
-    // Write to file
-    std::fs::write(&config_path, toml_str).context("Failed to write config")?;
+    cfg.save().context("Failed to save config")?;
 
     Ok(())
 }
@@ -216,4 +151,18 @@ pub async fn codex_device_exchange_gui(
         status: "ok".to_string(),
         expires_at: tokens.expires_at,
     })
+}
+
+/// Open a URL in the system's default browser.
+#[tauri::command]
+pub async fn open_external_url(url: String) -> Result<(), String> {
+    // Validate that it's an http(s) URL to prevent command injection
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return Err("Only http and https URLs are supported".to_string());
+    }
+    std::process::Command::new("xdg-open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| format!("Failed to open URL: {}", e))?;
+    Ok(())
 }

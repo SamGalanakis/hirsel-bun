@@ -133,12 +133,6 @@ pub async fn ensure_route_runtime(
         .await
         .map_err(|error| error.to_string())?;
 
-    if let Some(scale) = route.worker_scale.as_deref() {
-        state
-            .set_worker_scale(scale)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
     if let Some(limit) = route.time_limit_minutes {
         state
             .set_time_limit_minutes(Some(limit))
@@ -148,12 +142,6 @@ pub async fn ensure_route_runtime(
     if let Some(branch) = workspace_info.default_branch.as_deref() {
         state
             .set_branch(Some(branch))
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    if let Some(runner) = route.runner.as_deref() {
-        state
-            .set_default_runner(Some(runner))
             .await
             .map_err(|error| error.to_string())?;
     }

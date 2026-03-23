@@ -14,22 +14,21 @@ export const StatusBar: Component = () => {
   const versionInfo = () => app.versionInfo();
 
   return (
-    <footer class="status-bar px-4 py-1.5 border-t border-pasture-600 flex items-center text-xs">
-      {/* Version info (left) */}
+    <footer class="status-bar px-4 py-1 border-t border-pasture-700/30 flex items-center">
       <Show when={versionInfo()}>
-        <div class="text-wool-600 mr-4">
+        <span class="text-[9px] uppercase tracking-[0.2em] text-wool-700">
           v{versionInfo()?.version} ({versionInfo()?.gitSha})
-        </div>
+        </span>
       </Show>
 
       <div class="flex-1" />
       <Show when={project.selectedProject()}>
-        <div class="flex items-center gap-2 text-xs text-wool-500">
-          <Icon name="git-branch" class="w-3.5 h-3.5" />
-          <span>{route.currentRoute()?.name ?? 'No active route'}</span>
+        <div class="flex items-center gap-2 text-[10px] uppercase tracking-[0.15em] text-wool-600">
+          <Icon name="git-branch" class="w-3 h-3" />
+          <span>{route.currentRoute()?.name ?? '—'}</span>
           <Show when={workspace.machineryOpen()}>
-            <span class="text-wool-700">/</span>
-            <span class="capitalize">{workspace.activeMachineryTab()}</span>
+            <span class="text-wool-700">·</span>
+            <span>{workspace.activeMachineryTab()}</span>
           </Show>
         </div>
       </Show>

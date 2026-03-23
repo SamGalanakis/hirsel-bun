@@ -123,6 +123,11 @@ export const AppProvider: ParentComponent = (props) => {
     onCleanup(cleanup);
   });
 
+  createEffect(() => {
+    const cleanup = on('open-backend-settings', () => setShowSettings(true));
+    onCleanup(cleanup);
+  });
+
   // Keyboard shortcuts handler
   createEffect(() => {
     const handler = (e: KeyboardEvent) => {

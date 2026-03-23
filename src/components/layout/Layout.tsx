@@ -56,17 +56,17 @@ export const Layout: Component = () => {
                   <button
                     type="button"
                     onClick={() => workspace.setShepherdMinimized(false)}
-                    class="shrink-0 w-10 border-l border-pasture-700/60 bg-pasture-800/90 flex flex-col items-center pt-2 gap-2 hover:bg-pasture-700/60 transition-colors cursor-pointer"
+                    class="shrink-0 w-8 border-l border-pasture-700/30 bg-pasture-800/60 flex flex-col items-center pt-3 gap-2 hover:bg-pasture-700/40 cursor-pointer"
                     title="Expand chat"
                   >
-                    <Icon name="message-square" class="w-4 h-4 text-wool-500" />
-                    <span class="text-[10px] text-wool-600 uppercase tracking-widest [writing-mode:vertical-lr]">
+                    <Icon name="message-square" class="w-3.5 h-3.5 text-wool-600" />
+                    <span class="text-[8px] text-wool-700 uppercase tracking-[0.2em] [writing-mode:vertical-lr]">
                       Chat
                     </span>
                   </button>
                 }
               >
-                <div class="w-[380px] min-w-[320px] max-w-[420px] border-l border-pasture-700/60 bg-pasture-800/90">
+                <div class="w-[380px] min-w-[320px] max-w-[420px] border-l border-pasture-700/30 bg-pasture-800/90">
                   <ShepherdConsole />
                 </div>
               </Show>

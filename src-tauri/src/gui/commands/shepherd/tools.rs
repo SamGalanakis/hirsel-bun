@@ -7,13 +7,30 @@ use crate::core::db::{global_pool, utc_now};
 use crate::core::delta::{DeltaState, UpdateBoardNodeRequest};
 use crate::core::project::{validate_project_focus_view_html, ProjectStore};
 use crate::core::route::{CreateRouteRequest, Route, RouteStore};
-use crate::core::CapabilityProfile;
 use crate::core::WorkerConcernStore;
+use crate::core::{ensure_sync_project_task, CapabilityProfile};
 use crate::gui::commands::{delivery, events, routes, workers, worktree};
 
 const NODE_READ_DEFAULT_LIMIT: usize = 2000;
 const NODE_READ_MAX_LINE_LEN: usize = 2000;
 const NODE_PATCH_VIRTUAL_FILENAME: &str = "node.md";
+
+macro_rules! tool_definition {
+    ($($field:tt)* input_schema_override: $input:expr, output_schema_override: $output:expr $(,)?) => {
+        ToolDefinition {
+            $($field)*
+            input_schema_override: $input,
+            output_schema_override: $output,
+        }
+    };
+    ($($field:tt)*) => {
+        ToolDefinition {
+            $($field)*
+            input_schema_override: None,
+            output_schema_override: None,
+        }
+    };
+}
 
 pub(super) struct ShepherdToolProvider {
     app: tauri::AppHandle,
@@ -655,11 +672,9 @@ impl ShepherdToolProvider {
         let capability_profile = match Self::trimmed_string(args, "capability_profile") {
             Some("code_worker") => CapabilityProfile::CodeWorker,
             Some("ops_worker") => CapabilityProfile::OpsWorker,
-            Some("branch") => CapabilityProfile::Branch,
-            Some("channel") => CapabilityProfile::Channel,
             Some(other) => {
                 return ToolResult::err(json!({
-                    "error": format!("Invalid capability_profile: {}", other),
+                    "error": format!("Invalid capability_profile for worker delegation: {}", other),
                 }))
             }
             None => return ToolResult::err_fmt("Missing required parameter: capability_profile"),
@@ -915,6 +930,31 @@ impl ShepherdToolProvider {
         }
     }
 
+    async fn sync_project_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let route = match self.resolve_route(project_id, args).await {
+            Ok(route) => route,
+            Err(error) => return error,
+        };
+        let refresh = args
+            .get("refresh")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true);
+
+        let project_store = match ProjectStore::open().await {
+            Ok(store) => store,
+            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+        };
+        let project = match project_store.get_project(project_id).await {
+            Ok(project) => project,
+            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+        };
+
+        match ensure_sync_project_task(project_id, &route, &project.name, true, refresh).await {
+            Ok(result) => ToolResult::ok(json!(result)),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
     async fn shepherd_resolve_worker_concern(&self, args: &Value) -> ToolResult {
         let concern_id = match Self::arg_i64(args, "concern_id") {
             Some(id) => id,
@@ -1051,7 +1091,7 @@ impl ShepherdToolProvider {
 impl ToolProvider for ShepherdToolProvider {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![
-            ToolDefinition {
+            tool_definition! {
                 name: "list_routes".to_string(),
                 description: "List active routes for the project and show which route is currently selected.".to_string(),
                 params: vec![ToolParam::optional("project_id", "int")],
@@ -1060,7 +1100,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "fork_route".to_string(),
                 description: "Fork a new route by name. Uses parent_route_name when provided; otherwise forks from the selected route.".to_string(),
                 params: vec![
@@ -1073,7 +1113,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "select_route".to_string(),
                 description: "Select the project's route by unique name. Route-scoped tools default to this route when route_name is omitted.".to_string(),
                 params: vec![
@@ -1085,7 +1125,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "archive_route".to_string(),
                 description: "Archive a route by unique name. Archived routes drop out of normal active route flows.".to_string(),
                 params: vec![
@@ -1097,7 +1137,20 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
+                name: "sync_project".to_string(),
+                description: "Ensure the route has a real Sync project umbrella task and request that the main orchestrator perform the onboarding or refresh pass for the existing codebase.".to_string(),
+                params: vec![
+                    ToolParam::optional("refresh", "bool"),
+                    ToolParam::optional("project_id", "int"),
+                    ToolParam::optional("route_name", "str"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
                 name: "get_route_work_tree".to_string(),
                 description: "Return the current route work tree. Uses the selected route when route_name is omitted.".to_string(),
                 params: Self::route_param_defs(),
@@ -1106,7 +1159,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "create_work_item".to_string(),
                 description: "Create a new work item on a route. Uses the selected route when route_name is omitted.".to_string(),
                 params: vec![
@@ -1122,7 +1175,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "split_work_item".to_string(),
                 description: "Split a work item into child work items. Each entry in items should include at least a title.".to_string(),
                 params: vec![
@@ -1136,7 +1189,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "assign_work_item".to_string(),
                 description: "Assign a work item to an orchestrator or worker.".to_string(),
                 params: vec![
@@ -1152,7 +1205,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "reopen_work_item".to_string(),
                 description: "Reopen a work item so it returns to pending.".to_string(),
                 params: vec![
@@ -1165,7 +1218,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "archive_work_item".to_string(),
                 description: "Archive a work item on a route.".to_string(),
                 params: vec![
@@ -1178,7 +1231,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_validate_target".to_string(),
                 description: "Validate whether a route can be delivered to a target branch. Uses the selected route when route_name is omitted.".to_string(),
                 params: vec![
@@ -1192,7 +1245,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_get_versions".to_string(),
                 description: "List published board versions available for delivery on a route. Uses the selected route when route_name is omitted.".to_string(),
                 params: Self::route_param_defs(),
@@ -1201,7 +1254,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_get_latest_version".to_string(),
                 description: "Get the latest board version for a route. Uses the selected route when route_name is omitted.".to_string(),
                 params: Self::route_param_defs(),
@@ -1210,7 +1263,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_get_current".to_string(),
                 description: "Get the current non-terminal delivery for a route. Uses the selected route when route_name is omitted.".to_string(),
                 params: Self::route_param_defs(),
@@ -1219,7 +1272,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_start".to_string(),
                 description: "Start a new delivery for a route. Uses the latest board version when version_id is omitted.".to_string(),
                 params: vec![
@@ -1234,7 +1287,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_publish".to_string(),
                 description: "Publish a route delivery by pushing a branch or opening a PR. Reuses the current delivery when available, or starts one if needed.".to_string(),
                 params: vec![
@@ -1252,7 +1305,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_merge".to_string(),
                 description: "Merge a route delivery. Reuses the current delivery when available, or starts one if needed.".to_string(),
                 params: vec![
@@ -1269,7 +1322,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_get_attempts".to_string(),
                 description: "Get retry history for a delivery on a route.".to_string(),
                 params: vec![
@@ -1282,7 +1335,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_retry".to_string(),
                 description: "Retry a failed delivery on a route.".to_string(),
                 params: vec![
@@ -1295,7 +1348,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_complete".to_string(),
                 description: "Complete an existing delivery using action 'push', 'pr', or 'merge'.".to_string(),
                 params: vec![
@@ -1311,7 +1364,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delivery_abandon".to_string(),
                 description: "Abandon the current or specified delivery on a route.".to_string(),
                 params: vec![
@@ -1324,7 +1377,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "shepherd_get_workers".to_string(),
                 description: "List workers currently attached to a route. Uses the selected route when route_name is omitted.".to_string(),
                 params: Self::route_param_defs(),
@@ -1333,7 +1386,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "shepherd_get_worker_events".to_string(),
                 description: "Get worker output or tool events for a route worker. Uses the selected route when route_name is omitted.".to_string(),
                 params: vec![
@@ -1348,7 +1401,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delegate_to_worker".to_string(),
                 description: "Delegate a work item to a sandbox worker on a route. capability_profile should normally be code_worker or ops_worker.".to_string(),
                 params: vec![
@@ -1363,7 +1416,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "shepherd_get_worker_concerns".to_string(),
                 description: "List worker-raised concerns and progress reports for a route. Uses the selected route when route_name is omitted.".to_string(),
                 params: vec![
@@ -1377,7 +1430,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "shepherd_resolve_worker_concern".to_string(),
                 description: "Resolve a worker concern after the orchestrator handles it.".to_string(),
                 params: vec![
@@ -1389,7 +1442,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "read_project_focus_view".to_string(),
                 description: "Read the current project-focus HTML artifact for this project.".to_string(),
                 params: vec![ToolParam::optional("project_id", "int")],
@@ -1398,7 +1451,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "update_project_focus_view".to_string(),
                 description: "Replace the project-focus HTML artifact for this project with a full HTML document. Inline Mermaid setup is allowed.".to_string(),
                 params: vec![
@@ -1411,7 +1464,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "read_project_retained_context".to_string(),
                 description: "Read the current project-level retained context markdown for this project.".to_string(),
                 params: vec![ToolParam::optional("project_id", "int")],
@@ -1420,7 +1473,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "update_project_retained_context".to_string(),
                 description: "Replace the project-level retained context markdown for this project.".to_string(),
                 params: vec![
@@ -1433,7 +1486,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "read_work_item".to_string(),
                 description: "Read the description/content of a work item by ID.".to_string(),
                 params: vec![
@@ -1448,7 +1501,7 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "apply_patch_work_item".to_string(),
                 description: "Apply an apply_patch patch to the description/content of a work item by ID.".to_string(),
                 params: vec![
@@ -1476,6 +1529,7 @@ impl ToolProvider for ShepherdToolProvider {
             "fork_route" => self.create_route(project_id, args).await,
             "select_route" => self.select_route(project_id, args).await,
             "archive_route" => self.archive_route(project_id, args).await,
+            "sync_project" => self.sync_project_tool(project_id, args).await,
             "read_project_focus_view" => self.read_project_focus_view(project_id).await,
             "update_project_focus_view" => self.update_project_focus_view(project_id, args).await,
             "read_project_retained_context" => self.read_project_retained_context(project_id).await,

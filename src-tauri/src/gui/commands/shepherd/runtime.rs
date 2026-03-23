@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use lash::provider::Provider;
 use lash::{AgentEvent, EventSink, PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 use serde::Serialize;
 use tauri::Emitter;
@@ -13,8 +12,7 @@ use super::history::{chunk_image_count, chunk_text};
 use super::types::{
     ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus, StartShepherdSessionRequest,
 };
-use crate::core::llm_provider;
-use crate::core::{Config, ProjectStore, RouteFiles, RouteStore};
+use crate::core::{ProjectStore, RouteFiles, RouteStore};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -47,6 +45,12 @@ pub(super) enum ShepherdEvent {
     },
     MessageComplete {
         session_id: String,
+    },
+    TokenUsage {
+        session_id: String,
+        input_tokens: i64,
+        output_tokens: i64,
+        cached_tokens: i64,
     },
     SessionEnded {
         session_id: String,
@@ -95,6 +99,7 @@ impl ShepherdLashSink {
             "fork_route" => ("Fork Route".to_string(), Some("execute".to_string())),
             "select_route" => ("Select Route".to_string(), Some("execute".to_string())),
             "archive_route" => ("Archive Route".to_string(), Some("execute".to_string())),
+            "sync_project" => ("Sync Project".to_string(), Some("execute".to_string())),
             "get_route_work_tree" => ("Route Work Tree".to_string(), Some("search".to_string())),
             "create_work_item" | "split_work_item" | "assign_work_item" | "reopen_work_item"
             | "archive_work_item" => ("Work Item Edit".to_string(), Some("edit".to_string())),
@@ -262,10 +267,17 @@ impl EventSink for ShepherdLashSink {
                 let mut draft = self.draft.lock().await;
                 draft.errored = true;
             }
+            AgentEvent::TokenUsage { usage, .. } => {
+                self.emit(&ShepherdEvent::TokenUsage {
+                    session_id: self.session_id.clone(),
+                    input_tokens: usage.input_tokens,
+                    output_tokens: usage.output_tokens,
+                    cached_tokens: usage.cached_input_tokens,
+                });
+            }
             AgentEvent::Prompt { .. }
             | AgentEvent::LlmRequest { .. }
             | AgentEvent::LlmResponse { .. }
-            | AgentEvent::TokenUsage { .. }
             | AgentEvent::RetryStatus { .. }
             | AgentEvent::InjectedMessagesCommitted { .. }
             | AgentEvent::PluginEvent { .. }
@@ -298,6 +310,11 @@ fn scope_label(scope: &ShepherdScope) -> String {
     match scope {
         ShepherdScope::General => "general".to_string(),
         ShepherdScope::Project { project_id, .. } => format!("project:{}", project_id),
+        ShepherdScope::Branch {
+            project_id,
+            branch_id,
+            ..
+        } => format!("branch:{}:{}", project_id, branch_id),
     }
 }
 
@@ -311,30 +328,59 @@ fn build_scope_guidance(
         None => "Focus item: none".to_string(),
     };
 
-    format!(
-        "## Hirsel Shepherd Scope\n\n\
-        Scope: {}\n\
-        {}\n\
-        Workspace root: {}\n\n\
-        ## Hirsel Constraints\n\n\
-        - For route work-tree edits/execution work, use tools; do not edit hidden runtime state directly.\n\
-        - For simple conversational questions, answer directly in plain language without REPL code.\n\
-        - For work-item content edits, use only `read_work_item` and `apply_patch_work_item`.\n\
-        - The project focus view is a maintained artifact. Use `read_project_focus_view` before editing it.\n\
-        - Only call `update_project_focus_view` when project meaning materially changed.\n\
-        - Focus view updates must replace the full HTML document and preserve stable structure when possible.\n\
-        - The focus view is for illustrating the current situation to the user, not reiterating obvious shell context.\n\
-        - Do not waste focus-view space repeating the project title, route picker state, or generic chrome the user can already see.\n\
-        - Prefer synthesis, comparisons, diagrams, and “what matters now” framing over dashboard filler.\n\
-        - Inline Mermaid setup is allowed in the focus view. Do not add arbitrary third-party assets beyond Mermaid.\n\
-        - Never claim work happened unless you actually executed tools.\n\
-        - Never return raw tool payloads (JSON/Python dict/list) as final user-facing output.\n\
-        - Summarize tool outcomes in plain language.\n\
-        - For create/setup/scaffold/build/implement requests, perform at least one mutating route work-tree operation before finishing.",
-        scope_label(scope),
-        focus_line,
-        cwd.display()
-    )
+    let scope_header = match scope {
+        ShepherdScope::Branch {
+            parent_session_id,
+            goal,
+            ..
+        } => format!(
+            "## Hirsel Branch Context\n\n\
+            This turn is a short-lived private reasoning fork from session `{}`.\n\
+            Goal: {}\n\
+            {}\n\
+            Workspace root: {}\n\n\
+            ## Hirsel Constraints\n\n\
+            - You are not user-facing. Do not address the user directly.\n\
+            - Think through the latest request, inspect Hirsel state, and use tools when needed.\n\
+            - You may delegate sandbox work to `code_worker` or `ops_worker` when execution is needed.\n\
+            - Return a concise conclusion for the parent channel covering actions taken, current state, recommended reply framing, and any open questions.\n\
+            - Do not mention branching, hidden analysis, or internal control flow in the conclusion.\n\
+            - Prefer decisions and concrete next actions over long prose.\n",
+            parent_session_id,
+            goal,
+            focus_line,
+            cwd.display()
+        ),
+        _ => format!(
+            "## Hirsel Scope\n\n\
+            Scope: {}\n\
+            {}\n\
+            Workspace root: {}\n\n\
+            ## Hirsel Constraints\n\n\
+            - The final assistant response in this scope is shown directly to the user.\n\
+            - When private branch analysis is supplied in the current turn input, use it as internal context only. Do not mention branching or quote that note verbatim.\n\
+            - For route work-tree edits/execution work, use tools; do not edit hidden runtime state directly.\n\
+            - When the user wants onboarding, refresh, or understanding of an existing codebase, prefer `sync_project` rather than inventing an ad hoc checklist.\n\
+            - For simple conversational questions, answer directly in plain language without REPL code.\n\
+            - For work-item content edits, use only `read_work_item` and `apply_patch_work_item`.\n\
+            - The project focus view is a maintained artifact. Use `read_project_focus_view` before editing it.\n\
+            - Only call `update_project_focus_view` when project meaning materially changed.\n\
+            - Focus view updates must replace the full HTML document and preserve stable structure when possible.\n\
+            - The focus view is for illustrating the current situation to the user, not reiterating obvious shell context.\n\
+            - Do not waste focus-view space repeating the project title, route picker state, or generic chrome the user can already see.\n\
+            - Prefer synthesis, comparisons, diagrams, and “what matters now” framing over dashboard filler.\n\
+            - Inline Mermaid setup is allowed in the focus view. Do not add arbitrary third-party assets beyond Mermaid.\n\
+            - Never claim work happened unless you actually executed tools.\n\
+            - Never return raw tool payloads (JSON/Python dict/list) as final user-facing output.\n\
+            - Summarize tool outcomes in plain language.\n\
+            - For create/setup/scaffold/build/implement requests, perform at least one mutating route work-tree operation before finishing.",
+            scope_label(scope),
+            focus_line,
+            cwd.display()
+        ),
+    };
+
+    scope_header
 }
 
 pub(super) fn shepherd_prompt_overrides(
@@ -405,6 +451,7 @@ pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i6
     match scope {
         ShepherdScope::General => None,
         ShepherdScope::Project { project_id, .. } => Some(*project_id),
+        ShepherdScope::Branch { project_id, .. } => Some(*project_id),
     }
 }
 
@@ -412,6 +459,11 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<Pat
     match scope {
         ShepherdScope::General => None,
         ShepherdScope::Project {
+            project_id,
+            workspace_path,
+            ..
+        }
+        | ShepherdScope::Branch {
             project_id,
             workspace_path,
             ..
@@ -444,9 +496,4 @@ pub(super) fn resolve_runtime_cwd(path: Option<PathBuf>) -> PathBuf {
     } else {
         std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
-}
-
-pub(super) async fn load_shepherd_provider() -> Result<Provider, String> {
-    let (config, _) = Config::load().map_err(|e| format!("failed to load config: {}", e))?;
-    llm_provider::resolve_provider(&config).await
 }

@@ -3,9 +3,8 @@
 use std::fs;
 use std::path::Path;
 
-use super::{
-    Config, ConfigError, GitProvider, LlmProvider, S3Config, StorageBackend, StorageProvider,
-};
+use super::{Config, ConfigError, LlmProvider, S3Config, StorageBackend, StorageProvider};
+use serde::Serialize;
 
 /// Save the configuration to a TOML file.
 ///
@@ -26,7 +25,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
 
     // Top-level settings
     output.push_str(&format!("eval_timeout = {}\n", config.eval_timeout));
-    output.push_str(&format!("auto_learn = {}\n", config.auto_learn));
     output.push_str(&format!(
         "human_in_the_loop = {}\n",
         config.human_in_the_loop
@@ -36,9 +34,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
         config.context_warning_threshold
     ));
     output.push_str(&format!("coordinator_port = {}\n", config.coordinator_port));
-    if let Some(ref runner) = config.default_runner {
-        output.push_str(&format!("default_runner = \"{}\"\n", runner));
-    }
     output.push('\n');
 
     // Backend connection
@@ -47,20 +42,11 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     // LLM section
     write_llm_section(&mut output, config);
 
-    // Runners section
-    write_runners_section(&mut output, config);
+    // MCP server imports
+    write_mcp_section(&mut output, config)?;
 
-    // Git section
-    if let Some(ref provider) = config.git.default_provider {
-        output.push_str("[git]\n");
-        output.push_str(&format!(
-            "default_provider = \"{}\"\n",
-            match provider {
-                GitProvider::Github => "github",
-            }
-        ));
-        output.push('\n');
-    }
+    // Sandbox section
+    write_sandbox_section(&mut output, config);
 
     // Storage section (only write if non-default)
     write_storage_section(&mut output, config);
@@ -116,17 +102,29 @@ fn write_backend_section(output: &mut String, config: &Config) {
     output.push('\n');
 }
 
-fn write_runners_section(output: &mut String, config: &Config) {
-    for (name, runner_config) in &config.runners {
-        output.push_str(&format!("[runners.{}]\n", name));
+fn write_mcp_section(output: &mut String, config: &Config) -> Result<(), ConfigError> {
+    if config.mcp_servers.is_empty() {
+        return Ok(());
+    }
 
-        // Serialize container configuration if present
-        if let Some(ref container) = runner_config.container {
-            output.push_str(&format!("\n[runners.{}.container]\n", name));
-            output.push_str(&format!("image = \"{}\"\n", container.image));
-        }
+    #[derive(Serialize)]
+    struct McpServersSection<'a> {
+        mcp_servers: &'a std::collections::BTreeMap<String, super::McpServerConfig>,
+    }
 
-        output.push('\n');
+    let section = toml::to_string_pretty(&McpServersSection {
+        mcp_servers: &config.mcp_servers,
+    })
+    .map_err(|e| ConfigError::ValidationError(format!("failed to serialize MCP servers: {}", e)))?;
+    output.push_str(&section);
+    output.push('\n');
+    Ok(())
+}
+
+fn write_sandbox_section(output: &mut String, config: &Config) {
+    if let Some(ref container) = config.sandbox.container {
+        output.push_str("[sandbox.container]\n");
+        output.push_str(&format!("image = \"{}\"\n\n", container.image));
     }
 }
 

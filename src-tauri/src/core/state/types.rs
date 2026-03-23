@@ -449,7 +449,7 @@ pub struct RunStateSummary {
     pub workers_active: u32,
     /// Actual number of worker records for this run.
     pub workers_total: u32,
-    /// Desired worker count derived from worker_scale (defaults to workers_total).
+    /// Desired worker count, which now mirrors the tracked route workers.
     pub workers_desired: u32,
     pub elapsed_minutes: f64,
 }

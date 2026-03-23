@@ -3,6 +3,8 @@
 //! Types used by the orchestrator, server, and GUI commands.
 //! These are shared to allow CLI-only builds without the gui feature.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::core::config;
@@ -66,7 +68,7 @@ pub struct RunSummary {
     pub tasks_total: u32,
     pub workers_active: u32,
     pub workers_total: u32,
-    /// Desired worker count derived from worker_scale (for UI display).
+    /// Desired worker count, which now just mirrors active route worker intent.
     pub workers_desired: u32,
     pub elapsed_minutes: f64,
     pub time_limit_minutes: Option<u32>,
@@ -85,7 +87,6 @@ pub struct RunDetail {
     pub project_path: Option<String>,
     pub remote_url: Option<String>,
     pub branch: Option<String>,
-    pub worker_scale: Option<String>,
     pub time_limit_minutes: Option<u32>,
     pub started_at: Option<String>,
     pub summary: Option<String>,
@@ -99,13 +100,11 @@ pub struct RunDetail {
     pub tasks_total: u32,
     pub workers_active: u32,
     pub workers_total: u32,
-    /// Desired worker count derived from worker_scale (for UI display).
+    /// Desired worker count, which now just mirrors active route worker intent.
     pub workers_desired: u32,
     pub elapsed_minutes: f64,
     pub agent_type: String,
     pub metrics_available: bool,
-    pub runner: Option<String>,
-    pub worker_runners: Option<std::collections::HashMap<String, String>>,
     pub project_id: Option<i64>,
     pub project_name: Option<String>,
 }
@@ -283,45 +282,6 @@ impl From<LlmConfigResponse> for config::LlmConfig {
 }
 
 // =============================================================================
-// Runner Config Types (Single-Host Model)
-// =============================================================================
-
-/// Container configuration for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContainerConfigResponse {
-    pub image: String,
-}
-
-/// Runner configuration for frontend (single-host model)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RunnerConfigResponse {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub container: Option<ContainerConfigResponse>,
-}
-
-impl From<crate::core::runner::RunnerConfig> for RunnerConfigResponse {
-    fn from(cfg: crate::core::runner::RunnerConfig) -> Self {
-        let container = cfg
-            .container
-            .map(|c| ContainerConfigResponse { image: c.image });
-
-        RunnerConfigResponse { container }
-    }
-}
-
-impl From<RunnerConfigResponse> for crate::core::runner::RunnerConfig {
-    fn from(cfg: RunnerConfigResponse) -> Self {
-        use crate::core::runner::{ContainerConfig, RunnerConfig};
-
-        let container = cfg.container.map(|c| ContainerConfig { image: c.image });
-
-        RunnerConfig { container }
-    }
-}
-
-// =============================================================================
 // Backend Connection Types
 // =============================================================================
 
@@ -342,193 +302,14 @@ impl From<config::BackendConfig> for BackendConfigResponse {
     }
 }
 
-// =============================================================================
-// Storage Types
-// =============================================================================
-
-/// Storage provider type for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum StorageProviderResponse {
-    S3,
-    Minio,
-}
-
-impl From<config::StorageProvider> for StorageProviderResponse {
-    fn from(provider: config::StorageProvider) -> Self {
-        match provider {
-            config::StorageProvider::S3 => Self::S3,
-            config::StorageProvider::Minio => Self::Minio,
-        }
-    }
-}
-
-impl From<StorageProviderResponse> for config::StorageProvider {
-    fn from(provider: StorageProviderResponse) -> Self {
-        match provider {
-            StorageProviderResponse::S3 => Self::S3,
-            StorageProviderResponse::Minio => Self::Minio,
-        }
-    }
-}
-
-/// S3 configuration for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct S3ConfigResponse {
-    pub provider: StorageProviderResponse,
-    pub endpoint: Option<String>,
-    pub bucket: String,
-    pub region: Option<String>,
-    pub access_key_id: Option<String>,
-    pub secret_access_key: Option<String>,
-}
-
-impl From<&config::S3Config> for S3ConfigResponse {
-    fn from(cfg: &config::S3Config) -> Self {
-        Self {
-            provider: cfg.provider.into(),
-            endpoint: cfg.endpoint.clone(),
-            bucket: cfg.bucket.clone(),
-            region: cfg.region.clone(),
-            access_key_id: cfg.access_key_id.clone(),
-            secret_access_key: cfg.secret_access_key.clone(),
-        }
-    }
-}
-
-impl From<S3ConfigResponse> for config::S3Config {
-    fn from(cfg: S3ConfigResponse) -> Self {
-        Self {
-            provider: cfg.provider.into(),
-            endpoint: cfg.endpoint,
-            bucket: cfg.bucket,
-            region: cfg.region,
-            access_key_id: cfg.access_key_id,
-            secret_access_key: cfg.secret_access_key,
-        }
-    }
-}
-
-/// Storage backend type for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum StorageBackendResponse {
-    Local,
-    S3,
-}
-
-impl From<config::StorageBackend> for StorageBackendResponse {
-    fn from(backend: config::StorageBackend) -> Self {
-        match backend {
-            config::StorageBackend::Local => Self::Local,
-            config::StorageBackend::S3 => Self::S3,
-        }
-    }
-}
-
-impl From<StorageBackendResponse> for config::StorageBackend {
-    fn from(backend: StorageBackendResponse) -> Self {
-        match backend {
-            StorageBackendResponse::Local => Self::Local,
-            StorageBackendResponse::S3 => Self::S3,
-        }
-    }
-}
-
-/// Storage configuration for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StorageConfigResponse {
-    pub files: StorageBackendResponse,
-    pub storages: std::collections::HashMap<String, S3ConfigResponse>,
-    pub default_storage: Option<String>,
-}
-
-impl From<&config::StorageConfig> for StorageConfigResponse {
-    fn from(cfg: &config::StorageConfig) -> Self {
-        Self {
-            files: cfg.files.into(),
-            storages: cfg
-                .storages
-                .iter()
-                .map(|(k, v)| (k.clone(), v.into()))
-                .collect(),
-            default_storage: cfg.default_storage.clone(),
-        }
-    }
-}
-
-impl From<StorageConfigResponse> for config::StorageConfig {
-    fn from(cfg: StorageConfigResponse) -> Self {
-        Self {
-            files: cfg.files.into(),
-            storages: cfg
-                .storages
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
-            default_storage: cfg.default_storage,
-        }
-    }
-}
-
-// =============================================================================
-// Git Provider Types
-// =============================================================================
-
-/// Git provider type for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum GitProviderResponse {
-    Github,
-    // Future: Gitlab, Bitbucket, etc.
-}
-
-impl From<config::GitProvider> for GitProviderResponse {
-    fn from(provider: config::GitProvider) -> Self {
-        match provider {
-            config::GitProvider::Github => Self::Github,
-        }
-    }
-}
-
-impl From<GitProviderResponse> for config::GitProvider {
-    fn from(provider: GitProviderResponse) -> Self {
-        match provider {
-            GitProviderResponse::Github => Self::Github,
-        }
-    }
-}
-
-/// Git configuration for frontend
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitConfigResponse {
-    pub default_provider: Option<GitProviderResponse>,
-    /// Map of provider -> whether a token is configured (from CredentialStore)
-    pub configured_providers: Vec<GitProviderResponse>,
-}
-
 /// Application configuration for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigResponse {
-    pub runtimes_dir: String,
-    pub agent_command: Vec<String>,
-    pub eval_timeout: u32,
-    pub auto_learn: bool,
-    pub human_in_the_loop: bool,
-    pub context_warning_threshold: f64,
-    pub coordinator_port: u16,
     pub llm: LlmConfigResponse,
-    pub runners: std::collections::HashMap<String, RunnerConfigResponse>,
-    pub default_runner: Option<String>,
-    pub worker_runners: std::collections::HashMap<String, String>,
     pub backend: BackendConfigResponse,
-    pub git: GitConfigResponse,
-    pub tavily_configured: bool,
-    pub storage: StorageConfigResponse,
+    #[serde(default)]
+    pub mcp_servers: BTreeMap<String, config::McpServerConfig>,
 }
 
 // =============================================================================
@@ -620,24 +401,6 @@ pub fn parse_timestamp(timestamp: &str) -> Option<chrono::DateTime<chrono::Utc>>
 // Config Update Request Types
 // =============================================================================
 
-/// Request to update general configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GeneralConfigRequest {
-    pub eval_timeout: Option<u32>,
-    pub auto_learn: Option<bool>,
-    pub human_in_the_loop: Option<bool>,
-    pub default_runner: Option<Option<String>>,
-    pub coordinator_port: Option<u16>,
-}
-
-/// Request to update agent configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentConfigRequest {
-    pub command: Option<Vec<String>>,
-}
-
 /// Request to update LLM configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -662,13 +425,6 @@ impl LlmConfigRequest {
             });
         }
     }
-}
-
-/// Request to update git configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitConfigRequest {
-    pub default_provider: Option<GitProviderResponse>,
 }
 
 /// Request to store a credential

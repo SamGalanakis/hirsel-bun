@@ -44,8 +44,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use std::collections::HashMap;
-
 use crate::core::api_types::{
     ConfigResponse, Eval, HistoryEntry, RunDetail, RunSummary, Worker, WorkerEventsResponse,
 };
@@ -201,16 +199,10 @@ pub struct StartRunRequest {
     pub starting_point: Option<StartingPoint>,
     /// Optional eval content (markdown)
     pub eval: Option<String>,
-    /// Worker scale (max workers for autoscaling, optional override)
-    pub worker_scale: Option<u32>,
     /// Time limit in minutes (optional override)
     pub time_limit_minutes: Option<i64>,
     /// Human-in-the-loop mode (optional override)
     pub human_in_the_loop: Option<bool>,
-    /// Runner name (default: from config or "local")
-    pub runner: Option<String>,
-    /// Per-worker runner assignments
-    pub worker_runners: Option<HashMap<String, String>>,
 }
 
 // =============================================================================

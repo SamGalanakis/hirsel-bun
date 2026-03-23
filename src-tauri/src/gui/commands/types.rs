@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::core::api_types::{GitProviderResponse, LlmProviderResponse, RunnerConfigResponse};
+use crate::core::api_types::LlmProviderResponse;
 use crate::core::config;
 
 // =============================================================================
@@ -35,15 +35,6 @@ pub struct UnreadNotification {
 pub struct UnreadNotificationsResponse {
     pub notifications: Vec<UnreadNotification>,
     pub total_runs_with_unread: u32,
-}
-
-/// Agent preset configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentPreset {
-    pub name: String,
-    pub command: Vec<String>,
-    pub mcp_config: Option<serde_json::Value>,
 }
 
 /// LLM config update request
@@ -89,38 +80,13 @@ impl From<BackendConfigUpdate> for config::BackendConfig {
     }
 }
 
-/// Git configuration update request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct GitConfigUpdate {
-    pub default_provider: Option<GitProviderResponse>,
-}
-
-impl From<GitConfigUpdate> for config::GitConfig {
-    fn from(update: GitConfigUpdate) -> Self {
-        Self {
-            default_provider: update.default_provider.map(|p| p.into()),
-        }
-    }
-}
-
 /// Request to update configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConfigUpdateRequest {
-    pub agent_command: Option<Vec<String>>,
-    pub eval_timeout: Option<u32>,
-    pub auto_learn: Option<bool>,
-    pub human_in_the_loop: Option<bool>,
-    pub context_warning_threshold: Option<f64>,
-    pub coordinator_port: Option<u16>,
     pub llm: Option<LlmConfigUpdate>,
-    pub runners: Option<std::collections::HashMap<String, RunnerConfigResponse>>,
-    pub default_runner: Option<Option<String>>,
-    pub worker_runners: Option<std::collections::HashMap<String, String>>,
     pub backend: Option<BackendConfigUpdate>,
-    pub git: Option<GitConfigUpdate>,
-    pub storage: Option<crate::core::api_types::StorageConfigResponse>,
+    pub mcp_servers: Option<std::collections::BTreeMap<String, config::McpServerConfig>>,
 }
 
 /// Result of validating a repository path/URL
@@ -156,22 +122,4 @@ pub struct ShepherdChatMessage {
     pub role: String,
     pub content: String,
     pub timestamp: String,
-}
-
-/// Config defaults for project settings inheritance
-///
-/// These values are used as defaults when project-specific settings are not set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigDefaults {
-    /// Default worker scale (typically "5")
-    pub worker_scale: String,
-    /// Default time limit in minutes (None = no limit)
-    pub time_limit_minutes: Option<i64>,
-    /// Default human-in-the-loop setting
-    pub human_in_the_loop: bool,
-    /// Available runner names from global config
-    pub runners: Vec<String>,
-    /// Default runner name from global config
-    pub default_runner: Option<String>,
 }

@@ -52,8 +52,6 @@ pub struct DispatchConfig {
     pub runtime_name: Option<String>,
     /// Target branch for delivery (from project settings if not specified)
     pub target_branch: Option<String>,
-    /// Worker scale override
-    pub worker_scale: Option<String>,
     /// Time limit override in minutes
     pub time_limit_minutes: Option<i64>,
 }

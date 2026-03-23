@@ -59,7 +59,7 @@ pub async fn delete_run(config: DeleteRunConfig) -> Result<DeleteRunResult, OpsE
                     {
                         // Delete archived work directory if present
                         if let Some(ref work_dir_snapshot) = state_handle.work_dir {
-                            let runner_config = app_config.get_runner_for_worker(&worker.name);
+                            let runner_config = app_config.sandbox_config();
                             if let Ok(strategy) =
                                 create_archive_strategy(&runner_config, &app_config.storage).await
                             {

@@ -169,10 +169,6 @@ pub trait StateAccess: Send {
 
     async fn set_summary(&self, summary: &str) -> StateAccessResult<()>;
 
-    async fn get_worker_scale(&self) -> StateAccessResult<Option<String>>;
-
-    async fn set_worker_scale(&self, scale: &str) -> StateAccessResult<()>;
-
     // =========================================================================
     // Time tracking
     // =========================================================================
@@ -507,14 +503,6 @@ impl StateAccess for SQLiteState {
 
     async fn set_summary(&self, summary: &str) -> StateAccessResult<()> {
         Ok(SQLiteState::set_summary(self, summary).await?)
-    }
-
-    async fn get_worker_scale(&self) -> StateAccessResult<Option<String>> {
-        Ok(SQLiteState::get_worker_scale(self).await?)
-    }
-
-    async fn set_worker_scale(&self, scale: &str) -> StateAccessResult<()> {
-        Ok(SQLiteState::set_worker_scale(self, scale).await?)
     }
 
     async fn get_time_limit_minutes(&self) -> StateAccessResult<Option<i64>> {

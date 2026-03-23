@@ -3,8 +3,10 @@
 use crate::core::draft::StartingPoint;
 use crate::core::route::{
     CreateRouteRepoRequest, CreateRouteRequest, Route, RouteRepo, RouteStore, RouteTree,
-    UpdateRouteRepoRequest,
+    UpdateRouteRepoRequest, UpdateRouteSettingsRequest,
 };
+use crate::core::route_runtime::get_route_runtime_name;
+use crate::core::state::SQLiteState;
 
 use super::ResultExt;
 
@@ -65,7 +67,6 @@ pub async fn create_route_repo(
     name: Option<String>,
     starting_point: StartingPoint,
     target_branch: Option<String>,
-    runner: Option<String>,
 ) -> Result<RouteRepo, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
     store
@@ -75,7 +76,6 @@ pub async fn create_route_repo(
                 name,
                 starting_point,
                 target_branch,
-                runner,
             },
         )
         .await
@@ -92,7 +92,6 @@ pub async fn update_route_repo(
     name: Option<String>,
     starting_point: Option<StartingPoint>,
     target_branch: Option<String>,
-    runner: Option<String>,
     is_archived: Option<bool>,
 ) -> Result<RouteRepo, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
@@ -104,7 +103,6 @@ pub async fn update_route_repo(
                 name,
                 starting_point,
                 target_branch,
-                runner,
                 is_archived,
             },
         )
@@ -133,6 +131,34 @@ pub async fn set_default_route_repo(
         .set_default_route_repo(route_id, repo_id)
         .await
         .str_err()
+}
+
+/// Replace selected-route execution defaults.
+#[tracing::instrument]
+#[tauri::command]
+pub async fn update_route_settings(
+    project_id: i64,
+    route_id: i64,
+    time_limit_minutes: Option<i64>,
+    human_in_the_loop: bool,
+    target_branch: Option<String>,
+) -> Result<Route, String> {
+    let store = RouteStore::new(project_id).await.str_err()?;
+    let route = store
+        .update_route_settings(
+            route_id,
+            &UpdateRouteSettingsRequest {
+                time_limit_minutes,
+                human_in_the_loop,
+                target_branch,
+            },
+        )
+        .await
+        .str_err()?;
+
+    sync_runtime_settings(project_id, route_id, &route).await?;
+
+    Ok(route)
 }
 
 /// Create a new route (fork from parent)
@@ -236,4 +262,27 @@ pub async fn get_active_route(project_id: i64) -> Result<Route, String> {
         .await;
 
     Ok(fallback)
+}
+
+async fn sync_runtime_settings(
+    project_id: i64,
+    route_id: i64,
+    route: &Route,
+) -> Result<(), String> {
+    let Some(runtime_name) = get_route_runtime_name(project_id, route_id).await? else {
+        return Ok(());
+    };
+
+    let state = SQLiteState::new(&runtime_name).await.str_err()?;
+    state
+        .set_human_in_the_loop(route.human_in_the_loop)
+        .await
+        .str_err()?;
+
+    state
+        .set_time_limit_minutes(route.time_limit_minutes)
+        .await
+        .str_err()?;
+
+    Ok(())
 }

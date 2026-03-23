@@ -14,8 +14,7 @@ import {
 } from 'solid-js';
 import { useClickOutside } from '../../hooks';
 import { useProject } from '../../stores';
-import { Icon } from '../shared';
-import { amber } from '../../lib/theme-colors';
+import { Icon, ProjectIcon } from '../shared';
 
 interface ProjectSelectorProps {
   /** When true, only renders the dropdown (no trigger button), using fixed positioning */
@@ -205,10 +204,14 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
           <Show
             when={hasProject()}
             fallback={
-              <span class="text-wool-500 italic text-sm">No project</span>
+              <span class="text-[11px] uppercase tracking-[0.1em] text-wool-500">Select project</span>
             }
           >
-            <Icon name="folder" class="w-4 h-4 text-amber-500/80" />
+            <ProjectIcon
+              name={project.selectedProject()!.name}
+              icon={project.selectedProject()!.icon}
+              size={18}
+            />
             <span class="text-sm font-medium max-w-[180px] truncate">
               {currentProjectName()}
             </span>
@@ -317,42 +320,39 @@ export const ProjectSelector: Component<ProjectSelectorProps> = (props) => {
                     }
                   >
                     {/* Project item */}
-                    <button
-                      type="button"
-                      class="w-full flex items-center gap-3 px-3 py-2 mx-1 rounded-none text-left transition-colors"
-                      classList={{
-                        'bg-white/8': highlightedIndex() === index(),
-                        'hover:bg-white/5': highlightedIndex() !== index(),
-                      }}
-                      data-highlighted={highlightedIndex() === index()}
-                      onClick={() => selectItem(index())}
-                      onMouseEnter={() => setHighlightedIndex(index())}
-                      role="option"
-                      aria-selected={project.selectedProjectId() === (item as { type: 'project'; project: { id: number } }).project.id}
-                    >
-                      <div
-                        class="w-8 h-8 rounded-none flex items-center justify-center shrink-0"
-                        style={{
-                          background: `linear-gradient(135deg, rgba(251,191,36,0.1) 0%, ${amber(0.05)} 100%)`,
-                          border: '1px solid rgba(251,191,36,0.15)',
-                        }}
-                      >
-                        <Icon name="folder" class="w-4 h-4 text-amber-500/70" />
-                      </div>
-                      <div class="flex-1 min-w-0">
-                        <div class="text-sm font-medium text-wool-200 truncate">
-                          {(item as { type: 'project'; project: { name: string } }).project.name}
-                        </div>
-                        <Show when={(item as { type: 'project'; project: { description?: string } }).project.description}>
-                          <div class="text-xs text-wool-600 truncate">
-                            {(item as { type: 'project'; project: { description?: string } }).project.description}
+                    {(() => {
+                      const p = (item as { type: 'project'; project: { id: number; name: string; description?: string; icon?: string | null } }).project;
+                      return (
+                        <button
+                          type="button"
+                          class="w-full flex items-center gap-3 px-3 py-2 mx-1 rounded-none text-left transition-colors"
+                          classList={{
+                            'bg-white/8': highlightedIndex() === index(),
+                            'hover:bg-white/5': highlightedIndex() !== index(),
+                          }}
+                          data-highlighted={highlightedIndex() === index()}
+                          onClick={() => selectItem(index())}
+                          onMouseEnter={() => setHighlightedIndex(index())}
+                          role="option"
+                          aria-selected={project.selectedProjectId() === p.id}
+                        >
+                          <ProjectIcon name={p.name} icon={p.icon} size={28} />
+                          <div class="flex-1 min-w-0">
+                            <div class="text-sm font-medium text-wool-200 truncate">
+                              {p.name}
+                            </div>
+                            <Show when={p.description}>
+                              <div class="text-xs text-wool-600 truncate">
+                                {p.description}
+                              </div>
+                            </Show>
                           </div>
-                        </Show>
-                      </div>
-                      <Show when={project.selectedProjectId() === (item as { type: 'project'; project: { id: number } }).project.id}>
-                        <Icon name="check" class="w-4 h-4 text-amber-500 shrink-0" />
-                      </Show>
-                    </button>
+                          <Show when={project.selectedProjectId() === p.id}>
+                            <Icon name="check" class="w-4 h-4 text-wool-400 shrink-0" />
+                          </Show>
+                        </button>
+                      );
+                    })()}
                   </Show>
                 )}
               </For>

@@ -70,7 +70,6 @@ export interface RunDetail {
   projectPath: string | null;
   remoteUrl: string | null;
   branch: string | null;
-  workerScale: string | null;
   timeLimitMinutes: number | null;
   startedAt: string | null;
   summary: string | null;
@@ -87,9 +86,6 @@ export interface RunDetail {
   workersTotal: number;
   workersDesired: number;
   elapsedMinutes: number;
-  // Runner configuration
-  runner: string | null;
-  workerRunners: Record<string, string> | null;
   // Agent/metrics info
   agentType: string;
   metricsAvailable: boolean;
@@ -104,14 +100,11 @@ export type StartingPoint =
 /** Request to update a draft run */
 export interface DraftUpdateRequest {
   spec?: string;
-  workerScale?: string;
   timeLimitMinutes?: number;
   humanInTheLoop?: boolean;
   projectPath?: string;
   name?: string;
   branch?: string;
-  runner?: string;
-  workerRunners?: Record<string, string>;
 }
 
 /** Result of validating a repository path/URL */
@@ -144,7 +137,6 @@ export interface RunState {
   status: RunStatus;
   request: string | null;
   projectPath: string | null;
-  workerScale: string | null;
   timeLimitMinutes: number | null;
   startedAt: string | null;
   summary: string | null;
@@ -273,40 +265,6 @@ export interface HistoryEntry {
   timestamp: string;
   action: string;
   detail: string | null;
-}
-
-// =============================================================================
-// Config Types
-// =============================================================================
-
-/** Agent preset configuration */
-export interface AgentPreset {
-  name: string;
-  command: string[];
-  mcpConfig: Record<string, unknown> | null;
-}
-
-/** Application configuration */
-export interface Config {
-  runsDir: string;
-  agent: string;
-  agentPresets: Record<string, AgentPreset>;
-  defaultWorkerScale: string;
-  defaultTimeLimit: number | null;
-}
-
-/** Config defaults for project settings inheritance */
-export interface ConfigDefaults {
-  /** Default worker scale (typically "1") */
-  workerScale: string;
-  /** Default time limit in minutes (null = no limit) */
-  timeLimitMinutes: number | null;
-  /** Default human-in-the-loop setting */
-  humanInTheLoop: boolean;
-  /** Available runner names from global config */
-  runners: string[];
-  /** Default runner name from global config */
-  defaultRunner: string | null;
 }
 
 // =============================================================================
@@ -565,6 +523,7 @@ export type ChatEventType =
   | 'toolCallUpdate'
   | 'messageComplete'
   | 'error'
+  | 'tokenUsage'
   | 'sessionEnded';
 
 /** Base chat event */
@@ -608,6 +567,14 @@ export interface ChatErrorEvent extends ChatEventBase {
   message: string;
 }
 
+/** Token usage event */
+export interface TokenUsageEvent extends ChatEventBase {
+  type: 'tokenUsage';
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+}
+
 /** Session ended event */
 export interface SessionEndedEvent extends ChatEventBase {
   type: 'sessionEnded';
@@ -620,6 +587,7 @@ export type ChatEvent =
   | ToolCallUpdateEvent
   | MessageCompleteEvent
   | ChatErrorEvent
+  | TokenUsageEvent
   | SessionEndedEvent;
 
 /** Chat message role */
@@ -693,7 +661,16 @@ export type ShepherdMessageChunk =
 /** Shepherd session scope - determines prompt and context */
 export type ShepherdScope =
   | { type: 'general' }
-  | { type: 'project'; projectId: number; workspacePath?: string; focus?: TaskFocus };
+  | { type: 'project'; projectId: number; workspacePath?: string; focus?: TaskFocus }
+  | {
+      type: 'branch';
+      projectId: number;
+      branchId: string;
+      parentSessionId: string;
+      goal: string;
+      workspacePath?: string;
+      focus?: TaskFocus;
+    };
 
 /** Request to start a Shepherd session */
 export type StartShepherdSessionRequest =
@@ -914,7 +891,6 @@ export interface BoardSnapshot {
 export interface DispatchConfig {
   runName?: string;
   targetBranch?: string;
-  workerScale?: string;
   timeLimitMinutes?: number;
 }
 
@@ -1229,7 +1205,6 @@ export interface RouteRepo {
   name: string;
   startingPoint: StartingPoint;
   targetBranch: string | null;
-  runner: string | null;
   isArchived: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1246,11 +1221,9 @@ export interface Route {
   updatedAt: string;
   repos: RouteRepo[];
   defaultRepoId: number | null;
-  workerScale: string | null;
   timeLimitMinutes: number | null;
   humanInTheLoop: boolean;
   targetBranch: string | null;
-  runner: string | null;
   archivedAt: string | null;
 }
 
@@ -1306,6 +1279,15 @@ export interface WorkTreeSnapshot {
   routeId: number;
   tree: WorkItemTree[];
   generation: number;
+}
+
+export interface SyncProjectTaskResult {
+  routeId: number;
+  item: WorkItem;
+  created: boolean;
+  requested: boolean;
+  shouldPrompt: boolean;
+  prompt: string;
 }
 
 /** Route with ancestry information for tree display */

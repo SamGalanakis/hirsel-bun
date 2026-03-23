@@ -18,20 +18,10 @@ export interface Project {
   id: number;
   name: string;
   description?: string;
+  icon?: string | null;
   x?: number | null;
   y?: number | null;
   activeRouteId?: number | null;
-}
-
-interface RouteSettingsUpdate {
-  workerScale?: string | null;
-  timeLimitMinutes?: number | null;
-  humanInTheLoop?: boolean;
-  runner?: string | null;
-  targetBranch?: string | null;
-  x?: number | null;
-  y?: number | null;
-  description?: string;
 }
 
 interface ProjectContextValue {
@@ -60,11 +50,10 @@ interface ProjectContextValue {
   setProjectSearchQuery: (query: string) => void;
   filteredProjects: () => Project[];
   removeProject: (projectId: number) => Promise<void>;
-  updateProjectPosition: (projectId: number, routeId: number, x: number, y: number) => Promise<void>;
-  updateProjectSettings: (
+  updateProjectPosition: (projectId: number, x: number, y: number) => Promise<void>;
+  updateProjectDescription: (
     projectId: number,
-    routeId: number,
-    settings: RouteSettingsUpdate
+    description: string | null
   ) => Promise<Project | null>;
 }
 
@@ -187,14 +176,9 @@ export const ProjectProvider: ParentComponent = (props) => {
     }
   };
 
-  const updateProjectPosition = async (
-    projectId: number,
-    routeId: number,
-    x: number,
-    y: number
-  ) => {
+  const updateProjectPosition = async (projectId: number, x: number, y: number) => {
     try {
-      await invoke('update_project', { projectId, routeId, x, y });
+      await invoke('update_project_metadata', { projectId, x, y });
       // Update local state
       setProjects((prev) => prev.map((p) => (p.id === projectId ? { ...p, x, y } : p)));
     } catch (e) {
@@ -202,23 +186,14 @@ export const ProjectProvider: ParentComponent = (props) => {
     }
   };
 
-  const updateProjectSettings = async (
+  const updateProjectDescription = async (
     projectId: number,
-    routeId: number,
-    settings: RouteSettingsUpdate
+    description: string | null
   ): Promise<Project | null> => {
     try {
-      const updated = await invoke<Project>('update_project', {
+      const updated = await invoke<Project>('update_project_description', {
         projectId,
-        routeId,
-        x: settings.x,
-        y: settings.y,
-        description: settings.description,
-        targetBranch: settings.targetBranch,
-        workerScale: settings.workerScale,
-        timeLimitMinutes: settings.timeLimitMinutes,
-        humanInTheLoop: settings.humanInTheLoop,
-        runner: settings.runner,
+        description,
       });
       // Update local state - batch to prevent intermediate reactive states
       batch(() => {
@@ -233,8 +208,8 @@ export const ProjectProvider: ParentComponent = (props) => {
       });
       return updated;
     } catch (e) {
-      console.error('Failed to update project settings:', e);
-      window.toast?.error(`Failed to update settings: ${e}`);
+      console.error('Failed to update project description:', e);
+      window.toast?.error(`Failed to update project description: ${e}`);
       return null;
     }
   };
@@ -322,7 +297,7 @@ export const ProjectProvider: ParentComponent = (props) => {
     filteredProjects,
     removeProject,
     updateProjectPosition,
-    updateProjectSettings,
+    updateProjectDescription,
     projectUnreadCount,
   };
 

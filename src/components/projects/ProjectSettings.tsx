@@ -1,135 +1,104 @@
-/**
- * Project settings modal - Styled to match global SettingsModal
- */
 import { invoke } from '../../lib/invoke';
-import {
-  type Component,
-  For,
-  Show,
-  createEffect,
-  createSignal,
-  onCleanup,
-} from 'solid-js';
-import type { ConfigDefaults, StartingPoint } from '../../lib/types';
+import { type Component, Show, createEffect, createSignal, onCleanup } from 'solid-js';
+import type { StartingPoint } from '../../lib/types';
 import { useProject, useRoute } from '../../stores';
-import { Icon, Dropdown, type DropdownOption } from '../shared';
+import { Dropdown, Icon, ProjectIcon, type DropdownOption } from '../shared';
 
 export const ProjectSettings: Component = () => {
   const project = useProject();
   const route = useRoute();
+
   const [deleting, setDeleting] = createSignal(false);
   const [editingName, setEditingName] = createSignal(false);
   const [nameValue, setNameValue] = createSignal('');
-  const [saving, setSaving] = createSignal(false);
-
-  // Config defaults for showing inherited values
-  const [configDefaults, setConfigDefaults] = createSignal<ConfigDefaults | null>(null);
-
-  // Form values (None = use global default)
-  const [workerScale, setWorkerScale] = createSignal<string>('');
-  const [timeLimitMinutes, setTimeLimitMinutes] = createSignal<string>('');
-  const [humanInTheLoop, setHumanInTheLoop] = createSignal<boolean>(true);
-  const [runner, setRunner] = createSignal<string>('');
-  const [targetBranch, setTargetBranch] = createSignal<string>('');
-
-  // Track dirty state
+  const [description, setDescription] = createSignal('');
+  const [timeLimitMinutes, setTimeLimitMinutes] = createSignal('');
+  const [humanInTheLoop, setHumanInTheLoop] = createSignal(true);
+  const [targetBranch, setTargetBranch] = createSignal('');
+  const [defaultRepoId, setDefaultRepoId] = createSignal('');
+  const [iconUrl, setIconUrl] = createSignal('');
   const [isDirty, setIsDirty] = createSignal(false);
+  const [saving, setSaving] = createSignal(false);
 
   let nameInputRef: HTMLInputElement | undefined;
 
   const selectedProject = () => project.selectedProject();
   const selectedRoute = () => route.currentRoute();
 
-  // Reset state and load config defaults when modal opens
   createEffect(() => {
-    if (project.showProjectSettings()) {
-      setEditingName(false);
-      setIsDirty(false);
-      loadConfigDefaults();
-    }
+    if (!project.showProjectSettings()) return;
+    setEditingName(false);
+    setIsDirty(false);
   });
 
-  const loadConfigDefaults = async () => {
-    try {
-      const defaults = await invoke<ConfigDefaults>('get_config_defaults');
-      setConfigDefaults(defaults);
-    } catch (e) {
-      console.error('Failed to load config defaults:', e);
-    }
+  createEffect(() => {
+    const currentProject = selectedProject();
+    const currentRoute = selectedRoute();
+    if (!currentProject || !currentRoute) return;
+
+    setNameValue(currentProject.name);
+    setDescription(currentProject.description || '');
+    setIconUrl(currentProject.icon || '');
+    setTimeLimitMinutes(currentRoute.timeLimitMinutes?.toString() || '');
+    setHumanInTheLoop(currentRoute.humanInTheLoop ?? true);
+    setTargetBranch(currentRoute.targetBranch || '');
+    setDefaultRepoId(
+      currentRoute.defaultRepoId?.toString() || currentRoute.repos[0]?.id?.toString() || ''
+    );
+    setIsDirty(false);
+  });
+
+  createEffect(() => {
+    if (!editingName()) return;
+    queueMicrotask(() => {
+      nameInputRef?.focus();
+      nameInputRef?.select();
+    });
+  });
+
+  const routeOptions = (): DropdownOption[] =>
+    route.routes().map((item) => ({
+      value: item.id.toString(),
+      label: item.name,
+    }));
+
+  const repoOptions = (): DropdownOption[] =>
+    (selectedRoute()?.repos || []).map((repo) => ({
+      value: repo.id.toString(),
+      label: repo.name,
+    }));
+
+  const selectedDefaultRepo = () => {
+    const currentRoute = selectedRoute();
+    if (!currentRoute?.repos?.length) return null;
+
+    const selectedId = Number.parseInt(defaultRepoId(), 10);
+    return (
+      currentRoute.repos.find((repo) => repo.id === selectedId) ||
+      currentRoute.repos.find((repo) => repo.id === currentRoute.defaultRepoId) ||
+      currentRoute.repos[0]
+    );
   };
 
-  // Sync form values when active route changes
-  createEffect(() => {
-    const proj = selectedProject();
-    const activeRoute = selectedRoute();
-    if (proj && activeRoute) {
-      setNameValue(proj.name);
-      setWorkerScale(activeRoute.workerScale || '');
-      setTimeLimitMinutes(activeRoute.timeLimitMinutes?.toString() || '');
-      setHumanInTheLoop(activeRoute.humanInTheLoop ?? true);
-      setRunner(activeRoute.runner || '');
-      setTargetBranch(activeRoute.targetBranch || '');
-      setIsDirty(false);
-    }
-  });
-
-  // Focus input when editing starts
-  createEffect(() => {
-    if (editingName()) {
-      queueMicrotask(() => {
-        nameInputRef?.focus();
-        nameInputRef?.select();
-      });
-    }
-  });
-
-  const defaultRepo = () => {
-    const activeRoute = selectedRoute();
-    if (!activeRoute?.repos?.length) return null;
-    if (activeRoute.defaultRepoId) {
-      const selected = activeRoute.repos.find((r) => r.id === activeRoute.defaultRepoId);
-      if (selected) return selected;
-    }
-    return activeRoute.repos[0];
-  };
-
-  // Get default repo info
   const defaultRepoInfo = () => {
-    const repo = defaultRepo();
+    const repo = selectedDefaultRepo();
     if (!repo) return null;
-    const sp = repo.startingPoint as StartingPoint;
-    if (sp.type === 'greenfield') {
+
+    const startingPoint = repo.startingPoint as StartingPoint;
+    if (startingPoint.type === 'greenfield') {
       return { icon: 'sprout', label: repo.name, detail: 'Greenfield workspace' };
     }
-    if (sp.type === 'localFolder') {
-      return { icon: 'folder', label: repo.name, detail: sp.path };
+    if (startingPoint.type === 'localFolder') {
+      return { icon: 'folder', label: repo.name, detail: startingPoint.path };
     }
-    if (sp.type === 'gitRepo') {
+    if (startingPoint.type === 'gitRepo') {
       return {
         icon: 'git-branch',
         label: repo.name,
-        detail: `${sp.url}${sp.branch ? ` @ ${sp.branch}` : ''}`,
+        detail: `${startingPoint.url}${startingPoint.branch ? ` @ ${startingPoint.branch}` : ''}`,
       };
     }
     return null;
-  };
-
-  // Get placeholder text for inherited values
-  const runnerPlaceholder = () => {
-    const defaults = configDefaults();
-    return defaults?.defaultRunner || 'local';
-  };
-
-  // Runner dropdown options
-  const runnerOptions = (): DropdownOption[] => {
-    const defaults = configDefaults();
-    const options: DropdownOption[] = [
-      { value: '', label: `Default (${runnerPlaceholder()})` },
-    ];
-    for (const name of defaults?.runners || []) {
-      options.push({ value: name, label: name });
-    }
-    return options;
   };
 
   const handleClose = () => {
@@ -138,101 +107,120 @@ export const ProjectSettings: Component = () => {
   };
 
   const handleSaveName = async () => {
-    const proj = selectedProject();
-    const name = nameValue().trim();
-    if (!proj || !name) return;
-
-    const projectId = proj.id;
+    const currentProject = selectedProject();
+    const nextName = nameValue().trim();
+    if (!currentProject || !nextName) return;
 
     try {
-      await invoke('update_project_name', { projectId, name });
+      const updated = await invoke<{ id: number; name: string }>('update_project_name', {
+        projectId: currentProject.id,
+        name: nextName,
+      });
       await project.loadProjects();
+      project.selectProject({
+        ...currentProject,
+        ...updated,
+      });
       window.toast?.success('Project renamed');
       setEditingName(false);
-    } catch (e) {
-      console.error('Failed to rename project:', e);
-      window.toast?.error(`Failed to rename: ${e}`);
+    } catch (error) {
+      console.error('Failed to rename project:', error);
+      window.toast?.error(`Failed to rename project: ${error}`);
     }
   };
 
   const handleSave = async () => {
-    const proj = selectedProject();
-    if (!proj) return;
-    const routeId = route.currentRouteId();
-    if (!routeId) {
-      window.toast?.error('No route available to save settings');
-      return;
-    }
+    const currentProject = selectedProject();
+    const currentRoute = selectedRoute();
+    if (!currentProject || !currentRoute) return;
 
-    // Capture ALL values before any async operation
-    const projectId = proj.id;
-    const settings = {
-      workerScale: workerScale() || null,
-      timeLimitMinutes: timeLimitMinutes() ? Number.parseInt(timeLimitMinutes(), 10) : null,
+    const routeSettings = {
+      timeLimitMinutes: timeLimitMinutes().trim()
+        ? Number.parseInt(timeLimitMinutes().trim(), 10)
+        : null,
       humanInTheLoop: humanInTheLoop(),
-      runner: runner() || null,
-      targetBranch: targetBranch() || null,
+      targetBranch: targetBranch().trim() || null,
     };
+    const nextDescription = description().trim() || null;
+    const nextDefaultRepoId = defaultRepoId().trim() ? Number.parseInt(defaultRepoId(), 10) : null;
+    const currentDefaultRepoId = currentRoute.defaultRepoId ?? currentRoute.repos[0]?.id ?? null;
 
     setSaving(true);
     try {
-      await project.updateProjectSettings(projectId, routeId, settings);
-      await route.loadRoutes();
+      const updatedProject = await project.updateProjectDescription(currentProject.id, nextDescription);
+      if (!updatedProject) {
+        throw new Error('Project details were not saved');
+      }
+
+      // Save icon if changed
+      const nextIcon = iconUrl().trim() || null;
+      if (nextIcon !== (currentProject.icon || null)) {
+        await invoke<{ id: number }>('update_project_icon', {
+          projectId: currentProject.id,
+          icon: nextIcon,
+        });
+        await project.loadProjects();
+      }
+
+      const updatedRoute = await route.updateRouteSettings(currentRoute.id, routeSettings);
+      if (!updatedRoute) {
+        throw new Error('Route settings were not saved');
+      }
+
+      if (nextDefaultRepoId && nextDefaultRepoId !== currentDefaultRepoId) {
+        const repoResult = await route.setDefaultRouteRepo(currentRoute.id, nextDefaultRepoId);
+        if (!repoResult) {
+          throw new Error('Default repo was not updated');
+        }
+      }
       setSaving(false);
-      window.toast?.success('Settings saved');
-      // Delay close to let reactive updates from updateProjectSettings settle
+      window.toast?.success('Project and route settings saved');
       requestAnimationFrame(() => project.setShowProjectSettings(false));
-    } catch (e) {
-      console.error('Failed to save settings:', e);
-      window.toast?.error(`Failed to save: ${e}`);
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      window.toast?.error(`Failed to save settings: ${error}`);
       setSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    const proj = selectedProject();
-    if (!proj) return;
-
-    const projectId = proj.id;
-    const projectName = proj.name;
+    const currentProject = selectedProject();
+    if (!currentProject) return;
 
     let confirmed: boolean | undefined;
     try {
-      confirmed = await window.confirmDialog?.delete(projectName, 'project');
-    } catch (e) {
-      console.error('[ProjectSettings] Confirm dialog error:', e);
+      confirmed = await window.confirmDialog?.delete(currentProject.name, 'project');
+    } catch (error) {
+      console.error('[ProjectSettings] Confirm dialog error:', error);
       return;
     }
     if (!confirmed) return;
 
     setDeleting(true);
-
     try {
-      await project.removeProject(projectId);
+      await project.removeProject(currentProject.id);
       project.setShowProjectSettings(false);
-      window.toast?.success(`Project "${projectName}" deleted`);
-    } catch (e) {
-      console.error('[ProjectSettings] Delete failed:', e);
-      window.toast?.error(`Failed to delete project: ${e}`);
+      window.toast?.success(`Project "${currentProject.name}" deleted`);
+    } catch (error) {
+      console.error('[ProjectSettings] Delete failed:', error);
+      window.toast?.error(`Failed to delete project: ${error}`);
       setDeleting(false);
     }
   };
 
-  // Handle escape key to close
   createEffect(() => {
     if (!project.showProjectSettings()) return;
 
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      if (deleting() || saving()) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || deleting() || saving()) return;
 
       if (editingName()) {
-        const name = selectedProject()?.name || '';
         setEditingName(false);
-        setNameValue(name);
-      } else {
-        handleClose();
+        setNameValue(selectedProject()?.name || '');
+        return;
       }
+
+      handleClose();
     };
 
     document.addEventListener('keydown', handleEscape);
@@ -243,20 +231,19 @@ export const ProjectSettings: Component = () => {
     <Show when={project.showProjectSettings() && selectedProject()}>
       <div
         class="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-        onClick={(e) => {
-          if (e.target === e.currentTarget) handleClose();
+        onClick={(event) => {
+          if (event.target === event.currentTarget) handleClose();
         }}
       >
-        {/* Modal Panel - matches SettingsModal styling */}
-        <div class="bg-pasture-800 border border-pasture-600 rounded-none shadow-xl w-full max-w-lg mx-4 max-h-[85vh] flex flex-col">
-          {/* Header */}
+        <div class="bg-pasture-800 border border-pasture-600 rounded-none shadow-xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
           <div class="px-6 py-4 border-b border-pasture-600 flex items-center justify-between shrink-0">
             <div class="flex items-center gap-3 flex-1 min-w-0">
-              <div class="w-10 h-10 rounded-none bg-pasture-700 flex items-center justify-center shrink-0">
-                <Icon name="folder-cog" class="w-5 h-5 text-wool-400" />
-              </div>
+              <ProjectIcon
+                name={selectedProject()?.name ?? ''}
+                icon={selectedProject()?.icon}
+                size={36}
+              />
 
-              {/* Editable project name */}
               <Show when={!editingName()}>
                 <button
                   class="flex items-center gap-2 group min-w-0 text-left"
@@ -265,7 +252,10 @@ export const ProjectSettings: Component = () => {
                   <h2 class="text-lg font-semibold text-wool-100 truncate">
                     {selectedProject()?.name}
                   </h2>
-                  <Icon name="pencil" class="w-3.5 h-3.5 text-wool-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  <Icon
+                    name="pencil"
+                    class="w-3.5 h-3.5 text-wool-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                  />
                 </button>
               </Show>
               <Show when={editingName()}>
@@ -274,202 +264,256 @@ export const ProjectSettings: Component = () => {
                   type="text"
                   class="input flex-1 text-lg font-semibold"
                   value={nameValue()}
-                  onInput={(e) => setNameValue(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSaveName();
-                    if (e.key === 'Escape') {
-                      const name = selectedProject()?.name || '';
+                  onInput={(event) => setNameValue(event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void handleSaveName();
+                    if (event.key === 'Escape') {
                       setEditingName(false);
-                      setNameValue(name);
+                      setNameValue(selectedProject()?.name || '');
                     }
                   }}
                   onBlur={() => {
-                    const name = selectedProject()?.name || '';
-                    if (nameValue().trim() && nameValue() !== name) {
-                      handleSaveName();
+                    const currentName = selectedProject()?.name || '';
+                    if (nameValue().trim() && nameValue().trim() !== currentName) {
+                      void handleSaveName();
                     } else {
                       setEditingName(false);
-                      setNameValue(name);
+                      setNameValue(currentName);
                     }
                   }}
                 />
               </Show>
             </div>
 
-            <div class="flex items-center gap-1 shrink-0 ml-2">
-              <button
-                type="button"
-                class="p-2 rounded-none text-wool-500 hover:text-destructive hover:bg-destructive/10 transition-all"
-                onClick={handleDelete}
-                disabled={deleting() || saving()}
-                title="Delete project"
-              >
-                <Show when={deleting()}>
-                  <span class="spinner w-4 h-4" />
-                </Show>
-                <Show when={!deleting()}>
-                  <Icon name="trash-2" class="w-4 h-4" />
-                </Show>
-              </button>
-              <button
-                type="button"
-                class="p-2 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
-                onClick={handleClose}
-                disabled={deleting() || saving()}
-              >
-                <Icon name="x" class="w-5 h-5" />
-              </button>
-            </div>
+            <button
+              type="button"
+              class="p-2 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-700 transition-all"
+              onClick={handleClose}
+              disabled={deleting() || saving()}
+            >
+              <Icon name="x" class="w-5 h-5" />
+            </button>
           </div>
 
-          {/* Scrollable content */}
           <div class="overflow-y-auto flex-1 p-6 space-y-6">
-            {/* Linked Repos */}
-            <Show when={(selectedRoute()?.repos?.length || 0) > 0}>
-              <div>
-                <h4 class="text-sm font-medium text-wool-200 mb-3">Linked Repos</h4>
-                <div class="space-y-2 mb-3">
-                  <For each={selectedRoute()?.repos || []}>
-                    {(repo) => (
-                      <div class="bg-pasture-900 rounded-none p-3 border border-pasture-700 flex items-center justify-between gap-3">
-                        <span class="text-sm text-wool-200 truncate">{repo.name}</span>
-                        <Show when={selectedRoute()?.defaultRepoId === repo.id}>
-                          <span class="text-[11px] px-2 py-0.5 rounded-none bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                            Default
+            <div class="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+              <div class="space-y-6">
+                <section>
+                  <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
+                    <Icon name="folder" class="w-4 h-4 text-wool-500" />
+                    Project
+                  </h4>
+                  <div>
+                    <label class="block text-sm font-medium text-wool-300 mb-1.5">
+                      Description
+                    </label>
+                    <textarea
+                      class="input w-full min-h-28 resize-y"
+                      placeholder="Describe the project at a high level."
+                      value={description()}
+                      onInput={(event) => {
+                        setDescription(event.currentTarget.value);
+                        setIsDirty(true);
+                      }}
+                    />
+                    <p class="text-xs text-muted-foreground mt-1">
+                      Project-wide context. Route-specific runtime defaults live separately below.
+                    </p>
+                  </div>
+                  <div>
+                    <label class="block text-sm font-medium text-wool-300 mb-1.5">
+                      Icon URL
+                    </label>
+                    <div class="flex items-center gap-2">
+                      <ProjectIcon
+                        name={selectedProject()?.name ?? ''}
+                        icon={iconUrl() || null}
+                        size={28}
+                      />
+                      <input
+                        type="text"
+                        class="input flex-1"
+                        placeholder="https://example.com/favicon.ico"
+                        value={iconUrl()}
+                        onInput={(event) => {
+                          setIconUrl(event.currentTarget.value);
+                          setIsDirty(true);
+                        }}
+                      />
+                      <Show when={iconUrl()}>
+                        <button
+                          type="button"
+                          class="p-1 text-wool-500 hover:text-wool-300"
+                          onClick={() => {
+                            setIconUrl('');
+                            setIsDirty(true);
+                          }}
+                          title="Clear icon"
+                        >
+                          <Icon name="x" class="w-3.5 h-3.5" />
+                        </button>
+                      </Show>
+                    </div>
+                    <p class="text-xs text-muted-foreground mt-1">
+                      Favicon or avatar URL. Auto-detected from git remote on creation.
+                    </p>
+                  </div>
+                </section>
+
+                <section>
+                  <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
+                    <Icon name="git-branch" class="w-4 h-4 text-wool-500" />
+                    Selected Route
+                  </h4>
+                  <div class="space-y-4">
+                    <div>
+                      <label class="block text-sm font-medium text-wool-300 mb-1.5">Route</label>
+                      <Dropdown
+                        value={selectedRoute()?.id?.toString() || ''}
+                        options={routeOptions()}
+                        onChange={(value) => void route.setActiveRoute(Number.parseInt(value, 10))}
+                        placeholder="Choose route"
+                      />
+                      <p class="text-xs text-muted-foreground mt-1">
+                        These settings apply only to the current route.
+                      </p>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                      <div>
+                        <label class="block text-sm font-medium text-wool-300 mb-1.5">
+                          Time Limit (min)
+                        </label>
+                        <input
+                          type="text"
+                          class="input w-full"
+                          placeholder="No limit"
+                          value={timeLimitMinutes()}
+                          onInput={(event) => {
+                            setTimeLimitMinutes(event.currentTarget.value);
+                            setIsDirty(true);
+                          }}
+                        />
+                        <p class="text-xs text-muted-foreground mt-1">
+                          Maximum runtime for route workers.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label class="block text-sm font-medium text-wool-300 mb-1.5">
+                          Target Branch
+                        </label>
+                        <input
+                          type="text"
+                          class="input w-full"
+                          placeholder="main"
+                          value={targetBranch()}
+                          onInput={(event) => {
+                            setTargetBranch(event.currentTarget.value);
+                            setIsDirty(true);
+                          }}
+                        />
+                        <p class="text-xs text-muted-foreground mt-1">
+                          Delivery branch for pushes, PRs, and merges.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div
+                      role="group"
+                      class="field flex items-start justify-between rounded-none border border-border p-4"
+                    >
+                      <div class="flex flex-col gap-0.5">
+                        <label for="hitl-switch" class="font-medium leading-normal">
+                          Human in the Loop
+                        </label>
+                        <p class="text-muted-foreground text-sm">
+                          Pause when worker concerns require approval or a decision.
+                        </p>
+                      </div>
+                      <input
+                        id="hitl-switch"
+                        type="checkbox"
+                        role="switch"
+                        checked={humanInTheLoop()}
+                        onChange={(event) => {
+                          setHumanInTheLoop(event.currentTarget.checked);
+                          setIsDirty(true);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </section>
+              </div>
+
+              <div class="space-y-6">
+                <section>
+                  <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
+                    <Icon name="book-open" class="w-4 h-4 text-wool-500" />
+                    Repositories on This Route
+                  </h4>
+                  <div class="space-y-4">
+                    <Show when={(selectedRoute()?.repos?.length || 0) > 0}>
+                      <div>
+                        <label class="block text-sm font-medium text-wool-300 mb-1.5">
+                          Default Repo
+                        </label>
+                        <Dropdown
+                          value={defaultRepoId()}
+                          options={repoOptions()}
+                          onChange={(value) => {
+                            setDefaultRepoId(value);
+                            setIsDirty(true);
+                          }}
+                          placeholder="Choose repo"
+                        />
+                      </div>
+                    </Show>
+
+                    <Show when={defaultRepoInfo()}>
+                      <div class="bg-pasture-900 rounded-none p-3 border border-pasture-700">
+                        <div class="flex items-center gap-2 mb-1">
+                          <Icon
+                            name={defaultRepoInfo()?.icon || 'folder'}
+                            class="w-4 h-4 text-amber-400/70"
+                          />
+                          <span class="text-sm font-medium text-wool-200">
+                            {defaultRepoInfo()?.label}
                           </span>
+                        </div>
+                        <Show when={defaultRepoInfo()?.detail}>
+                          <p class="text-xs text-wool-500 pl-6 break-all font-mono">
+                            {defaultRepoInfo()?.detail}
+                          </p>
                         </Show>
                       </div>
-                    )}
-                  </For>
-                </div>
-              </div>
-            </Show>
-
-            {/* Default Repo */}
-            <Show when={defaultRepoInfo()}>
-              <div>
-                <h4 class="text-sm font-medium text-wool-200 mb-3">Default Repo</h4>
-                <div class="bg-pasture-900 rounded-none p-3 border border-pasture-700">
-                  <div class="flex items-center gap-2 mb-1">
-                    <Icon
-                      name={defaultRepoInfo()?.icon || 'folder'}
-                      class="w-4 h-4 text-amber-400/70"
-                    />
-                    <span class="text-sm font-medium text-wool-200">
-                      {defaultRepoInfo()?.label}
-                    </span>
+                    </Show>
                   </div>
-                  <Show when={defaultRepoInfo()?.detail}>
-                    <p class="text-xs text-wool-500 pl-6 break-all font-mono">
-                      {defaultRepoInfo()?.detail}
+                </section>
+
+                <section>
+                  <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
+                    <Icon name="trash-2" class="w-4 h-4 text-wool-500" />
+                    Danger Zone
+                  </h4>
+                  <div class="border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+                    <p class="text-sm text-wool-300">
+                      Delete the project and all associated routes, workers, artifacts, and history.
                     </p>
-                  </Show>
-                </div>
-              </div>
-            </Show>
-
-            {/* Worker Runtime Section */}
-            <div>
-              <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
-                <Icon name="play" class="w-4 h-4 text-wool-500" />
-                Worker Runtime
-              </h4>
-
-              <div class="space-y-4">
-                <div class="grid grid-cols-2 gap-4">
-                  {/* Workers */}
-                  <div>
-                    <label class="block text-sm font-medium text-wool-300 mb-1.5">Workers</label>
-                    <input
-                      type="text"
-                      class="input w-full"
-                      placeholder={configDefaults()?.workerScale || '1'}
-                      value={workerScale()}
-                      onInput={(e) => {
-                        setWorkerScale(e.currentTarget.value);
-                        setIsDirty(true);
-                      }}
-                    />
-                    <p class="text-xs text-muted-foreground mt-1">Number of parallel workers</p>
+                    <button
+                      type="button"
+                      class="btn btn-secondary text-destructive border-destructive/40 hover:bg-destructive/10"
+                      onClick={handleDelete}
+                      disabled={deleting() || saving()}
+                    >
+                      {deleting() ? 'Deleting…' : 'Delete project'}
+                    </button>
                   </div>
-
-                  {/* Time Limit */}
-                  <div>
-                    <label class="block text-sm font-medium text-wool-300 mb-1.5">Time Limit (min)</label>
-                    <input
-                      type="text"
-                      class="input w-full"
-                      placeholder={configDefaults()?.timeLimitMinutes?.toString() || 'No limit'}
-                      value={timeLimitMinutes()}
-                      onInput={(e) => {
-                        setTimeLimitMinutes(e.currentTarget.value);
-                        setIsDirty(true);
-                      }}
-                    />
-                    <p class="text-xs text-muted-foreground mt-1">Maximum worker runtime duration</p>
-                  </div>
-
-                  {/* Runner - Basecoat Dropdown */}
-                  <div>
-                    <label class="block text-sm font-medium text-wool-300 mb-1.5">Runner</label>
-                    <Dropdown
-                      value={runner()}
-                      options={runnerOptions()}
-                      onChange={(value) => {
-                        setRunner(value);
-                        setIsDirty(true);
-                      }}
-                      placeholder={`Default (${runnerPlaceholder()})`}
-                    />
-                    <p class="text-xs text-muted-foreground mt-1">Where workers execute</p>
-                  </div>
-                </div>
-
-                {/* Human in the Loop Toggle - Basecoat Switch pattern */}
-                <div role="group" class="field flex items-start justify-between rounded-none border border-border p-4">
-                  <div class="flex flex-col gap-0.5">
-                    <label for="hitl-switch" class="font-medium leading-normal">Human in the Loop</label>
-                    <p class="text-muted-foreground text-sm">Workers pause for approval on critical actions</p>
-                  </div>
-                  <input
-                    id="hitl-switch"
-                    type="checkbox"
-                    role="switch"
-                    checked={humanInTheLoop()}
-                    onChange={(e) => {
-                      setHumanInTheLoop(e.currentTarget.checked);
-                      setIsDirty(true);
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Delivery Section */}
-            <div>
-              <h4 class="text-sm font-medium text-wool-200 mb-3 flex items-center gap-2">
-                <Icon name="git-merge" class="w-4 h-4 text-wool-500" />
-                Delivery
-              </h4>
-
-              <div>
-                <label class="block text-sm font-medium text-wool-300 mb-1.5">Target Branch</label>
-                <input
-                  type="text"
-                  class="input w-full"
-                  placeholder="main"
-                  value={targetBranch()}
-                  onInput={(e) => {
-                    setTargetBranch(e.currentTarget.value);
-                    setIsDirty(true);
-                  }}
-                />
-                <p class="text-xs text-muted-foreground mt-1">Branch for PRs and merges</p>
+                </section>
               </div>
             </div>
           </div>
 
-          {/* Footer with Save/Cancel */}
           <div class="px-6 py-4 border-t border-pasture-600 flex justify-end gap-2 shrink-0">
             <button
               type="button"
@@ -482,7 +526,7 @@ export const ProjectSettings: Component = () => {
             <button
               type="button"
               class="btn"
-              onClick={handleSave}
+              onClick={() => void handleSave()}
               disabled={deleting() || saving() || !isDirty()}
             >
               {saving() ? 'Saving...' : 'Save'}

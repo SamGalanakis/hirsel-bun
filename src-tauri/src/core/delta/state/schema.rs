@@ -1,7 +1,6 @@
 //! Database schema for board tables
 
 use sqlx::SqlitePool;
-use tokio::sync::OnceCell;
 
 /// Schema for board tables
 ///
@@ -151,39 +150,7 @@ CREATE TABLE IF NOT EXISTS work_item_events (
 CREATE INDEX IF NOT EXISTS idx_work_item_events_item ON work_item_events(project_id, route_id, item_id, created_at DESC);
 "#;
 
-static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
-
 pub async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    SCHEMA_INIT
-        .get_or_try_init(|| async {
-            sqlx::raw_sql(SCHEMA).execute(pool).await?;
-            let _ = sqlx::query("ALTER TABLE board_nodes DROP COLUMN x")
-                .execute(pool)
-                .await;
-            let _ = sqlx::query("ALTER TABLE board_nodes DROP COLUMN y")
-                .execute(pool)
-                .await;
-            let migration = sqlx::query(
-                "ALTER TABLE board_nodes ADD COLUMN difficulty TEXT NOT NULL DEFAULT 'medium'",
-            )
-            .execute(pool)
-            .await;
-            if let Err(e) = migration {
-                let msg = e.to_string().to_ascii_lowercase();
-                if !msg.contains("duplicate column name") && !msg.contains("already exists") {
-                    return Err(e);
-                }
-            }
-            for stmt in [
-                "ALTER TABLE board_nodes ADD COLUMN assigned_agent_kind TEXT",
-                "ALTER TABLE board_nodes ADD COLUMN assigned_agent_id TEXT",
-                "ALTER TABLE board_nodes ADD COLUMN capability_profile TEXT",
-                "ALTER TABLE board_nodes ADD COLUMN archived_at TEXT",
-            ] {
-                let _ = sqlx::query(stmt).execute(pool).await;
-            }
-            Ok::<(), sqlx::Error>(())
-        })
-        .await?;
+    sqlx::raw_sql(SCHEMA).execute(pool).await?;
     Ok(())
 }

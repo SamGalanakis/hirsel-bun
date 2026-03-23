@@ -6,11 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
-use std::collections::HashMap;
 use thiserror::Error;
 use tokio::sync::OnceCell;
 
-use super::{AgentConfig, BackendConfig, Config, GitConfig, LlmConfig, StorageConfig};
+use std::collections::BTreeMap;
+
+use super::{AgentConfig, BackendConfig, Config, LlmConfig, McpServerConfig, StorageConfig};
 use crate::core::db::{global_pool, utc_now};
 use crate::core::runner::RunnerConfig;
 
@@ -56,18 +57,14 @@ pub type ConfigStoreResult<T> = Result<T, ConfigStoreError>;
 pub struct PartialConfig {
     pub agent: Option<AgentConfig>,
     pub eval_timeout: Option<u32>,
-    pub auto_learn: Option<bool>,
     pub human_in_the_loop: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
     pub llm: Option<LlmConfig>,
-    pub runners: Option<HashMap<String, RunnerConfig>>,
-    pub default_runner: Option<Option<String>>,
-    pub worker_runners: Option<HashMap<String, String>>,
+    pub sandbox: Option<RunnerConfig>,
     pub backend: Option<BackendConfig>,
-    pub git: Option<GitConfig>,
+    pub mcp_servers: Option<BTreeMap<String, McpServerConfig>>,
     pub storage: Option<StorageConfig>,
-    pub preferred_ide: Option<Option<String>>,
 }
 
 /// Database-backed configuration store.
@@ -174,9 +171,6 @@ impl ConfigStore {
                         }
                     };
                 }
-                "auto_learn" => {
-                    partial.auto_learn = Some(value == "true");
-                }
                 "human_in_the_loop" => {
                     partial.human_in_the_loop = Some(value == "true");
                 }
@@ -210,27 +204,11 @@ impl ConfigStore {
                         }
                     };
                 }
-                "runners" => {
-                    partial.runners = match serde_json::from_str(&value) {
+                "sandbox" => {
+                    partial.sandbox = match serde_json::from_str(&value) {
                         Ok(v) => Some(v),
                         Err(e) => {
-                            tracing::debug!("Failed to parse config 'runners': {}", e);
-                            None
-                        }
-                    };
-                }
-                "default_runner" => {
-                    if value == "null" || value.is_empty() {
-                        partial.default_runner = Some(None);
-                    } else {
-                        partial.default_runner = Some(Some(value));
-                    }
-                }
-                "worker_runners" => {
-                    partial.worker_runners = match serde_json::from_str(&value) {
-                        Ok(v) => Some(v),
-                        Err(e) => {
-                            tracing::debug!("Failed to parse config 'worker_runners': {}", e);
+                            tracing::debug!("Failed to parse config 'sandbox': {}", e);
                             None
                         }
                     };
@@ -244,11 +222,11 @@ impl ConfigStore {
                         }
                     };
                 }
-                "git" => {
-                    partial.git = match serde_json::from_str(&value) {
+                "mcp_servers" => {
+                    partial.mcp_servers = match serde_json::from_str(&value) {
                         Ok(v) => Some(v),
                         Err(e) => {
-                            tracing::debug!("Failed to parse config 'git': {}", e);
+                            tracing::debug!("Failed to parse config 'mcp_servers': {}", e);
                             None
                         }
                     };
@@ -261,13 +239,6 @@ impl ConfigStore {
                             None
                         }
                     };
-                }
-                "preferred_ide" => {
-                    if value == "null" || value.is_empty() {
-                        partial.preferred_ide = Some(None);
-                    } else {
-                        partial.preferred_ide = Some(Some(value));
-                    }
                 }
                 _ => {
                     // Unknown key, ignore
@@ -287,11 +258,6 @@ impl ConfigStore {
         // Scalar settings
         self.set("eval_timeout", &config.eval_timeout.to_string())
             .await?;
-        self.set(
-            "auto_learn",
-            if config.auto_learn { "true" } else { "false" },
-        )
-        .await?;
         self.set(
             "human_in_the_loop",
             if config.human_in_the_loop {
@@ -315,31 +281,26 @@ impl ConfigStore {
         // Purge deprecated auth config key.
         let _ = self.delete("auth").await;
 
-        // Runners
-        self.set("runners", &serde_json::to_string(&config.runners)?)
+        // Worker sandbox
+        self.set("sandbox", &serde_json::to_string(&config.sandbox)?)
             .await?;
-        match &config.default_runner {
-            Some(runner) => self.set("default_runner", runner).await?,
-            None => self.set("default_runner", "null").await?,
-        }
-        self.set(
-            "worker_runners",
-            &serde_json::to_string(&config.worker_runners)?,
-        )
-        .await?;
 
         // Backend connection
         self.set("backend", &serde_json::to_string(&config.backend)?)
             .await?;
 
-        // Git
-        self.set("git", &serde_json::to_string(&config.git)?)
+        // MCP server imports
+        self.set("mcp_servers", &serde_json::to_string(&config.mcp_servers)?)
             .await?;
 
         // Storage
         self.set("storage", &serde_json::to_string(&config.storage)?)
             .await?;
 
+        let _ = self.delete("auto_learn").await;
+        let _ = self.delete("git").await;
+        let _ = self.delete("preferred_ide").await;
+        let _ = self.delete("scribe_enabled").await;
         let _ = self.delete("scribe_docs_path").await;
         let _ = self.delete("scribe_persist_docs_changes").await;
         let _ = self.delete("service_workers").await;
@@ -347,12 +308,6 @@ impl ConfigStore {
         let _ = self.delete("default_profile").await;
         let _ = self.delete("profiles").await;
         let _ = self.delete("user_message_pause").await;
-
-        // Preferred IDE
-        match &config.preferred_ide {
-            Some(ide) => self.set("preferred_ide", ide).await?,
-            None => self.set("preferred_ide", "null").await?,
-        }
 
         Ok(())
     }

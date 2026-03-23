@@ -8,6 +8,7 @@ use super::types::{
     CreateProjectRequest, Project, ProjectFocusView, ProjectRetainedContext, UpdateProjectRequest,
 };
 use crate::core::db::{global_pool, utc_now};
+use crate::core::draft::StartingPoint;
 use crate::core::route::{CreateMainRouteRequest, RouteStore};
 
 /// Schema for projects table.
@@ -70,6 +71,19 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             }
 
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
+
+            // Additive column migrations (safe to re-run)
+            let has_icon: bool = sqlx::query_scalar(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('projects') WHERE name = 'icon'",
+            )
+            .fetch_one(pool)
+            .await?;
+            if !has_icon {
+                sqlx::query("ALTER TABLE projects ADD COLUMN icon TEXT")
+                    .execute(pool)
+                    .await?;
+            }
+
             Ok::<(), sqlx::Error>(())
         })
         .await?;
@@ -116,6 +130,8 @@ pub enum ProjectError {
     AlreadyExists(String),
     #[error("Route error: {0}")]
     Route(#[from] crate::core::route::RouteError),
+    #[error("Work tree error: {0}")]
+    WorkTree(String),
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 }
@@ -179,11 +195,9 @@ impl ProjectStore {
             .create_main_route_with_seed(&CreateMainRouteRequest {
                 repos: req.repos.clone(),
                 default_repo_index: req.default_repo_index,
-                worker_scale: None,
                 time_limit_minutes: None,
                 human_in_the_loop: None,
                 target_branch: None,
-                runner: None,
             })
             .await?;
 
@@ -194,6 +208,15 @@ impl ProjectStore {
             .execute(pool)
             .await?;
 
+        // Auto-detect icon from repo URL
+        if let Some(icon_url) = detect_icon_from_repos(&req.repos) {
+            let _ = sqlx::query("UPDATE projects SET icon = ? WHERE id = ?")
+                .bind(&icon_url)
+                .bind(project_id)
+                .execute(pool)
+                .await;
+        }
+
         let focus_html = default_project_focus_html(&req.name);
         sqlx::query(
             "INSERT INTO project_focus_views (project_id, html, source, updated_at)
@@ -201,7 +224,7 @@ impl ProjectStore {
         )
         .bind(project_id)
         .bind(focus_html)
-        .bind("seed")
+        .bind("placeholder")
         .bind(utc_now())
         .execute(pool)
         .await?;
@@ -226,7 +249,7 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let row = sqlx::query(
-            "SELECT id, name, created_at, updated_at, description, x, y, active_route_id
+            "SELECT id, name, created_at, updated_at, description, icon, x, y, active_route_id
              FROM projects
              WHERE id = ?",
         )
@@ -243,7 +266,7 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let row = sqlx::query(
-            "SELECT id, name, created_at, updated_at, description, x, y, active_route_id
+            "SELECT id, name, created_at, updated_at, description, icon, x, y, active_route_id
              FROM projects
              WHERE name = ?",
         )
@@ -259,7 +282,7 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let rows = sqlx::query(
-            "SELECT id, name, created_at, updated_at, description, x, y, active_route_id
+            "SELECT id, name, created_at, updated_at, description, icon, x, y, active_route_id
              FROM projects
              ORDER BY created_at DESC",
         )
@@ -324,6 +347,26 @@ impl ProjectStore {
 
         query = query.bind(id);
         query.execute(pool).await?;
+
+        self.get_project(id).await
+    }
+
+    /// Replace only the project's description.
+    pub async fn set_project_description(
+        &self,
+        id: i64,
+        description: Option<&str>,
+    ) -> ProjectResult<Project> {
+        let pool = self.pool().await;
+
+        let _ = self.get_project(id).await?;
+
+        sqlx::query("UPDATE projects SET description = ?, updated_at = ? WHERE id = ?")
+            .bind(description)
+            .bind(utc_now())
+            .bind(id)
+            .execute(pool)
+            .await?;
 
         self.get_project(id).await
     }
@@ -419,7 +462,7 @@ impl ProjectStore {
             })
         } else {
             let html = default_project_focus_html(&project.name);
-            self.update_project_focus_view(id, &html, Some("seed"))
+            self.update_project_focus_view(id, &html, Some("placeholder"))
                 .await
         }
     }
@@ -520,6 +563,21 @@ impl ProjectStore {
         })
     }
 
+    /// Set the project icon URL (or clear it with None).
+    pub async fn set_project_icon(&self, id: i64, icon: Option<&str>) -> ProjectResult<Project> {
+        let pool = self.pool().await;
+        let _ = self.get_project(id).await?;
+
+        sqlx::query("UPDATE projects SET icon = ?, updated_at = ? WHERE id = ?")
+            .bind(icon)
+            .bind(utc_now())
+            .bind(id)
+            .execute(pool)
+            .await?;
+
+        self.get_project(id).await
+    }
+
     fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
         Project {
             id: row.get("id"),
@@ -527,11 +585,94 @@ impl ProjectStore {
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
             description: row.get("description"),
+            icon: row.get("icon"),
             x: row.get("x"),
             y: row.get("y"),
             active_route_id: row.get("active_route_id"),
         }
     }
+}
+
+/// Try to detect a favicon URL from the project's repo configuration.
+///
+/// For GitHub repos, uses the org/user avatar. For other git hosts, uses
+/// Google's favicon service. Local folders check for common favicon paths.
+fn detect_icon_from_repos(repos: &[crate::core::route::CreateRouteRepoRequest]) -> Option<String> {
+    for repo in repos {
+        match &repo.starting_point {
+            StartingPoint::GitRepo { url, .. } => {
+                if let Some(icon) = favicon_from_git_url(url) {
+                    return Some(icon);
+                }
+            }
+            StartingPoint::LocalFolder { path } => {
+                // Check common favicon locations in local repos
+                for candidate in &[
+                    "favicon.ico",
+                    "public/favicon.ico",
+                    "static/favicon.ico",
+                    "src/favicon.ico",
+                    "assets/favicon.ico",
+                ] {
+                    let full = std::path::Path::new(path).join(candidate);
+                    if full.exists() {
+                        return Some(format!("file://{}", full.display()));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract a favicon/avatar URL from a git remote URL.
+fn favicon_from_git_url(url: &str) -> Option<String> {
+    // GitHub: git@github.com:owner/repo.git or https://github.com/owner/repo
+    if url.contains("github.com") {
+        let owner = if let Some(rest) = url.strip_prefix("git@github.com:") {
+            rest.split('/').next()
+        } else {
+            // https://github.com/owner/repo
+            let parts: Vec<&str> = url.split("github.com/").collect();
+            parts.get(1).and_then(|p| p.split('/').next())
+        };
+        if let Some(owner) = owner {
+            let owner = owner.trim_end_matches(".git");
+            if !owner.is_empty() {
+                return Some(format!("https://github.com/{}.png?size=64", owner));
+            }
+        }
+    }
+
+    // GitLab, Bitbucket, etc.: use Google's favicon service
+    let domain = extract_domain(url)?;
+    Some(format!(
+        "https://www.google.com/s2/favicons?domain={}&sz=64",
+        domain
+    ))
+}
+
+/// Extract domain from a git URL (ssh or https).
+fn extract_domain(url: &str) -> Option<&str> {
+    // ssh: git@host:path
+    if let Some(rest) = url.strip_prefix("git@") {
+        return rest.split(':').next();
+    }
+    // https://host/path or ssh://git@host/path
+    if url.contains("://") {
+        let after_scheme = url.split("://").nth(1)?;
+        let after_auth = if after_scheme.contains('@') {
+            after_scheme.split('@').nth(1)?
+        } else {
+            after_scheme
+        };
+        return after_auth
+            .split('/')
+            .next()
+            .map(|h| h.split(':').next().unwrap_or(h));
+    }
+    None
 }
 
 fn default_project_retained_context_markdown(project_name: &str) -> String {

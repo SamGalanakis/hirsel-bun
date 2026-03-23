@@ -21,6 +21,20 @@ pub enum ShepherdScope {
         #[serde(default)]
         focus: Option<ShepherdTaskFocus>,
     },
+    #[serde(rename = "branch")]
+    Branch {
+        #[serde(rename = "projectId")]
+        project_id: i64,
+        #[serde(rename = "branchId")]
+        branch_id: String,
+        #[serde(rename = "parentSessionId")]
+        parent_session_id: String,
+        goal: String,
+        #[serde(rename = "workspacePath", default)]
+        workspace_path: Option<String>,
+        #[serde(default)]
+        focus: Option<ShepherdTaskFocus>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

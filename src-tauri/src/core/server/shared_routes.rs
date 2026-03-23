@@ -136,18 +136,7 @@ pub fn build_config_routes() -> Router<Arc<AppState>> {
                 .put(routes::put_config)
                 .patch(routes::patch_config),
         )
-        // Granular config updates
-        .route("/api/config/general", patch(routes::patch_general_config))
-        .route("/api/config/agent", patch(routes::patch_agent_config))
         .route("/api/config/llm", patch(routes::patch_llm_config))
-        .route("/api/config/runners", get(routes::list_runners))
-        .route(
-            "/api/config/runners/{name}",
-            get(routes::get_runner)
-                .put(routes::put_runner)
-                .delete(routes::delete_runner),
-        )
-        .route("/api/config/git", patch(routes::patch_git_config))
         // Credentials
         .route(
             "/api/credentials/{key}",

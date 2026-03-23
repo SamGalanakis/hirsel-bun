@@ -115,10 +115,13 @@ pub use worker_concerns::{
 };
 pub use workers::{
     check_and_send_time_notifications, check_worker_heartbeats, get_agent_command, is_pid_alive,
-    spawn_worker, update_worker_heartbeat, SpawnResult, WorkerError, WorkerResult, WorkerScale,
+    spawn_worker, update_worker_heartbeat, SpawnResult, WorkerError, WorkerResult,
     WorkerSpawnConfig,
 };
-pub use worktree::{AgentRef, WorkItem, WorkItemTree, WorkTreeSnapshot};
+pub use worktree::{
+    ensure_sync_project_task, AgentRef, EnsureSyncProjectTaskResult, WorkItem, WorkItemTree,
+    WorkTreeSnapshot, SYNC_PROJECT_TASK_TITLE,
+};
 
 // Draft workspace management
 pub use draft::{

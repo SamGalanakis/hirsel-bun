@@ -1,5 +1,6 @@
 export { BaseModal } from './BaseModal';
 export { Icon } from './Icon';
+export { ProjectIcon } from './ProjectIcon';
 export { Markdown } from './Markdown';
 export type { MarkdownProps } from './Markdown';
 export { Toaster } from './Toaster';

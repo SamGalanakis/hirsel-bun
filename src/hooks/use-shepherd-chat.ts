@@ -47,14 +47,25 @@ interface UseShepherdChatReturn {
   messages: ChatMessage[];
   currentMessage: () => Partial<ChatMessage> | null;
   sendMessage: (content: string, images?: ShepherdImageInput[]) => Promise<void>;
+  sendBackgroundPrompt: (
+    content: string,
+    focus?: { taskId: string; taskName: string } | null,
+  ) => Promise<void>;
 
   // Context
   context: () => ShepherdChatContext;
   setFocusNode: (id: string | null, name: string | null) => void;
 
+  // Turn state
+  turnActive: () => boolean;
+  cancelTurn: () => Promise<void>;
+
   // Status
   shepherdEditing: () => boolean;
   editingIslands: () => Set<string>;
+
+  // Queue
+  queuedCount: () => number;
 
   // History
   clearHistory: () => Promise<void>;
@@ -80,6 +91,14 @@ export function useShepherdChat(
 
   const [messages, setMessages] = createStore<ChatMessage[]>([]);
   const [currentMessage, setCurrentMessage] = createSignal<Partial<ChatMessage> | null>(null);
+
+  // Turn state
+  const [turnActive, setTurnActive] = createSignal(false);
+
+  // Message queue (for when turn is active)
+  const [queuedMessages, setQueuedMessages] = createSignal<
+    Array<{ text: string; images: ShepherdImageInput[] }>
+  >([]);
 
   // Editing state
   const [shepherdEditing, setShepherdEditing] = createSignal(false);
@@ -342,6 +361,15 @@ export function useShepherdChat(
         lastChunkType = null;
         setShepherdEditing(false);
         setEditingIslands(new Set<string>());
+        setTurnActive(false);
+
+        // Drain message queue
+        const queued = queuedMessages();
+        if (queued.length > 0) {
+          const [next, ...rest] = queued;
+          setQueuedMessages(rest);
+          void sendMessage(next.text, next.images);
+        }
         break;
       }
 
@@ -352,6 +380,7 @@ export function useShepherdChat(
         toolsById.clear();
         lastChunkType = null;
         setShepherdEditing(false);
+        setTurnActive(false);
         break;
       }
 
@@ -466,15 +495,30 @@ export function useShepherdChat(
     setConnected(false);
     setSessionId(null);
     setCurrentMessage(null);
+    setFocusNodeIdState(null);
+    setFocusNodeNameState(null);
     setShepherdEditing(false);
     setEditingIslands(new Set<string>());
+    setTurnActive(false);
+    setQueuedMessages([]);
     toolsById.clear();
     lastChunkType = null;
     // Clear messages to prevent stale UI during project transitions
     setMessages([]);
   };
 
-  // Send message
+  // Cancel active turn (without destroying the session)
+  const cancelTurn = async () => {
+    const sid = sessionId();
+    if (!sid || !turnActive()) return;
+    try {
+      await invoke('cancel_shepherd_turn', { sessionId: sid });
+    } catch (e) {
+      console.error('[shepherd-chat] Failed to cancel turn:', e);
+    }
+  };
+
+  // Send message (or queue if a turn is active)
   const sendMessage = async (content: string, images: ShepherdImageInput[] = []) => {
     const sid = sessionId();
     const ctx = context();
@@ -482,6 +526,26 @@ export function useShepherdChat(
 
     if (!sid || !connected() || (!text && images.length === 0)) {
       window.toast?.error('Not connected to Shepherd');
+      return;
+    }
+
+    // Queue if a turn is already active
+    if (turnActive()) {
+      setQueuedMessages((prev) => [...prev, { text, images }]);
+      // Still show the user message in the UI
+      const queuedUserMsg: ChatMessage = {
+        id: `user-${Date.now()}`,
+        role: 'user',
+        content: text,
+        images: images.map((image) => ({
+          src: `data:${image.mimeType};base64,${image.dataBase64}`,
+          mimeType: image.mimeType,
+          name: image.name,
+          dataBase64: image.dataBase64,
+        })),
+        timestamp: new Date(),
+      };
+      setMessages(produce((msgs) => msgs.push(queuedUserMsg)));
       return;
     }
 
@@ -501,6 +565,7 @@ export function useShepherdChat(
     setMessages(produce((msgs) => msgs.push(userMessage)));
 
     // Initialize streaming state
+    setTurnActive(true);
     setCurrentMessage({ id: `msg-${Date.now()}`, role: 'assistant', streaming: true });
 
     try {
@@ -529,6 +594,35 @@ export function useShepherdChat(
       console.error('[shepherd-chat] Failed to send message:', e);
       window.toast?.error(`Failed to send message: ${errorMessage(e)}`);
       setCurrentMessage(null);
+    }
+  };
+
+  const sendBackgroundPrompt = async (
+    content: string,
+    focus?: { taskId: string; taskName: string } | null,
+  ) => {
+    const sid = sessionId();
+    const text = content.trim();
+
+    if (!sid || !connected() || !text) {
+      window.toast?.error('Not connected to Shepherd');
+      return;
+    }
+
+    setTurnActive(true);
+    setCurrentMessage({ id: `msg-${Date.now()}`, role: 'assistant', streaming: true });
+
+    try {
+      await invoke('run_shepherd_background_prompt', {
+        sessionId: sid,
+        content: text,
+        focus: focus ?? null,
+      });
+    } catch (e) {
+      console.error('[shepherd-chat] Failed to send background prompt:', e);
+      window.toast?.error(`Failed to start task: ${errorMessage(e)}`);
+      setCurrentMessage(null);
+      setTurnActive(false);
     }
   };
 
@@ -571,10 +665,14 @@ export function useShepherdChat(
     messages,
     currentMessage,
     sendMessage,
+    sendBackgroundPrompt,
     context,
     setFocusNode,
+    turnActive,
+    cancelTurn,
     shepherdEditing,
     editingIslands,
+    queuedCount: () => queuedMessages().length,
     clearHistory,
     reset,
   };

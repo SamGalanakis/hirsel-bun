@@ -3,7 +3,6 @@
 //! Commands for listing, creating, and managing projects for SpecFlow boards.
 
 use super::ResultExt;
-use crate::core::config;
 use crate::core::delta::DeltaState;
 use crate::core::draft::StartingPoint;
 use crate::core::project::{
@@ -11,8 +10,7 @@ use crate::core::project::{
     ProjectRetainedContext, ProjectStore, ProjectSurfaceSnapshot, RouteSummary,
     UpdateProjectRequest,
 };
-use crate::core::route::{CreateRouteRepoRequest, RouteStore, UpdateRouteSettingsRequest};
-use crate::core::SQLiteState;
+use crate::core::route::{CreateRouteRepoRequest, RouteStore};
 use tauri::Emitter;
 
 /// List all projects, sorted by most recently created
@@ -172,7 +170,6 @@ pub async fn create_project_from_path(
             name: Some("local".to_string()),
             starting_point: StartingPoint::LocalFolder { path },
             target_branch: Some("main".to_string()),
-            runner: None,
         }],
         default_repo_index: Some(0),
         description: None,
@@ -224,24 +221,14 @@ pub async fn create_project(
     Ok(project)
 }
 
-/// Update a project's metadata and route-specific run configuration.
-///
-/// Project fields updated here: x/y, description.
-/// Route fields updated here: worker_scale, time_limit_minutes, human_in_the_loop,
-/// target_branch, runner.
+/// Update project metadata only.
 #[tracing::instrument]
 #[tauri::command]
-pub async fn update_project(
+pub async fn update_project_metadata(
     project_id: i64,
-    route_id: i64,
     x: Option<f64>,
     y: Option<f64>,
     description: Option<String>,
-    target_branch: Option<String>,
-    worker_scale: Option<String>,
-    time_limit_minutes: Option<i64>,
-    human_in_the_loop: Option<bool>,
-    runner: Option<String>,
 ) -> Result<Project, String> {
     let project_req = UpdateProjectRequest {
         name: None,
@@ -256,104 +243,21 @@ pub async fn update_project(
         .await
         .str_err()?;
 
-    let route_store = RouteStore::new(project_id).await.str_err()?;
-    route_store
-        .update_route_settings(
-            route_id,
-            &UpdateRouteSettingsRequest {
-                worker_scale: worker_scale.clone(),
-                time_limit_minutes,
-                human_in_the_loop,
-                target_branch,
-                runner,
-            },
-        )
-        .await
-        .str_err()?;
-
-    if worker_scale.is_some() || time_limit_minutes.is_some() || human_in_the_loop.is_some() {
-        if let Err(e) = propagate_settings_to_active_run(
-            project_id,
-            route_id,
-            &worker_scale,
-            time_limit_minutes,
-            human_in_the_loop,
-        )
-        .await
-        {
-            tracing::warn!(
-                "Failed to propagate settings to active run for project {} route {}: {}",
-                project_id,
-                route_id,
-                e
-            );
-        }
-    }
-
     Ok(project)
 }
 
-/// Propagate route settings to the active run's state
-async fn propagate_settings_to_active_run(
+/// Replace the project description.
+#[tracing::instrument]
+#[tauri::command]
+pub async fn update_project_description(
     project_id: i64,
-    route_id: i64,
-    worker_scale: &Option<String>,
-    time_limit_minutes: Option<i64>,
-    human_in_the_loop: Option<bool>,
-) -> Result<(), String> {
-    let delta_state = DeltaState::with_route(project_id, route_id);
-    let project_run = delta_state.get_route_runtime().await.str_err()?;
-
-    let Some(run) = project_run else {
-        return Ok(());
-    };
-
-    let runtime_dir = config::runtime_dir(&run.runtime_name);
-    let db_path = runtime_dir.join("hirsel.db");
-
-    if !db_path.exists() {
-        return Ok(());
-    }
-
-    let state = SQLiteState::new(&run.runtime_name).await.str_err()?;
-
-    if let Some(scale) = worker_scale {
-        state
-            .set_worker_scale(scale)
-            .await
-            .context("Failed to set worker_scale")?;
-        tracing::info!(
-            "Propagated worker_scale={} to run {}",
-            scale,
-            run.runtime_name
-        );
-    }
-
-    if let Some(limit) = time_limit_minutes {
-        state
-            .set_time_limit_minutes(Some(limit))
-            .await
-            .context("Failed to set time_limit_minutes")?;
-        tracing::info!(
-            "Propagated time_limit_minutes={} to run {}",
-            limit,
-            run.runtime_name
-        );
-    }
-
-    if let Some(hitl) = human_in_the_loop {
-        state
-            .set_human_in_the_loop(hitl)
-            .await
-            .context("Failed to set human_in_the_loop")?;
-        tracing::info!(
-            "Propagated human_in_the_loop={} to run {}",
-            hitl,
-            run.runtime_name
-        );
-    }
-
-    Ok(())
+    description: Option<String>,
+) -> Result<Project, String> {
+    let store = ProjectStore::open().await.str_err()?;
+    store
+        .set_project_description(project_id, description.as_deref())
+        .await
+        .str_err()
 }
 
 /// Update a project's name
@@ -370,6 +274,17 @@ pub async fn update_project_name(project_id: i64, name: String) -> Result<Projec
     };
 
     store.update_project(project_id, &req).await.str_err()
+}
+
+/// Update a project's icon URL
+#[tracing::instrument]
+#[tauri::command]
+pub async fn update_project_icon(project_id: i64, icon: Option<String>) -> Result<Project, String> {
+    let store = ProjectStore::open().await.str_err()?;
+    store
+        .set_project_icon(project_id, icon.as_deref())
+        .await
+        .str_err()
 }
 
 /// Delete a project and all associated data

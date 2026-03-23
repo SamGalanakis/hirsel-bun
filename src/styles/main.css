@@ -1,7 +1,6 @@
 @import "tailwindcss";
 @import "basecoat-css";
 @plugin "@tailwindcss/typography";
-@import url('https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,600;1,6..72,200;1,6..72,300;1,6..72,400;1,6..72,600&family=Space+Grotesk:wght@300;400;500;600;700&display=swap');
 
 /* Fix tooltip truncation - allow wrapping, wider, and prevent clipping */
 [data-tooltip]::before {
@@ -415,7 +414,7 @@ button {
 
 /* Title bar - draggable region */
 .title-bar {
-  background-color: var(--pasture-800);
+  background-color: var(--pasture-900);
   -webkit-app-region: drag;
 }
 
@@ -662,12 +661,12 @@ button {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--pasture-900);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -676,7 +675,7 @@ button {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--pasture-700);
+  background: var(--wool-700);
 }
 
 /* Hide scrollbar utility */
@@ -694,6 +693,12 @@ button {
   transition-property: color, background-color, border-color;
   transition-timing-function: ease-out;
   transition-duration: 150ms;
+}
+
+/* Status bar */
+.status-bar {
+  background-color: var(--pasture-900);
+  min-height: 24px;
 }
 
 /* Selection */

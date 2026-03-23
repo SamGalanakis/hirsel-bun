@@ -58,8 +58,8 @@ pub fn default_project_focus_html(project_name: &str) -> String {
     <style>
       :root {{
         --bg: #151814;
-        --panel: rgba(28, 33, 29, 0.94);
-        --panel-soft: rgba(38, 44, 39, 0.92);
+        --panel: rgba(24, 28, 25, 0.94);
+        --panel-soft: rgba(32, 37, 33, 0.92);
         --line: rgba(224, 214, 194, 0.12);
         --text: #efe7d5;
         --muted: #b9ad98;
@@ -78,19 +78,21 @@ pub fn default_project_focus_html(project_name: &str) -> String {
           linear-gradient(180deg, #1b1f1b 0%, var(--bg) 100%);
         color: var(--text);
       }}
-      main {{ max-width: 1180px; margin: 0 auto; padding: 24px 22px 34px; }}
-      .hero {{
+      main {{
+        min-height: 100vh;
         display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
-        gap: 14px;
-        margin-bottom: 14px;
+        place-items: center;
+        padding: 28px 20px;
       }}
       .card {{
         border: 1px solid var(--line);
-        border-radius: 16px;
-        background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-        padding: 18px;
-        box-shadow: 0 18px 32px rgba(0,0,0,0.20);
+        border-radius: 24px;
+        background:
+          linear-gradient(180deg, rgba(255,255,255,0.025), rgba(255,255,255,0.012)),
+          rgba(19, 23, 20, 0.82);
+        padding: 28px;
+        width: min(760px, 100%);
+        box-shadow: 0 24px 80px rgba(0,0,0,0.22);
       }}
       .eyebrow {{
         color: var(--accent);
@@ -99,10 +101,14 @@ pub fn default_project_focus_html(project_name: &str) -> String {
         text-transform: uppercase;
         margin-bottom: 10px;
       }}
-      h1 {{ margin: 0 0 8px; font-size: clamp(30px, 5vw, 52px); line-height: 0.95; }}
-      h2 {{ margin: 0 0 10px; font-size: 17px; }}
-      p {{ margin: 0; color: var(--muted); line-height: 1.5; }}
-      .meta {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }}
+      h1 {{ margin: 0; font-size: clamp(34px, 5vw, 56px); line-height: 0.96; }}
+      p {{ margin: 0; color: var(--muted); line-height: 1.6; }}
+      .lede {{
+        margin-top: 14px;
+        max-width: 44rem;
+        font-size: 18px;
+      }}
+      .meta {{ display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }}
       .pill {{
         padding: 6px 10px;
         border-radius: 999px;
@@ -111,48 +117,23 @@ pub fn default_project_focus_html(project_name: &str) -> String {
         color: var(--muted);
         font-size: 12px;
       }}
-      .grid {{
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 14px;
-      }}
-      .section-label {{
-        margin: 0 0 10px;
-        color: var(--muted);
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.14em;
+      .placeholder {{
+        margin-top: 24px;
+        border: 1px dashed var(--line);
+        border-radius: 18px;
+        padding: 18px 18px 16px;
+        background: rgba(0, 0, 0, 0.08);
       }}
       ul {{
-        margin: 0;
+        margin: 12px 0 0;
         padding-left: 18px;
         color: var(--muted);
       }}
       li + li {{ margin-top: 7px; }}
-      .callout {{
-        border-left: 3px solid var(--accent);
-        padding-left: 12px;
-        color: var(--text);
-      }}
-      .code {{
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 12px;
-        color: var(--sky);
-      }}
-      .mermaid {{
-        min-height: 240px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 14px;
-        border: 1px dashed var(--line);
-        background: rgba(0,0,0,0.10);
-        padding: 12px;
-        overflow: auto;
-      }}
       @media (max-width: 900px) {{
-        .hero, .grid {{ grid-template-columns: 1fr; }}
-        main {{ padding: 18px 14px 24px; }}
+        main {{ padding: 16px 12px; }}
+        .card {{ padding: 22px 18px; border-radius: 20px; }}
+        .lede {{ font-size: 16px; }}
       }}
     </style>
   </head>
@@ -163,98 +144,30 @@ pub fn default_project_focus_html(project_name: &str) -> String {
       Prefer compact synthesis, comparisons, diagrams, and next-meaningful-state framing.
     -->
     <main>
-      <section class="hero">
-        <article class="card">
-          <div class="eyebrow">Project Focus View</div>
-          <h1>Current Picture</h1>
-          <p class="callout">
-            Keep this page calm, legible, and current. Show what matters now, not raw execution
-            chatter.
+      <article class="card">
+        <div class="eyebrow">Project Focus View</div>
+        <h1>Ready when you are.</h1>
+        <p class="lede">
+          This surface starts intentionally empty. Once it has been edited, it should illustrate
+          what matters now with concise status, route comparisons, diagrams, and decisions.
+        </p>
+        <div class="meta">
+          <span class="pill">Primary surface</span>
+          <span class="pill">Mermaid ready</span>
+          <span class="pill">No duplicate chrome</span>
+        </div>
+        <section class="placeholder">
+          <p>
+            Use this space for synthesis, not raw logs. Show the current picture only after the
+            project has real context worth presenting.
           </p>
-          <div class="meta">
-            <span class="pill">Primary surface</span>
-            <span class="pill">Machinery on demand</span>
-            <span class="pill">Mermaid ready</span>
-          </div>
-        </article>
-        <article class="card">
-          <div class="eyebrow">Editing Rules</div>
           <ul>
-            <li>Keep the overall structure stable unless the project meaning truly changed.</li>
-            <li>Do not restate obvious shell context like the project title or route picker.</li>
-            <li>Prefer short bullets, compact status language, and diagrams over long prose.</li>
-            <li>Use Mermaid blocks for flows, route comparisons, and architecture snapshots.</li>
-            <li>Leave low-level worker activity to machinery, not this page.</li>
+            <li>Prefer current goal, route differences, decisions, and open questions.</li>
+            <li>Skip obvious shell context like the project title or route picker.</li>
+            <li>Use Mermaid only when a diagram clarifies something materially.</li>
           </ul>
-        </article>
-      </section>
-
-      <section class="grid">
-        <article class="card">
-          <div class="section-label">Now</div>
-          <h2>Current Pursuit</h2>
-          <ul>
-            <li>Replace this with the active project goal in one sentence.</li>
-            <li>Call out the selected route if route choice matters right now.</li>
-            <li>Note the nearest decision, proof, or delivery milestone.</li>
-          </ul>
-        </article>
-
-        <article class="card">
-          <div class="section-label">Routes</div>
-          <h2>Active Route Picture</h2>
-          <ul>
-            <li><span class="code">main</span> is the default route.</li>
-            <li>Add other active routes only when they materially differ.</li>
-            <li>Archive routes instead of leaving stale comparisons here.</li>
-          </ul>
-        </article>
-
-        <article class="card">
-          <div class="section-label">Meaning</div>
-          <h2>Decisions And Constraints</h2>
-          <ul>
-            <li>Document stable choices that should survive route churn.</li>
-            <li>Keep constraints crisp: interfaces, boundaries, deployment assumptions.</li>
-            <li>If a choice is provisional, move it to questions instead.</li>
-          </ul>
-        </article>
-
-        <article class="card">
-          <div class="section-label">Risk</div>
-          <h2>Open Questions</h2>
-          <ul>
-            <li>What still needs user input, proof, or comparison?</li>
-            <li>Which route or experiment is intended to answer it?</li>
-            <li>What would change the plan materially?</li>
-          </ul>
-        </article>
-
-        <article class="card">
-          <div class="section-label">Proof</div>
-          <h2>Validation</h2>
-          <ul>
-            <li>State what “done” means for the current push.</li>
-            <li>Prefer observable checks: build, behavior, contract, delivery readiness.</li>
-            <li>Keep this aligned with the actual execution path.</li>
-          </ul>
-        </article>
-
-        <article class="card">
-          <div class="section-label">Map</div>
-          <h2>Project Shape</h2>
-          <div class="mermaid">
-flowchart TD
-  U[User] --> F[Front Desk]
-  F --> O[Orchestrators]
-  O --> W[Workers]
-  O --> R[Routes]
-  W --> M[Route Memory]
-  O --> D[Project Docs]
-  F --> P[Project Focus View]
-          </div>
-        </article>
-      </section>
+        </section>
+      </article>
     </main>
     <script type="module">
       import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';

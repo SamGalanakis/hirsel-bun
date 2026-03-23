@@ -46,10 +46,6 @@ pub struct ScribeBatchResult {
 /// - The batch window has expired (batch_started_at + window < now)
 /// - No batch is currently processing
 pub async fn should_process_batch(state: &SQLiteState, config: &Config) -> bool {
-    if !config.scribe_enabled {
-        return false;
-    }
-
     if let Ok(Some(_)) = state.get_processing_scribe_batch().await {
         return false;
     }

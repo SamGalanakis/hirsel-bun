@@ -20,6 +20,12 @@ import type { Route } from '../lib/types';
 // Types
 // =============================================================================
 
+interface RouteSettingsUpdate {
+  timeLimitMinutes: number | null;
+  humanInTheLoop: boolean;
+  targetBranch: string | null;
+}
+
 interface RouteContextValue {
   routes: () => Route[];
   archivedRoutes: () => Route[];
@@ -35,6 +41,11 @@ interface RouteContextValue {
     parentVersionId?: number | null
   ) => Promise<Route | null>;
   archiveRoute: (routeId: number) => Promise<boolean>;
+  updateRouteSettings: (
+    routeId: number,
+    settings: RouteSettingsUpdate
+  ) => Promise<Route | null>;
+  setDefaultRouteRepo: (routeId: number, repoId: number) => Promise<Route | null>;
 }
 
 // =============================================================================
@@ -160,6 +171,53 @@ export const RouteProvider: ParentComponent = (props) => {
     }
   };
 
+  const updateRouteSettings = async (
+    routeId: number,
+    settings: RouteSettingsUpdate
+  ): Promise<Route | null> => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return null;
+
+    try {
+      const updated = await invoke<Route>('update_route_settings', {
+        projectId,
+        routeId,
+        timeLimitMinutes: settings.timeLimitMinutes,
+        humanInTheLoop: settings.humanInTheLoop,
+        targetBranch: settings.targetBranch,
+      });
+
+      await loadRoutes();
+
+      return updated;
+    } catch (e) {
+      console.error('Failed to update route settings:', e);
+      window.toast?.error(`Failed to update route settings: ${e}`);
+      return null;
+    }
+  };
+
+  const setDefaultRouteRepo = async (routeId: number, repoId: number): Promise<Route | null> => {
+    const projectId = project.selectedProjectId();
+    if (!projectId) return null;
+
+    try {
+      const updated = await invoke<Route>('set_default_route_repo', {
+        projectId,
+        routeId,
+        repoId,
+      });
+
+      await loadRoutes();
+
+      return updated;
+    } catch (e) {
+      console.error('Failed to set default route repo:', e);
+      window.toast?.error(`Failed to set default repo: ${e}`);
+      return null;
+    }
+  };
+
   createEffect(() => {
     const projectId = project.selectedProjectId();
     if (projectId) {
@@ -184,6 +242,8 @@ export const RouteProvider: ParentComponent = (props) => {
     setActiveRoute,
     createRoute,
     archiveRoute,
+    updateRouteSettings,
+    setDefaultRouteRepo,
   };
 
   return <RouteContext.Provider value={value}>{props.children}</RouteContext.Provider>;

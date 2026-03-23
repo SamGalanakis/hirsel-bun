@@ -3,60 +3,44 @@
  */
 
 export type SettingsTab = 'appearance' | 'shortcuts' | 'backend' | 'about';
-export type BackendSection =
-  | 'connection'
-  | 'agents'
-  | 'runners'
-  | 'defaults'
-  | 'git'
-  | 'data'
-  | 'services';
-
-export interface RunnerContainer {
-  image: string;
-}
-
-export interface Runner {
-  container?: RunnerContainer;
-}
+export type BackendSection = 'connection' | 'llm' | 'services';
 
 export interface BackendConnection {
   url: string;
   apiKey?: string;
 }
 
-// Storage config
-export interface StorageConfig {
-  provider: 's3' | 'minio';
-  endpoint?: string;
-  bucket: string;
-  region?: string;
-  accessKeyId?: string;
-  secretAccessKey?: string;
-}
-
 export interface Settings {
-  evalTimeout: number;
-  humanInTheLoop: boolean;
-  autoLearn: boolean;
-  contextWarningThreshold: number;
-  coordinatorPort: number;
   backend: BackendConnection;
-  runners: Record<string, Runner>;
-  defaultRunner?: string;
-  storage?: {
-    defaultStorage?: string;
-    configs: Record<string, StorageConfig>;
-  };
-  git?: {
-    configuredProviders?: string[];
-    defaultProvider?: string;
-  };
-  tavilyConfigured?: boolean;
   llm?: {
     provider?: 'codex' | 'openrouter';
     openrouterBaseUrl?: string;
   };
+  mcpServersText: string;
+}
+
+export interface McpStdioServerConfig {
+  transport: 'stdio';
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  cwd?: string | null;
+  startupTimeoutMs?: number;
+  callTimeoutMs?: number;
+}
+
+export type McpServerConfig = McpStdioServerConfig;
+
+export interface SettingsResponse {
+  backend?: BackendConnection;
+  llm?: Settings['llm'];
+  mcpServers?: Record<string, McpServerConfig>;
+}
+
+export interface SettingsSaveRequest {
+  backend: BackendConnection;
+  llm?: Settings['llm'];
+  mcpServers: Record<string, McpServerConfig>;
 }
 
 export interface BackendHealth {
@@ -83,18 +67,13 @@ export interface CodexDeviceExchangeResponse {
 }
 
 export const defaultSettings = (): Settings => ({
-  evalTimeout: 300,
-  humanInTheLoop: true,
-  autoLearn: false,
-  contextWarningThreshold: 0.5,
-  coordinatorPort: 19700,
   backend: {
     url: '',
     apiKey: '',
   },
-  runners: {},
   llm: {
     provider: 'codex',
     openrouterBaseUrl: '',
   },
+  mcpServersText: '',
 });

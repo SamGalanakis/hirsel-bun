@@ -437,34 +437,6 @@ pub async fn check_and_send_time_notifications(
 }
 
 // =============================================================================
-// Dynamic Worker Scaling
-// =============================================================================
-
-/// Configuration for worker scaling
-/// Workers is just a max count - always starts with 1 and autoscales up.
-#[derive(Debug, Clone)]
-pub struct WorkerScale {
-    pub max: usize,
-}
-
-impl WorkerScale {
-    /// Parse a scale string - just an integer for max workers.
-    pub fn parse(s: &str) -> Option<Self> {
-        // Just a number = max workers
-        let max = s.trim().parse().ok()?;
-        if max < 1 {
-            return None;
-        }
-        Some(Self { max })
-    }
-
-    /// Check if we can scale up from current count
-    pub fn can_scale_up(&self, current: usize) -> bool {
-        current < self.max
-    }
-}
-
-// =============================================================================
 // Worker Reconciliation (Startup)
 // =============================================================================
 

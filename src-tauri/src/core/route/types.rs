@@ -14,7 +14,6 @@ pub struct RouteRepo {
     pub name: String,
     pub starting_point: StartingPoint,
     pub target_branch: Option<String>,
-    pub runner: Option<String>,
     pub is_archived: bool,
     pub created_at: String,
     pub updated_at: String,
@@ -29,8 +28,6 @@ pub struct CreateRouteRepoRequest {
     pub starting_point: StartingPoint,
     #[serde(default)]
     pub target_branch: Option<String>,
-    #[serde(default)]
-    pub runner: Option<String>,
 }
 
 /// Request to update a route repo
@@ -44,25 +41,16 @@ pub struct UpdateRouteRepoRequest {
     #[serde(default)]
     pub target_branch: Option<String>,
     #[serde(default)]
-    pub runner: Option<String>,
-    #[serde(default)]
     pub is_archived: Option<bool>,
 }
 
 /// Route-level execution and delivery settings.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateRouteSettingsRequest {
-    #[serde(default)]
-    pub worker_scale: Option<String>,
-    #[serde(default)]
     pub time_limit_minutes: Option<i64>,
-    #[serde(default)]
-    pub human_in_the_loop: Option<bool>,
-    #[serde(default)]
+    pub human_in_the_loop: bool,
     pub target_branch: Option<String>,
-    #[serde(default)]
-    pub runner: Option<String>,
 }
 
 /// A route within a project (parallel exploration branch)
@@ -80,11 +68,9 @@ pub struct Route {
     pub updated_at: String,
     pub repos: Vec<RouteRepo>,
     pub default_repo_id: Option<i64>,
-    pub worker_scale: Option<String>,
     pub time_limit_minutes: Option<i64>,
     pub human_in_the_loop: bool,
     pub target_branch: Option<String>,
-    pub runner: Option<String>,
     pub archived_at: Option<String>,
 }
 
@@ -132,13 +118,9 @@ pub struct CreateMainRouteRequest {
     #[serde(default)]
     pub default_repo_index: Option<usize>,
     #[serde(default)]
-    pub worker_scale: Option<String>,
-    #[serde(default)]
     pub time_limit_minutes: Option<i64>,
     #[serde(default)]
     pub human_in_the_loop: Option<bool>,
     #[serde(default)]
     pub target_branch: Option<String>,
-    #[serde(default)]
-    pub runner: Option<String>,
 }

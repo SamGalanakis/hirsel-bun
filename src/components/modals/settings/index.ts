@@ -12,5 +12,8 @@ export type {
   BackendSection,
   Settings,
   BackendHealth,
+  McpServerConfig,
+  SettingsResponse,
+  SettingsSaveRequest,
 } from './types';
 export { defaultSettings } from './types';

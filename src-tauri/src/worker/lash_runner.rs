@@ -19,7 +19,17 @@ use super::common::{build_worker_prompt, WorkerRunConfig};
 use super::runner::{WorkerConfig, WorkerRunner};
 use crate::core::state::{SQLiteState, ToolCallStatus};
 use crate::core::{llm_provider, Config};
-use crate::lash_tools::embedded_tool_plugin_factories;
+use crate::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
+
+macro_rules! tool_definition {
+    ($($field:tt)*) => {
+        ToolDefinition {
+            $($field)*
+            input_schema_override: None,
+            output_schema_override: None,
+        }
+    };
+}
 
 struct WorkerToolProvider {
     runner: Arc<WorkerRunner>,
@@ -83,7 +93,7 @@ impl WorkerToolProvider {
 impl ToolProvider for WorkerToolProvider {
     fn definitions(&self) -> Vec<ToolDefinition> {
         vec![
-            ToolDefinition {
+            tool_definition! {
                 name: "get_task_tree".into(),
                 description: "Get full task tree with status/dependencies".into(),
                 params: vec![],
@@ -92,7 +102,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "get_available_tasks".into(),
                 description: "Get tasks ready to work on".into(),
                 params: vec![],
@@ -101,7 +111,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "get_my_tasks".into(),
                 description: "Get currently assigned tasks".into(),
                 params: vec![],
@@ -110,7 +120,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "get_task_details".into(),
                 description: "Get details for a specific task".into(),
                 params: vec![ToolParam::typed("task_id", "str")],
@@ -119,7 +129,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "complete_task".into(),
                 description: "Complete task and end worker turn".into(),
                 params: vec![ToolParam::optional("task_id", "str")],
@@ -128,7 +138,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "add_task".into(),
                 description: "Add a task".into(),
                 params: vec![
@@ -142,7 +152,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "add_check".into(),
                 description: "Add a check node".into(),
                 params: vec![
@@ -156,7 +166,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "delete_task".into(),
                 description: "Delete worker-created task".into(),
                 params: vec![ToolParam::typed("task_id", "str")],
@@ -165,7 +175,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "report_progress".into(),
                 description: "Report important progress upward to the orchestrator without blocking execution.".into(),
                 params: vec![
@@ -177,7 +187,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "raise_concern".into(),
                 description: "Raise a structured concern to the orchestrator. Use this when you hit a blocker, detect risk, or want review. Set blocking=true if you need a decision before continuing.".into(),
                 params: vec![
@@ -192,7 +202,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "request_decision".into(),
                 description: "Escalate a decision that requires orchestrator or user input. This pauses your work until the orchestrator resolves it.".into(),
                 params: vec![
@@ -204,7 +214,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "scribe".into(),
                 description: "Record durable project context".into(),
                 params: vec![ToolParam::typed("content", "str")],
@@ -213,7 +223,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "read_retained_context".into(),
                 description: "Read retained project context".into(),
                 params: vec![],
@@ -222,7 +232,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "work_done".into(),
                 description: "Complete work, exit, and return control to the orchestrator".into(),
                 params: vec![],
@@ -231,7 +241,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "time_status".into(),
                 description: "Get time limit status".into(),
                 params: vec![],
@@ -240,7 +250,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "check_pass".into(),
                 description: "Pass current check".into(),
                 params: vec![],
@@ -249,7 +259,7 @@ impl ToolProvider for WorkerToolProvider {
                 enabled: true,
                 injected: true,
             },
-            ToolDefinition {
+            tool_definition! {
                 name: "check_fail".into(),
                 description: "Fail current check with feedback".into(),
                 params: vec![ToolParam::typed("feedback", "str")],
@@ -550,10 +560,16 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
         Arc::clone(&worker_tools),
         tavily_api_key,
     );
-    let plugin_host = PluginHost::new(plugin_factories);
+    let plugin_host = PluginHost::new(plugin_factories).with_dynamic_tools();
     let root_plugins = plugin_host
         .build_session("root", execution_mode, None)
         .map_err(|e| anyhow::anyhow!("failed to build worker tool session: {}", e))?;
+    let dynamic_tools = root_plugins
+        .dynamic_tools()
+        .ok_or_else(|| anyhow::anyhow!("worker dynamic tool provider was not initialized"))?;
+    attach_embedded_mcp_servers(&dynamic_tools, &hirsel_config.mcp_servers)
+        .await
+        .map_err(anyhow::Error::msg)?;
     let session_policy = SessionPolicy {
         model: model.clone(),
         provider,

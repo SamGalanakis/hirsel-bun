@@ -14,6 +14,10 @@ pub struct Project {
     pub updated_at: String,
     pub description: Option<String>,
 
+    /// Icon URL (favicon, avatar, etc.) or null for auto-generated initials
+    #[serde(default)]
+    pub icon: Option<String>,
+
     // Canvas position (for OneBoard portfolio view)
     pub x: Option<f64>,
     pub y: Option<f64>,

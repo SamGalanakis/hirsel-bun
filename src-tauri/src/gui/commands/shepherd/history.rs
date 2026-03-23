@@ -249,6 +249,7 @@ pub(super) async fn load_scope_messages(
             .get_project_messages(*project_id, limit)
             .await
             .str_err()?,
+        ShepherdScope::Branch { .. } => Vec::new(),
     };
 
     if !matches!(scope, ShepherdScope::Project { .. }) && messages.len() > limit {
@@ -271,6 +272,9 @@ pub(super) async fn save_message(
             .save_project_message(*project_id, role, chunks_json)
             .await
             .str_err(),
+        ShepherdScope::Branch { .. } => {
+            Err("branch history is ephemeral and is not persisted".to_string())
+        }
     }
 }
 
@@ -282,6 +286,7 @@ pub(super) async fn clear_scope_messages(scope: &ShepherdScope) -> Result<(), St
         ShepherdScope::Project { project_id, .. } => {
             store.clear_project_messages(*project_id).await.str_err()?
         }
+        ShepherdScope::Branch { .. } => {}
     }
 
     Ok(())

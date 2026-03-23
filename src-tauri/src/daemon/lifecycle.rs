@@ -146,9 +146,6 @@ async fn process_active_run(runtime_name: &str) -> anyhow::Result<()> {
 
     match status {
         Status::Working => {
-            use crate::core::delta::DeltaState;
-            use crate::core::workers::WorkerScale;
-
             let workers = lifecycle.state().get_workers().await.unwrap_or_default();
 
             // Check for crashed workers (PID dead but status=Working)
@@ -222,51 +219,9 @@ async fn process_active_run(runtime_name: &str) -> anyhow::Result<()> {
                 .await
                 .unwrap_or(false);
 
-            // Heuristic scaling: if there are claimable tasks but no active workers (or idle workers exist),
-            // run scaling evaluation even if a scaling_check wasn't explicitly requested.
-            let heuristic_requested = if !scaling_requested {
-                let active_count = workers
-                    .iter()
-                    .filter(|w| w.status == crate::core::state::WorkerStatus::Working)
-                    .count();
-                let idle_count = workers
-                    .iter()
-                    .filter(|w| {
-                        w.status == crate::core::state::WorkerStatus::Awaiting && !w.hitl_waiting
-                    })
-                    .count();
-
-                let desired_max = lifecycle
-                    .state()
-                    .get_worker_scale()
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|s| WorkerScale::parse(&s))
-                    .map(|s| s.max)
-                    .unwrap_or_else(|| workers.len().max(1));
-
-                if active_count == 0 || idle_count > 0 || workers.len() < desired_max {
-                    match (
-                        lifecycle.state().get_project_id().await.ok().flatten(),
-                        lifecycle.state().get_route_id().await.ok(),
-                    ) {
-                        (Some(project_id), Some(route_id)) => {
-                            let claimable = DeltaState::with_route(project_id, route_id)
-                                .get_claimable_nodes()
-                                .await
-                                .map(|v| v.len())
-                                .unwrap_or(0);
-                            claimable > 0 && active_count < desired_max
-                        }
-                        _ => false,
-                    }
-                } else {
-                    false
-                }
-            } else {
-                false
-            };
+            // Explicit delegation owns worker fanout now; the daemon should not
+            // invent scaling work on its own.
+            let heuristic_requested = false;
 
             if scaling_requested || heuristic_requested {
                 // Event-driven / heuristic scaling evaluation
@@ -400,10 +355,6 @@ async fn maybe_process_scribe(runtime_name: &str, _files: &Files) -> anyhow::Res
         );
         Config::default()
     });
-
-    if !config.scribe_enabled {
-        return Ok(());
-    }
 
     let should_process = {
         let state = SQLiteState::new(runtime_name).await?;

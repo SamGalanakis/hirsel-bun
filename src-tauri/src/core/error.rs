@@ -396,12 +396,6 @@ impl From<crate::core::config::ConfigError> for HirselError {
             crate::core::config::ConfigError::ReadError { path, message } => {
                 HirselError::FileNotFound(format!("{}: {}", path.display(), message))
             }
-            crate::core::config::ConfigError::InvalidWorkerScale { value } => {
-                HirselError::InvalidInput(format!("Invalid worker scale: {}", value))
-            }
-            crate::core::config::ConfigError::WorkerCountTooLow => {
-                HirselError::InvalidInput("Worker count must be at least 1".to_string())
-            }
             crate::core::config::ConfigError::EmptyRunName => {
                 HirselError::InvalidInput("Run name cannot be empty".to_string())
             }

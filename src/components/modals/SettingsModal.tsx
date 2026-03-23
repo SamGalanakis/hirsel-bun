@@ -8,6 +8,7 @@ import {
 } from 'solid-js';
 import { createStore } from 'solid-js/store';
 import { useApp } from '../../stores';
+import { on as onEvent } from '../../lib/events';
 import {
   bindingFromEvent,
   findConflict,
@@ -26,10 +27,34 @@ import {
   type BackendSection,
   type BackendTabRef,
   defaultSettings,
+  type McpServerConfig,
   type Settings,
+  type SettingsResponse,
+  type SettingsSaveRequest,
   type SettingsTab,
   ShortcutsTab,
 } from './settings';
+
+const stringifyMcpServers = (mcpServers?: Record<string, McpServerConfig>): string => {
+  if (!mcpServers || Object.keys(mcpServers).length === 0) {
+    return '';
+  }
+  return JSON.stringify(mcpServers, null, 2);
+};
+
+const parseMcpServersText = (text: string): Record<string, McpServerConfig> => {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return {};
+  }
+
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+    throw new Error('MCP servers must be a JSON object keyed by server name.');
+  }
+
+  return parsed as Record<string, McpServerConfig>;
+};
 
 export const SettingsModal: Component = () => {
   const app = useApp();
@@ -54,11 +79,31 @@ export const SettingsModal: Component = () => {
     }
   });
 
+  createEffect(() => {
+    const cleanup = onEvent('open-backend-settings', (detail) => {
+      setActiveTab('backend');
+      setBackendSection(detail?.section || 'connection');
+    });
+    onCleanup(cleanup);
+  });
+
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const config = await invoke<Partial<Settings>>('get_config');
-      setSettings({ ...defaultSettings(), ...config });
+      const config = await invoke<SettingsResponse>('get_config');
+      const defaults = defaultSettings();
+      setSettings({
+        ...defaults,
+        backend: {
+          ...defaults.backend,
+          ...(config.backend || {}),
+        },
+        llm: {
+          ...defaults.llm,
+          ...(config.llm || {}),
+        },
+        mcpServersText: stringifyMcpServers(config.mcpServers),
+      });
       await backendRef?.initCredentialState();
       setShortcuts(getShortcuts());
 
@@ -75,6 +120,44 @@ export const SettingsModal: Component = () => {
   };
 
   const checkBackendHealth = async (url = settings.backend.url, apiKey = settings.backend.apiKey) => {
+    const provider = settings.llm?.provider || 'codex';
+
+    // For Codex provider, check credential state instead of URL
+    if (provider === 'codex') {
+      setBackendHealth({ status: 'checking' });
+      try {
+        const [hasAccess, hasRefresh] = await Promise.all([
+          invoke<boolean>('has_credential', { keyType: 'codex_access_token' }).catch(() => false),
+          invoke<boolean>('has_credential', { keyType: 'codex_refresh_token' }).catch(() => false),
+        ]);
+        if (hasAccess && hasRefresh) {
+          setBackendHealth({ status: 'online' });
+        } else {
+          setBackendHealth({ status: 'offline', error: 'Not authenticated — connect Codex below' });
+        }
+      } catch (e) {
+        setBackendHealth({ status: 'offline', error: String(e) });
+      }
+      return;
+    }
+
+    // For OpenRouter, check if API key exists
+    if (provider === 'openrouter') {
+      setBackendHealth({ status: 'checking' });
+      try {
+        const hasKey = await invoke<boolean>('has_credential', { keyType: 'openrouter_api_key' }).catch(() => false);
+        if (hasKey) {
+          setBackendHealth({ status: 'online' });
+        } else {
+          setBackendHealth({ status: 'offline', error: 'No API key — add one below' });
+        }
+      } catch (e) {
+        setBackendHealth({ status: 'offline', error: String(e) });
+      }
+      return;
+    }
+
+    // Remote backend URL check
     const trimmedUrl = (url || '').trim();
     if (!trimmedUrl) {
       setBackendHealth(null);
@@ -145,7 +228,14 @@ export const SettingsModal: Component = () => {
   const saveSettings = async () => {
     setSaving(true);
     try {
-      await invoke('save_config', { updates: settings });
+      const mcpServers = parseMcpServersText(settings.mcpServersText);
+      const updates: SettingsSaveRequest = {
+        backend: settings.backend,
+        llm: settings.llm,
+        mcpServers,
+      };
+      await invoke('save_config', { updates });
+      setSettings('mcpServersText', stringifyMcpServers(mcpServers));
       await backendRef?.saveCredentials();
       window.toast?.success('Settings saved');
       app.setShowSettings(false);

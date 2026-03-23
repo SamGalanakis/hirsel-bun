@@ -20,11 +20,9 @@ CREATE TABLE IF NOT EXISTS routes (
     parent_route_id INTEGER REFERENCES routes(id),
     parent_version_id INTEGER,
     default_repo_id INTEGER,
-    worker_scale TEXT,
     time_limit_minutes INTEGER,
     human_in_the_loop INTEGER NOT NULL DEFAULT 1,
     target_branch TEXT,
-    runner TEXT,
     archived_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -43,7 +41,6 @@ CREATE TABLE IF NOT EXISTS route_repos (
     source_branch TEXT,
 
     target_branch TEXT,
-    runner TEXT,
 
     is_archived INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
@@ -140,17 +137,15 @@ impl RouteStore {
             "INSERT INTO routes (
                 project_id, name, parent_route_id, parent_version_id,
                 default_repo_id,
-                worker_scale, time_limit_minutes, human_in_the_loop,
-                target_branch, runner, archived_at,
+                time_limit_minutes, human_in_the_loop,
+                target_branch, archived_at,
                 created_at, updated_at
-            ) VALUES (?, 'main', NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?, ?)",
+            ) VALUES (?, 'main', NULL, NULL, NULL, ?, ?, ?, NULL, ?, ?)",
         )
         .bind(self.project_id)
-        .bind(&req.worker_scale)
         .bind(req.time_limit_minutes)
         .bind(req.human_in_the_loop.unwrap_or(true) as i64)
         .bind(&req.target_branch)
-        .bind(&req.runner)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -187,14 +182,11 @@ impl RouteStore {
                 name: Some("workspace".to_string()),
                 starting_point: StartingPoint::Greenfield,
                 target_branch: Some("main".to_string()),
-                runner: None,
             }],
             default_repo_index: Some(0),
-            worker_scale: None,
             time_limit_minutes: None,
             human_in_the_loop: Some(true),
             target_branch: Some("main".to_string()),
-            runner: None,
         })
         .await
     }
@@ -305,20 +297,18 @@ impl RouteStore {
             "INSERT INTO routes (
                 project_id, name, parent_route_id, parent_version_id,
                 default_repo_id,
-                worker_scale, time_limit_minutes, human_in_the_loop,
-                target_branch, runner, archived_at,
+                time_limit_minutes, human_in_the_loop,
+                target_branch, archived_at,
                 created_at, updated_at
-             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, NULL, ?, ?)",
+             ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?)",
         )
         .bind(self.project_id)
         .bind(name)
         .bind(Some(parent_id))
         .bind(req.parent_version_id)
-        .bind(&parent_route.worker_scale)
         .bind(parent_route.time_limit_minutes)
         .bind(parent_route.human_in_the_loop as i64)
         .bind(&parent_route.target_branch)
-        .bind(&parent_route.runner)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -376,7 +366,6 @@ impl RouteStore {
                         name: None,
                         starting_point: repo.starting_point,
                         target_branch: repo.target_branch,
-                        runner: repo.runner,
                     },
                 )
                 .await?;
@@ -467,8 +456,8 @@ impl RouteStore {
 
         let row = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
-                    default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    target_branch, runner, archived_at,
+                    default_repo_id, time_limit_minutes, human_in_the_loop,
+                    target_branch, archived_at,
                     created_at, updated_at
              FROM routes WHERE id = ? AND project_id = ?",
         )
@@ -487,8 +476,8 @@ impl RouteStore {
 
         let row = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
-                    default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    target_branch, runner, archived_at,
+                    default_repo_id, time_limit_minutes, human_in_the_loop,
+                    target_branch, archived_at,
                     created_at, updated_at
              FROM routes WHERE lower(name) = lower(?) AND project_id = ? AND archived_at IS NULL",
         )
@@ -509,8 +498,8 @@ impl RouteStore {
 
         let rows = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
-                    default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    target_branch, runner, archived_at,
+                    default_repo_id, time_limit_minutes, human_in_the_loop,
+                    target_branch, archived_at,
                     created_at, updated_at
              FROM routes
              WHERE project_id = ? AND archived_at IS NULL
@@ -533,8 +522,8 @@ impl RouteStore {
 
         let rows = sqlx::query(
             "SELECT id, project_id, name, parent_route_id, parent_version_id,
-                    default_repo_id, worker_scale, time_limit_minutes, human_in_the_loop,
-                    target_branch, runner, archived_at,
+                    default_repo_id, time_limit_minutes, human_in_the_loop,
+                    target_branch, archived_at,
                     created_at, updated_at
              FROM routes
              WHERE project_id = ? AND archived_at IS NOT NULL
@@ -567,58 +556,20 @@ impl RouteStore {
 
         let _ = self.get_route(route_id).await?;
 
-        let now = utc_now();
-        let mut updates = vec!["updated_at = ?".to_string()];
-        let mut bind_index = 2usize;
-
-        if req.worker_scale.is_some() {
-            updates.push(format!("worker_scale = ?{}", bind_index));
-            bind_index += 1;
-        }
-        if req.time_limit_minutes.is_some() {
-            updates.push(format!("time_limit_minutes = ?{}", bind_index));
-            bind_index += 1;
-        }
-        if req.human_in_the_loop.is_some() {
-            updates.push(format!("human_in_the_loop = ?{}", bind_index));
-            bind_index += 1;
-        }
-        if req.target_branch.is_some() {
-            updates.push(format!("target_branch = ?{}", bind_index));
-            bind_index += 1;
-        }
-        if req.runner.is_some() {
-            updates.push(format!("runner = ?{}", bind_index));
-            bind_index += 1;
-        }
-
-        let sql = format!(
-            "UPDATE routes SET {} WHERE id = ?{} AND project_id = ?{}",
-            updates.join(", "),
-            bind_index,
-            bind_index + 1
-        );
-
-        let mut query = sqlx::query(&sql).bind(&now);
-
-        if let Some(ref worker_scale) = req.worker_scale {
-            query = query.bind(worker_scale);
-        }
-        if let Some(time_limit_minutes) = req.time_limit_minutes {
-            query = query.bind(time_limit_minutes);
-        }
-        if let Some(human_in_the_loop) = req.human_in_the_loop {
-            query = query.bind(human_in_the_loop as i64);
-        }
-        if let Some(ref target_branch) = req.target_branch {
-            query = query.bind(target_branch);
-        }
-        if let Some(ref runner) = req.runner {
-            query = query.bind(runner);
-        }
-
-        query = query.bind(route_id).bind(self.project_id);
-        query.execute(pool).await?;
+        sqlx::query(
+            "UPDATE routes
+             SET time_limit_minutes = ?, human_in_the_loop = ?,
+                 target_branch = ?, updated_at = ?
+             WHERE id = ? AND project_id = ?",
+        )
+        .bind(req.time_limit_minutes)
+        .bind(req.human_in_the_loop as i64)
+        .bind(&req.target_branch)
+        .bind(utc_now())
+        .bind(route_id)
+        .bind(self.project_id)
+        .execute(pool)
+        .await?;
 
         self.get_route(route_id).await
     }
@@ -634,7 +585,7 @@ impl RouteStore {
         let row = sqlx::query(
             "SELECT id, project_id, route_id, name,
                     source_type, source_path, source_url, source_branch,
-                    target_branch, runner, is_archived,
+                    target_branch, is_archived,
                     created_at, updated_at
              FROM route_repos
              WHERE id = ? AND route_id = ? AND project_id = ?",
@@ -719,10 +670,6 @@ impl RouteStore {
             updates.push(format!("target_branch = ?{}", bind_index));
             bind_index += 1;
         }
-        if req.runner.is_some() {
-            updates.push(format!("runner = ?{}", bind_index));
-            bind_index += 1;
-        }
         if req.is_archived.is_some() {
             updates.push(format!("is_archived = ?{}", bind_index));
             bind_index += 1;
@@ -754,10 +701,6 @@ impl RouteStore {
 
         if let Some(ref target_branch) = req.target_branch {
             query = query.bind(target_branch);
-        }
-
-        if let Some(ref runner) = req.runner {
-            query = query.bind(runner);
         }
 
         if let Some(is_archived) = req.is_archived {
@@ -884,8 +827,8 @@ impl RouteStore {
             "INSERT INTO route_repos (
                 project_id, route_id, name,
                 source_type, source_path, source_url, source_branch,
-                target_branch, runner, is_archived, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
+                target_branch, is_archived, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)",
         )
         .bind(self.project_id)
         .bind(route_id)
@@ -895,7 +838,6 @@ impl RouteStore {
         .bind(source_url)
         .bind(source_branch)
         .bind(&req.target_branch)
-        .bind(&req.runner)
         .bind(&now)
         .bind(&now)
         .execute(pool)
@@ -913,7 +855,7 @@ impl RouteStore {
         let rows = sqlx::query(
             "SELECT id, project_id, route_id, name,
                     source_type, source_path, source_url, source_branch,
-                    target_branch, runner, is_archived,
+                    target_branch, is_archived,
                     created_at, updated_at
              FROM route_repos
              WHERE project_id = ? AND route_id = ? AND is_archived = 0
@@ -946,11 +888,9 @@ impl RouteStore {
             updated_at: row.get("updated_at"),
             repos,
             default_repo_id: row.get("default_repo_id"),
-            worker_scale: row.get("worker_scale"),
             time_limit_minutes: row.get("time_limit_minutes"),
             human_in_the_loop: row.get::<i64, _>("human_in_the_loop") != 0,
             target_branch: row.get("target_branch"),
-            runner: row.get("runner"),
             archived_at: row.get("archived_at"),
         })
     }
@@ -1176,7 +1116,6 @@ fn row_to_repo(row: &sqlx::sqlite::SqliteRow) -> RouteResult<RouteRepo> {
         name: row.get("name"),
         starting_point: denormalize_starting_point(row)?,
         target_branch: row.get("target_branch"),
-        runner: row.get("runner"),
         is_archived: row.get::<i64, _>("is_archived") != 0,
         created_at: row.get("created_at"),
         updated_at: row.get("updated_at"),

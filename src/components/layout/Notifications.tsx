@@ -103,10 +103,10 @@ export const NotificationsDropdown: Component = () => {
       <button
         type="button"
         onClick={toggleOpen}
-        class="p-2 rounded-none text-wool-500 hover:text-wool-300 hover:bg-pasture-800 transition-colors relative"
+        class="p-1.5 text-wool-600 hover:text-wool-300 relative"
         title="Notifications"
       >
-        <Icon name="bell" class="w-4 h-4" />
+        <Icon name="bell" class="w-3.5 h-3.5" />
         <Show when={totalUnread() > 0}>
           <span class="absolute -top-1 -right-1 min-w-[18px] h-[18px] bg-terra rounded-none text-[10px] text-white font-bold flex items-center justify-center px-1">
             {totalUnread() > 99 ? '99+' : totalUnread()}
