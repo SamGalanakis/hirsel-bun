@@ -14,6 +14,7 @@ use tokio::time::interval;
 
 use crate::core::api_types::RunStatus;
 use crate::core::config::{self, Config};
+use crate::core::conflict_resolver::ConflictResolverService;
 use crate::core::delta::{list_working_route_runtimes, BoardDeliveryStatus, Delivery, DeltaState};
 use crate::core::lifecycle::{
     LifecycleAction, LifecycleEvent, LifecycleManager, LocalLifecycleManager,
@@ -22,7 +23,6 @@ use crate::core::orchestrator::{create_local_orchestrator, Orchestrator};
 use crate::core::scribe;
 use crate::core::server::AppState;
 use crate::core::state::{SQLiteState, Status};
-use crate::core::ConflictResolverService;
 use crate::core::Files;
 
 use super::server::DaemonConfig;

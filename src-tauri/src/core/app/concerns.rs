@@ -7,7 +7,6 @@ use crate::core::route::RouteStore;
 use crate::core::WorkerConcernStore;
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_all_unread_notifications() -> Result<UnreadNotificationsResponse, String> {
     let concern_store = WorkerConcernStore::open().await.str_err()?;
     let project_store = ProjectStore::open().await.str_err()?;

@@ -9,7 +9,7 @@
 //! - Orchestrator abstraction for local/remote coordination
 
 pub mod api_types;
-pub mod board;
+pub mod app;
 pub mod capabilities;
 pub mod config;
 // Intentionally not `pub` — only used by webui.rs
@@ -18,8 +18,7 @@ pub mod constants;
 pub mod credentials;
 pub mod db;
 pub mod delivery;
-pub mod delta;
-pub mod dispatch;
+pub(crate) mod delta;
 pub mod draft;
 pub mod error;
 pub mod eval;
@@ -29,7 +28,7 @@ pub mod git;
 pub mod github;
 pub mod http_client;
 pub(crate) mod icons;
-pub mod lifecycle;
+pub(crate) mod lifecycle;
 pub mod llm_provider;
 pub mod mcp;
 pub mod metrics;
@@ -40,13 +39,13 @@ pub mod process;
 pub mod project;
 pub mod route;
 pub mod route_runtime;
-pub mod run_manager;
 pub mod runner;
 pub mod scribe;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod shepherd;
 pub mod shepherd_chat;
+pub mod shepherd_runtime;
 pub mod snapshot;
 pub mod state;
 pub mod state_access;
@@ -63,10 +62,6 @@ pub use credentials::{CredentialError, CredentialResult, CredentialStore, Forwar
 pub use error::{ErrorKind, HirselError, HirselResult};
 pub use eval::{run_eval, run_eval_from_args, EvalAcpConfig, EvalAcpResult, EvalError};
 pub use files::Files;
-pub use lifecycle::{
-    LifecycleAction, LifecycleContext, LifecycleError, LifecycleEvent, LifecycleManager,
-    LifecycleResult, LocalLifecycleManager, RunStateMachine, WorkerStateMachine,
-};
 pub use names::{
     generate_runtime_name, generate_worker_name, get_available_name, get_available_names, slugify,
 };
@@ -77,29 +72,17 @@ pub use orchestrator::{
 pub use project::{
     CreateProjectRequest, Project, ProjectError, ProjectResult, ProjectStore, UpdateProjectRequest,
 };
-pub use run_manager::{
-    create_run_manager, LocalRunManager, RemoteRunManager, RunManager, RunManagerError,
-    RunManagerResult,
-};
 pub use runner::{
     create_runner, LocalRunner, Runner, RunnerConfig, RunnerError, RunnerResult,
     SpawnResult as RunnerSpawnResult, WorkerHandle, WorkerSpawnConfig as RunnerSpawnConfig,
 };
 pub use scribe::{process_scribe_batch, should_process_batch, ScribeBatchResult, ScribeError};
-pub use shepherd::{
-    LocalShepherdEngine, ShepherdCommand, ShepherdCommandStatus, ShepherdCommandType,
-    ShepherdDecision, ShepherdDecisionType, ShepherdEngine,
-};
 pub use shepherd_chat::{
     ShepherdChatError, ShepherdChatMessage, ShepherdChatResult, ShepherdChatStore, ShepherdEffort,
     ShepherdQueuedTurn,
 };
 
 // Conflict resolver
-pub use conflict_resolver::{
-    ConflictResolution, ConflictResolutionStatus, ConflictResolverError, ConflictResolverResult,
-    ConflictResolverService, ConflictResolverState, ResolutionResult,
-};
 #[cfg(feature = "s3-storage")]
 pub use snapshot::S3ArchiveStrategy;
 pub use snapshot::{
@@ -136,12 +119,6 @@ pub use draft::{
 // GitHub client
 pub use github::{GitHubClient, GitHubError, GitHubResult, MergeInfo, PrInfo};
 
-// Dispatch service
-pub use dispatch::{
-    DispatchConfig, DispatchError, DispatchInfo, DispatchResult as DispatchServiceResult,
-    DispatchService,
-};
-
 // Delivery service
 pub use delivery::{
     delivery_branch_name, pr_body, pr_title, DeliveryError, DeliveryOrchestrator, DeliveryResult,
@@ -149,28 +126,10 @@ pub use delivery::{
 };
 
 // Forge providers
+pub use capabilities::CapabilityProfile;
 pub use forge::{
     create_forge_for_remote, ForgeError, ForgeProvider, ForgeResult, GitHubForge,
     MergeResult as ForgeMergeResult, PrInfo as ForgePrInfo,
-};
-
-// Board service (tree operations and agent file sync)
-pub use board::{
-    BoardError, BoardJson, BoardResult, BoardService, BoardSnapshot, BoardStorage,
-    Bookmark as BoardBookmark, CreateEvalRequest, CreateTaskRequest, DispatchPreview,
-    Eval as BoardEval, EvalStatus as BoardEvalStatus, ExportScope, LocalBoardStorage,
-    RemoteBoardStorage, SyncResult as BoardSyncResult, Task as BoardTask, TaskFile,
-    TaskRun as BoardTaskRun, TaskStatus as BoardTaskStatus, TaskTree, UpdateEvalRequest,
-    UpdateTaskRequest,
-};
-pub use capabilities::CapabilityProfile;
-
-// Delta dispatch (unified board tree)
-pub use delta::{
-    BoardNode, BoardNodeDifficulty, BoardNodeSource, BoardNodeStatus, BoardNodeTree, BoardVersion,
-    CreateBoardNodeRequest, DeltaDispatchService, DeltaState,
-    DispatchResult as DeltaDispatchResult, NodeKind, RouteRuntime, RouteRuntimeStatus,
-    UpdateBoardNodeRequest,
 };
 
 // Route management

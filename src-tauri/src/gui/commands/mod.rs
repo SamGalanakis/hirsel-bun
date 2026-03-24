@@ -3,16 +3,8 @@
 //! The desktop wrapper only persists backend connection details and performs
 //! basic backend reachability checks before handing off to the backend-served UI.
 
-pub(crate) mod concerns;
 mod config_cmd;
-pub(crate) mod delivery;
-pub(crate) mod events;
-pub(crate) mod projects;
-pub(crate) mod routes;
-pub(crate) mod shepherd;
 pub mod types;
-pub(crate) mod workers;
-pub(crate) mod worktree;
 
 // Re-export types for use by other modules
 pub use types::*;

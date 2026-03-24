@@ -23,20 +23,15 @@ use crate::core::llm_provider::resolve_provider;
 use crate::core::project::Project;
 use crate::core::route::CreateRouteRepoRequest;
 use crate::core::server::routes::{CodexDeviceExchangeRequest, CodexDevicePollRequest};
+use crate::core::shepherd_runtime::types::ShepherdTaskFocus;
+use crate::core::shepherd_runtime::{self, ShepherdScope};
 use crate::core::webui::{
     render_chat_panel, render_connect_page, render_empty_projects_page, render_focus_document,
     render_project_page, render_project_settings_page, render_settings_page,
     render_worker_detail_page,
 };
+use crate::core::{app, shepherd_runtime as efforts_runtime};
 use crate::core::{ShepherdChatStore, ShepherdEffort};
-use crate::gui::commands::concerns as gui_concerns;
-use crate::gui::commands::events as gui_events;
-use crate::gui::commands::projects as gui_projects;
-use crate::gui::commands::routes as gui_routes;
-use crate::gui::commands::shepherd::commands as gui_shepherd;
-use crate::gui::commands::shepherd::types::ShepherdScope;
-use crate::gui::commands::workers as gui_workers;
-use crate::gui::commands::worktree as gui_worktree;
 
 #[derive(Deserialize)]
 pub struct ConnectQuery {
@@ -228,25 +223,23 @@ async fn load_project_page_state(
         Vec<ShepherdEffort>,
         Option<ShepherdEffort>,
         Vec<crate::core::ShepherdChatMessage>,
-        gui_shepherd::ShepherdQueueState,
-        crate::gui::commands::types::UnreadNotificationsResponse,
+        shepherd_runtime::ShepherdQueueState,
+        crate::core::app::types::UnreadNotificationsResponse,
     ),
     String,
 > {
-    let projects = gui_projects::list_projects().await?;
+    let projects = app::list_projects().await?;
     let project = projects
         .iter()
         .find(|item| item.id == project_id)
         .cloned()
         .ok_or_else(|| format!("Unknown project {}", project_id))?;
-    let route = gui_routes::get_active_route(project_id).await?;
-    let surface = gui_projects::get_project_surface(project_id).await?;
-    let work_tree = gui_worktree::get_route_work_tree(project_id, route.id)
-        .await?
-        .tree;
-    let workers = gui_workers::get_route_workers(project_id, route.id).await?;
-    let efforts = gui_shepherd::get_project_efforts(project_id, route.id).await?;
-    let focused_effort = gui_shepherd::get_focused_project_effort(project_id, route.id).await?;
+    let route = app::get_active_route(project_id).await?;
+    let surface = app::get_project_surface(project_id).await?;
+    let work_tree = app::get_route_work_tree(project_id, route.id).await?.tree;
+    let workers = app::get_route_workers(project_id, route.id).await?;
+    let efforts = efforts_runtime::get_project_efforts(project_id, route.id).await?;
+    let focused_effort = efforts_runtime::get_focused_project_effort(project_id, route.id).await?;
     let (history, queue) = if let Some(effort) = &focused_effort {
         let scope = ShepherdScope::Effort {
             project_id,
@@ -254,25 +247,25 @@ async fn load_project_page_state(
             effort_id: effort.id.clone(),
             title: effort.title.clone(),
             workspace_path: None,
-            focus: Some(crate::gui::commands::shepherd::types::ShepherdTaskFocus {
+            focus: Some(ShepherdTaskFocus {
                 task_id: effort.work_item_id.clone(),
                 task_name: effort.title.clone(),
             }),
         };
         (
-            gui_shepherd::get_shepherd_history(scope.clone(), 100).await?,
-            gui_shepherd::get_shepherd_queue(scope).await?,
+            efforts_runtime::get_shepherd_history(scope.clone(), 100).await?,
+            efforts_runtime::get_shepherd_queue(scope).await?,
         )
     } else {
         (
             Vec::new(),
-            gui_shepherd::ShepherdQueueState {
+            shepherd_runtime::ShepherdQueueState {
                 items: Vec::new(),
                 has_active_turn: false,
             },
         )
     };
-    let notifications = gui_concerns::get_all_unread_notifications().await?;
+    let notifications = app::get_all_unread_notifications().await?;
     Ok((
         projects,
         project,
@@ -419,7 +412,7 @@ pub async fn app_home(
         return Ok(response);
     }
 
-    let projects = gui_projects::list_projects()
+    let projects = app::list_projects()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     if let Some(project) = projects.first() {
@@ -451,7 +444,7 @@ pub async fn create_project(
         return Ok(project_create_redirect(&error));
     }
 
-    let project = gui_projects::create_project(
+    let project = app::create_project(
         form.name,
         vec![CreateRouteRepoRequest {
             name: None,
@@ -469,7 +462,7 @@ pub async fn create_project(
     .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
     // Auto-sync immediately after creation
-    if let Err(e) = gui_shepherd::start_project_sync(project.id, None, true).await {
+    if let Err(e) = efforts_runtime::start_project_sync(project.id, None, true).await {
         tracing::warn!(project_id = project.id, error = %e, "auto-sync failed after project creation");
     }
 
@@ -525,7 +518,7 @@ pub async fn project_focus_page(
         return Ok(response);
     }
 
-    let surface = gui_projects::get_project_surface(project_id)
+    let surface = app::get_project_surface(project_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(
@@ -539,7 +532,7 @@ pub async fn send_chat_message(
     Form(form): Form<ChatSendForm>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let stream = stream! {
-        match gui_shepherd::enqueue_project_message(project_id, Some(form.content.clone()), None).await {
+        match efforts_runtime::enqueue_project_message(project_id, Some(form.content.clone()), None).await {
             Ok(_) => {
                 yield Ok::<Event, Infallible>(patch_signals("{chatDraft: '', chatError: ''}"));
             }
@@ -568,10 +561,10 @@ pub async fn send_chat_message(
 pub async fn focus_effort(
     Path((project_id, effort_id)): Path<(i64, String)>,
 ) -> Result<Redirect, (StatusCode, String)> {
-    let route = gui_routes::get_active_route(project_id)
+    let route = app::get_active_route(project_id)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    gui_shepherd::focus_project_effort(project_id, route.id, effort_id)
+    efforts_runtime::focus_project_effort(project_id, route.id, effort_id)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
@@ -581,7 +574,7 @@ pub async fn unfocus_effort(Path(project_id): Path<i64>) -> Result<Redirect, (St
     let store = ShepherdChatStore::open()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let route = gui_routes::get_active_route(project_id)
+    let route = app::get_active_route(project_id)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     // Unfocus all efforts for this project
@@ -610,7 +603,7 @@ pub async fn create_route(
     Path(project_id): Path<i64>,
     Form(form): Form<CreateRouteForm>,
 ) -> Result<Redirect, (StatusCode, String)> {
-    gui_routes::create_route(project_id, form.name, None, None)
+    app::create_route(project_id, form.name, None, None)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
@@ -619,7 +612,7 @@ pub async fn create_route(
 pub async fn select_route(
     Path((project_id, route_id)): Path<(i64, i64)>,
 ) -> Result<Redirect, (StatusCode, String)> {
-    gui_routes::set_active_route(project_id, route_id)
+    app::set_active_route(project_id, route_id)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
@@ -628,7 +621,7 @@ pub async fn select_route(
 pub async fn archive_route(
     Path((project_id, route_id)): Path<(i64, i64)>,
 ) -> Result<Redirect, (StatusCode, String)> {
-    gui_routes::archive_route(project_id, route_id)
+    app::archive_route(project_id, route_id)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
@@ -856,7 +849,7 @@ pub async fn project_settings_page(
         .get_project(project_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let route = gui_routes::get_active_route(project_id)
+    let route = app::get_active_route(project_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(render_project_settings_page(&project, &route).into_response())
@@ -872,10 +865,10 @@ pub async fn save_project_settings(
         return Ok(response);
     }
 
-    gui_projects::update_project_name(project_id, form.name)
+    app::update_project_name(project_id, form.name)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    gui_projects::update_project_description(project_id, form.description)
+    app::update_project_description(project_id, form.description)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     Ok(Redirect::to(&format!("/app/projects/{}/settings", project_id)).into_response())
@@ -891,7 +884,7 @@ pub async fn save_route_settings(
         return Ok(response);
     }
 
-    gui_routes::update_route_settings(
+    app::update_route_settings(
         project_id,
         form.route_id,
         form.time_limit_minutes.filter(|value| *value > 0),
@@ -933,10 +926,10 @@ pub async fn worker_detail_page(
         .get_project(project_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    let route = gui_routes::get_route(project_id, route_id)
+    let route = app::get_route(project_id, route_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    let workers = gui_workers::get_route_workers(project_id, route_id)
+    let workers = app::get_route_workers(project_id, route_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     let worker = workers
@@ -948,16 +941,11 @@ pub async fn worker_detail_page(
                 format!("Unknown worker {}", worker_name),
             )
         })?;
-    let events = gui_events::get_route_worker_events(
-        project_id,
-        route_id,
-        worker_name.clone(),
-        None,
-        Some(200),
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
-    .events;
+    let events =
+        app::get_route_worker_events(project_id, route_id, worker_name.clone(), None, Some(200))
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+            .events;
     Ok(render_worker_detail_page(&project, &route, &worker, &events).into_response())
 }
 
@@ -967,7 +955,7 @@ pub async fn worker_detail_stream(
     let stream = stream! {
         let mut last_html = String::new();
         loop {
-            let rendered = match gui_events::get_route_worker_events(project_id, route_id, worker_name.clone(), None, Some(200)).await {
+            let rendered = match app::get_route_worker_events(project_id, route_id, worker_name.clone(), None, Some(200)).await {
                 Ok(response) => {
                     let markup = maud::html! {
                         section id="worker-events" class="worker-events" {

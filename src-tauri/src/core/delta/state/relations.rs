@@ -110,53 +110,6 @@ impl DeltaState {
         Ok(ids)
     }
 
-    /// Add a blocked_by relationship
-    pub async fn add_blocked_by(&self, node_id: &str, blocker_id: &str) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-        sqlx::query(
-            "INSERT OR IGNORE INTO board_node_blocked_by (node_id, blocker_id, project_id, route_id)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(node_id)
-        .bind(blocker_id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Add a validated_by relationship
-    pub async fn add_validated_by(&self, node_id: &str, check_id: &str) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-        sqlx::query(
-            "INSERT OR IGNORE INTO board_node_checked_by (node_id, check_id, project_id, route_id)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(node_id)
-        .bind(check_id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
-    /// Remove a blocked_by relationship
-    pub async fn remove_blocked_by(&self, node_id: &str, blocker_id: &str) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-        sqlx::query(
-            "DELETE FROM board_node_blocked_by WHERE node_id = ? AND blocker_id = ? AND project_id = ? AND route_id = ?",
-        )
-        .bind(node_id)
-        .bind(blocker_id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
-        Ok(())
-    }
-
     /// Load blocked_by for a single node
     pub(crate) async fn load_node_blocked_by(
         &self,

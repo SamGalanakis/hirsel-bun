@@ -2,10 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ResultExt;
-use crate::core::{
-    CapabilityProfile, DeltaDispatchService, DeltaState, WorkItem, WorkItemTree, WorkTreeSnapshot,
-};
+use crate::core::delta::DeltaState;
+use crate::core::{CapabilityProfile, WorkItem, WorkItemTree, WorkTreeSnapshot};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,15 +40,13 @@ fn visible_work_tree(nodes: Vec<crate::core::delta::BoardNodeTree>) -> Vec<WorkI
 }
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_route_work_tree(
     project_id: i64,
     route_id: i64,
 ) -> Result<WorkTreeSnapshot, String> {
-    let dispatch = DeltaDispatchService::new(project_id, route_id);
     let state = DeltaState::with_route(project_id, route_id);
-    let tree = dispatch.get_tree().await.str_err()?;
-    let generation = state.tree_generation().await.str_err()?;
+    let tree = state.get_tree().await.map_err(|e| e.to_string())?;
+    let generation = state.tree_generation().await.map_err(|e| e.to_string())?;
 
     Ok(WorkTreeSnapshot {
         route_id,
@@ -60,7 +56,6 @@ pub async fn get_route_work_tree(
 }
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn create_work_item(
     project_id: i64,
     route_id: i64,
@@ -78,12 +73,11 @@ pub async fn create_work_item(
             blocked_by.as_deref().unwrap_or(&[]),
         )
         .await
-        .str_err()?;
+        .map_err(|e| e.to_string())?;
     Ok(item.into())
 }
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn split_work_item(
     project_id: i64,
     route_id: i64,
@@ -101,14 +95,13 @@ pub async fn split_work_item(
                 &[],
             )
             .await
-            .str_err()?;
+            .map_err(|e| e.to_string())?;
         created.push(created_item.into());
     }
     Ok(created)
 }
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn assign_work_item(
     project_id: i64,
     route_id: i64,
@@ -126,29 +119,33 @@ pub async fn assign_work_item(
             capability_profile,
         )
         .await
-        .str_err()?;
+        .map_err(|e| e.to_string())?;
     Ok(item.into())
 }
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn reopen_work_item(
     project_id: i64,
     route_id: i64,
     item_id: String,
 ) -> Result<WorkItem, String> {
     let state = DeltaState::with_route(project_id, route_id);
-    let item = state.reopen_work_item(&item_id).await.str_err()?;
+    let item = state
+        .reopen_work_item(&item_id)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(item.into())
 }
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn archive_work_item(
     project_id: i64,
     route_id: i64,
     item_id: String,
 ) -> Result<(), String> {
     let state = DeltaState::with_route(project_id, route_id);
-    state.archive_work_item(&item_id).await.str_err()
+    state
+        .archive_work_item(&item_id)
+        .await
+        .map_err(|e| e.to_string())
 }

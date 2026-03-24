@@ -210,7 +210,6 @@ pub(crate) async fn delegate_route_worker(
 }
 
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_route_workers(project_id: i64, route_id: i64) -> Result<Vec<Worker>, String> {
     let Some(runtime_name) = resolve_route_runtime_name(project_id, route_id).await? else {
         return Ok(Vec::new());

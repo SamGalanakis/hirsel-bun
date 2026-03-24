@@ -62,7 +62,6 @@ use crate::core::system::is_local_remote;
 
 /// Validate a delivery target branch for a project's workspace
 #[tracing::instrument]
-#[tauri::command]
 pub async fn validate_delivery_target(
     project_id: i64,
     route_id: i64,
@@ -189,7 +188,6 @@ pub async fn validate_delivery_target(
 
 /// Get all board versions for a project
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_board_versions(
     project_id: i64,
     route_id: i64,
@@ -200,7 +198,6 @@ pub async fn get_board_versions(
 
 /// Get the latest board version for a project
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_latest_board_version(
     project_id: i64,
     route_id: i64,
@@ -211,7 +208,6 @@ pub async fn get_latest_board_version(
 
 /// Get the current (non-terminal) delivery for a project
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_current_board_delivery(
     project_id: i64,
     route_id: i64,
@@ -224,7 +220,6 @@ pub async fn get_current_board_delivery(
 ///
 /// Creates the delivery record, marks it in progress, and pushes the branch.
 #[tracing::instrument]
-#[tauri::command]
 pub async fn start_board_delivery(
     project_id: i64,
     route_id: i64,
@@ -331,7 +326,6 @@ pub async fn start_board_delivery(
 
 /// Retry a failed delivery
 #[tracing::instrument]
-#[tauri::command]
 pub async fn retry_board_delivery(
     project_id: i64,
     route_id: i64,
@@ -351,7 +345,6 @@ pub async fn retry_board_delivery(
 
 /// Get delivery attempts for a delivery
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_delivery_attempts(
     project_id: i64,
     route_id: i64,
@@ -363,7 +356,6 @@ pub async fn get_delivery_attempts(
 
 /// Complete a board delivery (push, PR, merge)
 #[tracing::instrument]
-#[tauri::command]
 pub async fn complete_board_delivery(
     project_id: i64,
     route_id: i64,
@@ -471,7 +463,6 @@ pub async fn complete_board_delivery(
 
 /// Abandon a delivery
 #[tracing::instrument]
-#[tauri::command]
 pub async fn abandon_board_delivery(
     project_id: i64,
     route_id: i64,

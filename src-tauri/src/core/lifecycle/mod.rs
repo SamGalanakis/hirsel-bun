@@ -1,21 +1,10 @@
-//! Centralized lifecycle management for hirsel runtimes.
-//!
-//! This module consolidates all lifecycle logic into a single interface:
-//! - Runtime status transitions (Working → Paused → Working, Working → Eval → Done, etc.)
-//! - Worker status management (pause/resume/kill)
-//! - Eval triggering when all workers become inactive
-//! - Time limit enforcement
-//! - Worker scaling
-//!
-//! The `LifecycleManager` trait provides a single entry point for all lifecycle
-//! operations, replacing scattered logic across daemon, coordinator_api,
-//! orchestrator, and workers modules.
+//! Centralized lifecycle management for Hirsel runtimes.
 
 pub mod local;
 pub mod transitions;
 
 pub use local::LocalLifecycleManager;
-pub use transitions::{RunStateMachine, WorkerStateMachine};
+pub use transitions::RunStateMachine;
 
 use crate::core::snapshot::WorkerStateHandle;
 use crate::core::state::{FailureReason, Status, WorkerStatus};
@@ -61,9 +50,6 @@ impl From<crate::core::delta::DeltaStateError> for LifecycleError {
 /// Events that trigger lifecycle actions.
 #[derive(Debug, Clone)]
 pub enum LifecycleEvent {
-    /// A worker signaled it has no more work.
-    WorkerDone { worker_name: String },
-
     /// A worker's status changed.
     WorkerStatusChanged {
         worker_name: String,
@@ -71,29 +57,8 @@ pub enum LifecycleEvent {
         new: WorkerStatus,
     },
 
-    /// A task was completed.
-    TaskCompleted {
-        task_id: String,
-        worker_name: String,
-    },
-
-    /// A new task was added.
-    TaskAdded { task_id: String },
-
-    /// A task was unclaimed (released back to pool).
-    TaskUnclaimed { task_id: String },
-
     /// Periodic time check (from daemon polling).
     TimeCheck,
-
-    /// User requested pause.
-    PauseRequested { reason: String },
-
-    /// User requested resume.
-    ResumeRequested,
-
-    /// Eval completed (success or failure).
-    EvalCompleted { success: bool, feedback: String },
 }
 
 /// Actions taken by the lifecycle manager.
@@ -163,20 +128,17 @@ pub struct LifecycleContext {
     pub runtime_name: String,
     /// Path to the runtime directory.
     pub runtime_dir: PathBuf,
-    /// Agent command for spawning workers.
-    pub agent_command: Vec<String>,
 }
 
 impl LifecycleContext {
     pub fn new(
         runtime_name: impl Into<String>,
         runtime_dir: PathBuf,
-        agent_command: Vec<String>,
+        _agent_command: Vec<String>,
     ) -> Self {
         Self {
             runtime_name: runtime_name.into(),
             runtime_dir,
-            agent_command,
         }
     }
 }
@@ -205,30 +167,11 @@ pub trait LifecycleManager {
     /// Returns a list of ResumeWorker actions for the daemon to process.
     async fn resume_run(&self) -> LifecycleResult<Vec<LifecycleAction>>;
 
-    /// Handle a worker signaling it's done with work.
-    ///
-    /// This may trigger eval or mark the runtime as done if all workers are inactive.
-    async fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>>;
-
     /// Handle time limit expiration.
     ///
     /// Kills all workers and sets the runtime to Failed with TimeLimit reason.
     async fn handle_time_expired(&self) -> LifecycleResult<()>;
 
-    /// Check if all workers are inactive (awaiting or error).
-    async fn all_workers_inactive(&self) -> LifecycleResult<bool>;
-
-    /// Check if eval should be triggered.
-    ///
-    /// Returns true if all workers are inactive and the runtime is in Working status.
-    async fn should_trigger_eval(&self) -> LifecycleResult<bool>;
-
-    /// Check if worker scaling is possible.
-    async fn can_scale_up(&self) -> LifecycleResult<bool>;
-
     /// Get current run status.
     async fn run_status(&self) -> LifecycleResult<Status>;
-
-    /// Get the lifecycle context.
-    fn context(&self) -> &LifecycleContext;
 }

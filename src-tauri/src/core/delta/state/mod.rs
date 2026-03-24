@@ -13,7 +13,7 @@ mod schema;
 mod versions;
 
 pub use error::{DeltaStateError, DeltaStateResult};
-pub use runs::{list_working_route_runtimes, update_route_runtime_status_by_name};
+pub use runs::list_working_route_runtimes;
 pub use schema::ensure_schema;
 
 use sqlx::SqlitePool;
@@ -61,16 +61,6 @@ impl DeltaState {
             project_id,
             route_id,
         }
-    }
-
-    /// Get the project ID
-    pub fn project_id(&self) -> i64 {
-        self.project_id
-    }
-
-    /// Get the route ID
-    pub fn route_id(&self) -> i64 {
-        self.route_id
     }
 
     /// Get the global pool with schema initialized

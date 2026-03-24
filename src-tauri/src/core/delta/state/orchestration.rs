@@ -679,30 +679,4 @@ impl DeltaState {
             None => Ok(None),
         }
     }
-
-    /// Reopen a completed or failed node (reset to pending)
-    pub async fn reopen_node(&self, id: &str) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-        let now = utc_now();
-
-        sqlx::query(
-            "UPDATE board_nodes SET status = 'pending', claimed_by = NULL, claimed_at = NULL, completed_at = NULL, completed_by = NULL, check_result = NULL, check_feedback = NULL, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
-        )
-        .bind(&now)
-        .bind(id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
-
-        self.propagate_parent_status(id).await?;
-        self.bump_tree_generation().await?;
-        Ok(())
-    }
-
-    /// Get blocker node IDs for a node
-    pub async fn get_blockers(&self, id: &str) -> DeltaStateResult<Vec<String>> {
-        let pool = self.pool().await?;
-        self.load_node_blocked_by(pool, id).await
-    }
 }

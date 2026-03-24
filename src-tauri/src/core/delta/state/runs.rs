@@ -74,23 +74,6 @@ impl DeltaState {
         Ok(())
     }
 
-    /// Record dispatch time
-    pub async fn record_dispatch(&self) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-        let now = utc_now();
-
-        sqlx::query(
-            "UPDATE route_runtimes SET last_dispatch_at = ? WHERE project_id = ? AND route_id = ?",
-        )
-        .bind(&now)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
-
-        Ok(())
-    }
-
     pub(crate) fn row_to_route_runtime(&self, row: &sqlx::sqlite::SqliteRow) -> RouteRuntime {
         let runtime_name: String = row.get("runtime_name");
         let status_str: String = row.get("status");
@@ -145,42 +128,6 @@ impl DeltaState {
 
         Ok(runs)
     }
-}
-
-/// Update a route runtime's status by runtime name.
-///
-/// Used by runtime-level commands that only have the runtime name.
-pub async fn update_route_runtime_status_by_name(
-    runtime_name: &str,
-    status: RouteRuntimeStatus,
-) -> DeltaStateResult<()> {
-    let pool = global_pool().await;
-    ensure_schema(pool).await?;
-
-    let row = sqlx::query("SELECT project_id, route_id FROM route_runtimes WHERE runtime_name = ?")
-        .bind(runtime_name)
-        .fetch_optional(pool)
-        .await?;
-
-    if let Some(row) = row {
-        let project_id: i64 = row.get("project_id");
-        let route_id: i64 = row.get("route_id");
-
-        sqlx::query("UPDATE route_runtimes SET status = ? WHERE runtime_name = ?")
-            .bind(status.as_str())
-            .bind(runtime_name)
-            .execute(pool)
-            .await?;
-
-        // Bump tree generation so the frontend picks up the change
-        let state = DeltaState {
-            project_id,
-            route_id,
-        };
-        state.bump_tree_generation().await?;
-    }
-
-    Ok(())
 }
 
 /// List all working route runtimes.

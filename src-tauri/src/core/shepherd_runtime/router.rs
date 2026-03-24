@@ -10,7 +10,8 @@ use lash::{
 use serde_json::{json, Value};
 
 use super::commands::SilentLashSink;
-use crate::core::{llm_provider, CapabilityProfile, DeltaState, ShepherdChatStore, ShepherdEffort};
+use crate::core::delta::DeltaState;
+use crate::core::{llm_provider, CapabilityProfile, ShepherdChatStore, ShepherdEffort};
 
 macro_rules! tool_definition {
     ($($field:tt)*) => {

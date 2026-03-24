@@ -8,7 +8,6 @@ use super::ResultExt;
 
 /// Get a route by ID
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_route(project_id: i64, route_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
     store.get_route(route_id).await.str_err()
@@ -16,7 +15,6 @@ pub async fn get_route(project_id: i64, route_id: i64) -> Result<Route, String> 
 
 /// Replace selected-route execution defaults.
 #[tracing::instrument]
-#[tauri::command]
 pub async fn update_route_settings(
     project_id: i64,
     route_id: i64,
@@ -44,7 +42,6 @@ pub async fn update_route_settings(
 
 /// Create a new route (fork from parent)
 #[tracing::instrument]
-#[tauri::command]
 pub async fn create_route(
     project_id: i64,
     name: String,
@@ -64,7 +61,6 @@ pub async fn create_route(
 
 /// Archive a route
 #[tracing::instrument]
-#[tauri::command]
 pub async fn archive_route(project_id: i64, route_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
     let project_store = crate::core::project::ProjectStore::open().await.str_err()?;
@@ -84,7 +80,6 @@ pub async fn archive_route(project_id: i64, route_id: i64) -> Result<Route, Stri
 
 /// Set the active route for a project
 #[tracing::instrument]
-#[tauri::command]
 pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), String> {
     let store = RouteStore::new(project_id).await.str_err()?;
     let route = store.get_route(route_id).await.str_err()?;
@@ -109,7 +104,6 @@ pub async fn set_active_route(project_id: i64, route_id: i64) -> Result<(), Stri
 /// Falls back to main route if available, otherwise first route. If no routes
 /// exist yet, creates a default main route.
 #[tracing::instrument]
-#[tauri::command]
 pub async fn get_active_route(project_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
 

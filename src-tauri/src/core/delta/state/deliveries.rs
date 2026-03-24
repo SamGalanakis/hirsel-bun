@@ -83,31 +83,6 @@ impl DeltaState {
         Ok(self.row_to_delivery(&row))
     }
 
-    /// Get all deliveries for a board version
-    pub async fn get_deliveries_for_version(
-        &self,
-        version_id: i64,
-    ) -> DeltaStateResult<Vec<Delivery>> {
-        let pool = self.pool().await?;
-        let rows = sqlx::query(
-            "SELECT id, project_id, route_id, version_id, status, target_branch, delivery_branch,
-                    pr_url, pr_number, started_at, completed_at, failure_reason
-             FROM deliveries
-             WHERE version_id = ?
-             ORDER BY id DESC",
-        )
-        .bind(version_id)
-        .fetch_all(pool)
-        .await?;
-
-        let deliveries = rows
-            .into_iter()
-            .map(|row| self.row_to_delivery(&row))
-            .collect();
-
-        Ok(deliveries)
-    }
-
     /// Update delivery status
     pub async fn update_delivery_status(
         &self,
@@ -244,29 +219,6 @@ impl DeltaState {
             completed_at: None,
             error_message: None,
         })
-    }
-
-    /// Complete a delivery attempt
-    pub async fn complete_delivery_attempt(
-        &self,
-        id: i64,
-        status: DeliveryAttemptStatus,
-        error_message: Option<&str>,
-    ) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-        let now = utc_now();
-
-        sqlx::query(
-            "UPDATE delivery_attempts SET status = ?, completed_at = ?, error_message = ? WHERE id = ?",
-        )
-        .bind(status.as_str())
-        .bind(&now)
-        .bind(error_message)
-        .bind(id)
-        .execute(pool)
-        .await?;
-
-        Ok(())
     }
 
     /// Get delivery attempts for a delivery

@@ -8,8 +8,6 @@ use super::types::{
     CreateProjectRequest, Project, ProjectFocusView, ProjectRetainedContext, UpdateProjectRequest,
 };
 use crate::core::db::{global_pool, utc_now};
-use crate::core::draft::StartingPoint;
-use crate::core::route::{CreateMainRouteRequest, RouteStore};
 
 /// Schema for projects table.
 const SCHEMA: &str = r#"
@@ -154,8 +152,11 @@ impl ProjectStore {
         global_pool().await
     }
 
-    /// Create a new project with a seeded main route.
-    pub async fn create_project(&self, req: &CreateProjectRequest) -> ProjectResult<Project> {
+    /// Insert a bare project row.
+    pub async fn create_project_record(
+        &self,
+        req: &CreateProjectRequest,
+    ) -> ProjectResult<Project> {
         let pool = self.pool().await;
 
         if req.repos.is_empty() {
@@ -188,60 +189,20 @@ impl ProjectStore {
         .execute(pool)
         .await?;
 
-        let project_id = result.last_insert_rowid();
+        self.get_project(result.last_insert_rowid()).await
+    }
 
-        let route_store = RouteStore::new(project_id).await?;
-        let main_route = route_store
-            .create_main_route_with_seed(&CreateMainRouteRequest {
-                repos: req.repos.clone(),
-                default_repo_index: req.default_repo_index,
-                time_limit_minutes: None,
-                human_in_the_loop: None,
-                target_branch: None,
-            })
-            .await?;
-
+    /// Select the active route for a project.
+    pub async fn set_active_route_id(&self, project_id: i64, route_id: i64) -> ProjectResult<()> {
+        let pool = self.pool().await;
+        let _ = self.get_project(project_id).await?;
         sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")
-            .bind(main_route.id)
+            .bind(route_id)
             .bind(utc_now())
             .bind(project_id)
             .execute(pool)
             .await?;
-
-        // Auto-detect icon from repo URL
-        if let Some(icon_url) = detect_icon_from_repos(&req.repos) {
-            let _ = sqlx::query("UPDATE projects SET icon = ? WHERE id = ?")
-                .bind(&icon_url)
-                .bind(project_id)
-                .execute(pool)
-                .await;
-        }
-
-        let focus_html = default_project_focus_html(&req.name);
-        sqlx::query(
-            "INSERT INTO project_focus_views (project_id, html, source, updated_at)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(project_id)
-        .bind(focus_html)
-        .bind("placeholder")
-        .bind(utc_now())
-        .execute(pool)
-        .await?;
-
-        let retained_markdown = default_project_retained_context_markdown(&req.name);
-        sqlx::query(
-            "INSERT OR REPLACE INTO project_retained_contexts (project_id, markdown, source, updated_at)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(project_id)
-        .bind(retained_markdown)
-        .bind("seed")
-        .bind(utc_now())
-        .execute(pool)
-        .await?;
-
-        self.get_project(project_id).await
+        Ok(())
     }
 
     /// Get a project by ID
@@ -595,72 +556,6 @@ impl ProjectStore {
             active_route_id: row.get("active_route_id"),
         }
     }
-}
-
-/// Try to detect a favicon URL from the project's repo configuration.
-///
-/// For GitHub repos, uses the org/user avatar. For other git hosts, uses
-/// Google's favicon service. Local folders check for common favicon paths.
-fn detect_icon_from_repos(repos: &[crate::core::route::CreateRouteRepoRequest]) -> Option<String> {
-    for repo in repos {
-        match &repo.starting_point {
-            StartingPoint::GitRepo { url, .. } => {
-                if let Some(icon) = favicon_from_git_url(url) {
-                    return Some(icon);
-                }
-            }
-            StartingPoint::LocalFolder { path } => {
-                // Check common favicon locations in local repos
-                for candidate in &[
-                    "favicon.ico",
-                    "public/favicon.ico",
-                    "static/favicon.ico",
-                    "src/favicon.ico",
-                    "assets/favicon.ico",
-                ] {
-                    let full = std::path::Path::new(path).join(candidate);
-                    if full.exists() {
-                        return Some(format!("file://{}", full.display()));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Extract a favicon URL from a git remote URL.
-/// Uses Google's favicon service for all git hosts (including GitHub)
-/// to get the site favicon rather than user profile photos.
-fn favicon_from_git_url(url: &str) -> Option<String> {
-    let domain = extract_domain(url)?;
-    Some(format!(
-        "https://www.google.com/s2/favicons?domain={}&sz=64",
-        domain
-    ))
-}
-
-/// Extract domain from a git URL (ssh or https).
-fn extract_domain(url: &str) -> Option<&str> {
-    // ssh: git@host:path
-    if let Some(rest) = url.strip_prefix("git@") {
-        return rest.split(':').next();
-    }
-    // https://host/path or ssh://git@host/path
-    if url.contains("://") {
-        let after_scheme = url.split("://").nth(1)?;
-        let after_auth = if after_scheme.contains('@') {
-            after_scheme.split('@').nth(1)?
-        } else {
-            after_scheme
-        };
-        return after_auth
-            .split('/')
-            .next()
-            .map(|h| h.split(':').next().unwrap_or(h));
-    }
-    None
 }
 
 fn default_project_retained_context_markdown(project_name: &str) -> String {

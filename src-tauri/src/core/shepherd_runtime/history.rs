@@ -2,8 +2,8 @@ use base64::Engine;
 use lash::{Message, MessageRole, Part, PartKind, PruneState};
 
 use super::types::{ShepherdMessageChunk, ShepherdScope};
+use crate::core::app::ResultExt;
 use crate::core::{ShepherdChatMessage, ShepherdChatStore, ShepherdQueuedTurn};
-use crate::gui::commands::ResultExt;
 
 pub(super) const MAX_IMAGE_COUNT: usize = 8;
 pub(super) const MAX_IMAGE_BASE64_CHARS: usize = 12 * 1024 * 1024;

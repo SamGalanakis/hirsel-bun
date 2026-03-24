@@ -456,24 +456,6 @@ pub struct DeliveryAttempt {
 // Request Types
 // =============================================================================
 
-/// Request to create a board node
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateBoardNodeRequest {
-    pub parent_id: Option<String>,
-    pub name: String,
-    #[serde(default)]
-    pub kind: NodeKind,
-    #[serde(default)]
-    pub content: String,
-    #[serde(default)]
-    pub difficulty: BoardNodeDifficulty,
-    #[serde(default)]
-    pub validated_by: Vec<String>,
-    #[serde(default)]
-    pub blocked_by: Vec<String>,
-}
-
 /// Request to update a board node
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -483,16 +465,4 @@ pub struct UpdateBoardNodeRequest {
     pub difficulty: Option<BoardNodeDifficulty>,
     pub validated_by: Option<Vec<String>>,
     pub blocked_by: Option<Vec<String>>,
-}
-
-/// Result of a dispatch operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DispatchResult {
-    pub runtime_name: String,
-    pub node_count: usize,
-    pub feature_count: usize,
-    pub plan_task_count: usize,
-    pub version_number: i32,
-    pub version_id: i64,
 }

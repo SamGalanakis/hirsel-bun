@@ -879,11 +879,6 @@ impl LifecycleManager for LocalLifecycleManager {
         let mut actions = Vec::new();
 
         match event {
-            LifecycleEvent::WorkerDone { worker_name } => {
-                debug!("Processing WorkerDone event for {}", worker_name);
-                actions.extend(self.worker_done(&worker_name).await?);
-            }
-
             LifecycleEvent::WorkerStatusChanged {
                 worker_name,
                 old,
@@ -898,31 +893,6 @@ impl LifecycleManager for LocalLifecycleManager {
                     if self.maybe_trigger_eval().await? {
                         actions.push(LifecycleAction::EvalTriggered);
                     }
-                }
-            }
-
-            LifecycleEvent::TaskCompleted {
-                task_id: _,
-                worker_name: _,
-            } => {
-                // Task completion might unblock other tasks
-                // Try to resume awaiting workers and scale up
-                let resume_actions = self.resume_awaiting_workers_internal().await?;
-                actions.extend(resume_actions);
-
-                if let Some(action) = self.maybe_scale_up_internal().await? {
-                    actions.push(action);
-                }
-            }
-
-            LifecycleEvent::TaskAdded { task_id: _ }
-            | LifecycleEvent::TaskUnclaimed { task_id: _ } => {
-                // New or unclaimed task - try to resume awaiting workers
-                let resume_actions = self.resume_awaiting_workers_internal().await?;
-                actions.extend(resume_actions);
-
-                if let Some(action) = self.maybe_scale_up_internal().await? {
-                    actions.push(action);
                 }
             }
 
@@ -945,35 +915,6 @@ impl LifecycleManager for LocalLifecycleManager {
                 // Check if we should scale up
                 if let Some(action) = self.maybe_scale_up_internal().await? {
                     actions.push(action);
-                }
-            }
-
-            LifecycleEvent::PauseRequested { reason } => {
-                let paused = self.pause_run(&reason).await?;
-                if !paused.is_empty() {
-                    actions.push(LifecycleAction::WorkersPaused(paused));
-                }
-                actions.push(LifecycleAction::RunStatusChanged(Status::Paused));
-            }
-
-            LifecycleEvent::ResumeRequested => {
-                let resume_actions = self.resume_run().await?;
-                actions.extend(resume_actions);
-                actions.push(LifecycleAction::RunStatusChanged(Status::Working));
-            }
-
-            LifecycleEvent::EvalCompleted { success, feedback } => {
-                if success {
-                    self.state.set_status(Status::Done).await?;
-                    actions.push(LifecycleAction::RunCompleted);
-                } else {
-                    // Eval failed - check if we should retry or fail the run
-                    debug!("Eval failed with feedback: {}", feedback);
-                    // Resume workers to continue working
-                    self.state.set_status(Status::Working).await?;
-                    let resume_actions = self.resume_awaiting_workers_internal().await?;
-                    actions.extend(resume_actions);
-                    actions.push(LifecycleAction::RunStatusChanged(Status::Working));
                 }
             }
         }
@@ -1056,28 +997,6 @@ impl LifecycleManager for LocalLifecycleManager {
         Ok(resume_actions)
     }
 
-    async fn worker_done(&self, worker_name: &str) -> LifecycleResult<Vec<LifecycleAction>> {
-        let mut actions = Vec::new();
-
-        // Update worker status to awaiting
-        self.state
-            .update_worker(
-                worker_name,
-                WorkerUpdate {
-                    status: Some(WorkerStatus::Awaiting),
-                    ..Default::default()
-                },
-            )
-            .await?;
-
-        // Check if eval should be triggered
-        if self.maybe_trigger_eval().await? {
-            actions.push(LifecycleAction::EvalTriggered);
-        }
-
-        Ok(actions)
-    }
-
     async fn handle_time_expired(&self) -> LifecycleResult<()> {
         // Only handle if not already failed
         let status = self.state.status().await?;
@@ -1139,42 +1058,11 @@ impl LifecycleManager for LocalLifecycleManager {
         Ok(())
     }
 
-    async fn all_workers_inactive(&self) -> LifecycleResult<bool> {
-        self.state
-            .all_workers_inactive()
-            .await
-            .map_err(|e| LifecycleError::State(e.to_string()))
-    }
-
-    async fn should_trigger_eval(&self) -> LifecycleResult<bool> {
-        // Check if all workers are inactive
-        if !self.all_workers_inactive().await? {
-            return Ok(false);
-        }
-
-        // Check if run is in Working status
-        let status = self.run_status().await?;
-        if status != Status::Working {
-            return Ok(false);
-        }
-
-        // Check if eval script exists
-        Ok(self.files.eval_spec().exists())
-    }
-
-    async fn can_scale_up(&self) -> LifecycleResult<bool> {
-        Ok(false)
-    }
-
     async fn run_status(&self) -> LifecycleResult<Status> {
         self.state
             .status()
             .await
             .map_err(|e| LifecycleError::State(e.to_string()))
-    }
-
-    fn context(&self) -> &LifecycleContext {
-        &self.context
     }
 }
 
@@ -1191,6 +1079,5 @@ mod tests {
         );
         assert_eq!(ctx.runtime_name, "test-run");
         assert_eq!(ctx.runtime_dir, PathBuf::from("/tmp/test"));
-        assert_eq!(ctx.agent_command, vec!["codex".to_string()]);
     }
 }

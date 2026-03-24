@@ -1,13 +1,13 @@
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
 use crate::core::api_types::{Worker, WorkerEventResponse};
+use crate::core::app::types::UnreadNotificationsResponse;
 use crate::core::icons::icon;
 use crate::core::project::{Project, ProjectSurfaceSnapshot};
 use crate::core::route::Route;
+use crate::core::shepherd_runtime::ShepherdQueueState;
 use crate::core::worktree::WorkItemTree;
 use crate::core::{ShepherdChatMessage, ShepherdEffort};
-use crate::gui::commands::shepherd::commands::ShepherdQueueState;
-use crate::gui::commands::types::UnreadNotificationsResponse;
 
 const DATASTAR_BUNDLE: &str = "/static/datastar.js";
 const MAX_VISIBLE_EFFORTS: usize = 5;

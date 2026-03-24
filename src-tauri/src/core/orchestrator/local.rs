@@ -1591,9 +1591,7 @@ impl Orchestrator for LocalOrchestrator {
         &self,
         req: crate::core::project::CreateProjectRequest,
     ) -> OrchestratorResult<crate::core::project::Project> {
-        let store = crate::core::project::ProjectStore::open().await?;
-        store
-            .create_project(&req)
+        crate::core::app::ProjectLifecycleService::create_project(&req)
             .await
             .map_err(|e| OrchestratorError::State(e.to_string()))
     }

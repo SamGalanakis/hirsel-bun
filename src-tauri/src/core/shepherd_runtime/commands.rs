@@ -22,9 +22,10 @@ use super::runtime::{
 use super::tools::ShepherdToolProvider;
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::core::credentials::CredentialStore;
+use crate::core::delta::DeltaState;
 use crate::core::{
-    ensure_sync_project_task, llm_provider, DeltaState, ProjectStore, Route, RouteStore,
-    ShepherdChatMessage, ShepherdChatStore, ShepherdEffort, ShepherdQueuedTurn, WorkItem,
+    ensure_sync_project_task, llm_provider, ProjectStore, Route, RouteStore, ShepherdChatMessage,
+    ShepherdChatStore, ShepherdEffort, ShepherdQueuedTurn, WorkItem,
 };
 use crate::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
 

@@ -136,7 +136,9 @@ h3 {
 .btn svg { width: 14px; height: 14px; flex-shrink: 0; }
 
 .btn-primary { background: var(--text); color: var(--bg); border-color: var(--text); }
-.btn-primary:hover { background: #fff; border-color: #fff; }
+.btn-primary:hover { background: #fff; color: var(--bg); border-color: #fff; }
+.btn-primary:focus { color: var(--bg); }
+.btn-primary:active { color: var(--bg); }
 
 .btn-ghost { border-color: transparent; color: var(--text-muted); }
 .btn-ghost:hover { background: rgba(255,255,255,0.03); border-color: var(--border); color: var(--text); }

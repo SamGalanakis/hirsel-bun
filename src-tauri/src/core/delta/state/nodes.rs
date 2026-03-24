@@ -105,15 +105,6 @@ impl DeltaState {
         })
     }
 
-    /// Get all draft nodes (status=draft) for dispatch
-    pub async fn get_draft_nodes(&self) -> DeltaStateResult<Vec<BoardNode>> {
-        let nodes = self.get_nodes().await?;
-        Ok(nodes
-            .into_iter()
-            .filter(|n| n.status == BoardNodeStatus::Draft)
-            .collect())
-    }
-
     /// Get the root node ID for this project
     pub async fn get_root_node_id(&self) -> DeltaStateResult<Option<String>> {
         let pool = self.pool().await?;
@@ -162,20 +153,6 @@ impl DeltaState {
             .collect();
 
         Ok(nodes)
-    }
-
-    /// Check if a node has children
-    pub async fn has_children(&self, id: &str) -> DeltaStateResult<bool> {
-        let pool = self.pool().await?;
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM board_nodes WHERE parent_id = ? AND project_id = ? AND route_id = ?",
-        )
-        .bind(id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .fetch_one(pool)
-        .await?;
-        Ok(count > 0)
     }
 
     /// Get a lightweight map of worker_name -> task_name for currently working nodes.
@@ -267,79 +244,6 @@ impl DeltaState {
     // =========================================================================
     // Board Node Create Operations
     // =========================================================================
-
-    /// Create a new board node (feature/task/check from user)
-    pub async fn create_node(&self, req: &CreateBoardNodeRequest) -> DeltaStateResult<BoardNode> {
-        let pool = self.pool().await?;
-
-        // Validate parent_id if provided
-        if let Some(pid) = &req.parent_id {
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM board_nodes WHERE id = ? AND project_id = ? AND route_id = ?)",
-            )
-            .bind(pid)
-            .bind(self.project_id)
-            .bind(self.route_id)
-            .fetch_one(pool)
-            .await?;
-            if !exists {
-                return Err(DeltaStateError::ParentNodeNotFound(pid.clone()));
-            }
-        }
-        let parent_id = req.parent_id.clone();
-
-        let id = self.generate_slug(pool, &req.name).await?;
-        let now = utc_now();
-
-        let position = self.next_position(pool, parent_id.as_deref()).await?;
-
-        sqlx::query(
-            "INSERT INTO board_nodes (id, project_id, route_id, parent_id, position, name, kind, source, content, difficulty, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'user', ?, ?, 'draft', ?, ?)",
-        )
-        .bind(&id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .bind(&parent_id)
-        .bind(position)
-        .bind(&req.name)
-        .bind(req.kind.as_str())
-        .bind(&req.content)
-        .bind(req.difficulty.as_str())
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
-
-        // Insert validated_by relationships
-        for check_id in &req.validated_by {
-            sqlx::query(
-                "INSERT INTO board_node_checked_by (check_id, node_id, project_id, route_id) VALUES (?, ?, ?, ?)",
-            )
-            .bind(check_id)
-            .bind(&id)
-            .bind(self.project_id)
-            .bind(self.route_id)
-            .execute(pool)
-            .await?;
-        }
-
-        // Insert blocked_by relationships
-        for blocker_id in &req.blocked_by {
-            sqlx::query(
-                "INSERT INTO board_node_blocked_by (node_id, blocker_id, project_id, route_id) VALUES (?, ?, ?, ?)",
-            )
-            .bind(&id)
-            .bind(blocker_id)
-            .bind(self.project_id)
-            .bind(self.route_id)
-            .execute(pool)
-            .await?;
-        }
-
-        self.bump_tree_generation().await?;
-        self.get_node(&id).await
-    }
 
     /// Create a node with a specific ID (for agent import or system tasks)
     ///
@@ -596,42 +500,6 @@ impl DeltaState {
                 .await?;
             }
         }
-
-        self.bump_tree_generation().await?;
-        self.get_node(id).await
-    }
-
-    /// Update node status
-    pub async fn update_node_status(
-        &self,
-        id: &str,
-        status: BoardNodeStatus,
-        commit_sha: Option<&str>,
-    ) -> DeltaStateResult<BoardNode> {
-        let pool = self.pool().await?;
-        let now = utc_now();
-
-        let completed_at = if matches!(
-            status,
-            BoardNodeStatus::Done | BoardNodeStatus::Failed | BoardNodeStatus::Validated
-        ) {
-            Some(now.clone())
-        } else {
-            None
-        };
-
-        sqlx::query(
-            "UPDATE board_nodes SET status = ?, completed_at = ?, last_commit_sha = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
-        )
-        .bind(status.as_str())
-        .bind(completed_at)
-        .bind(commit_sha)
-        .bind(&now)
-        .bind(id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
 
         self.bump_tree_generation().await?;
         self.get_node(id).await
@@ -957,48 +825,6 @@ impl DeltaState {
         Ok(())
     }
 
-    /// Move a node to a new parent and/or position
-    pub async fn move_node(
-        &self,
-        id: &str,
-        new_parent_id: Option<&str>,
-        new_position: i32,
-    ) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-
-        let _node = self.get_node(id).await?;
-
-        if let Some(ref pid) = new_parent_id {
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM board_nodes WHERE id = ? AND project_id = ? AND route_id = ?)",
-            )
-            .bind(pid)
-            .bind(self.project_id)
-            .bind(self.route_id)
-            .fetch_one(pool)
-            .await?;
-            if !exists {
-                return Err(DeltaStateError::ParentNodeNotFound(pid.to_string()));
-            }
-        }
-
-        let now = utc_now();
-        sqlx::query(
-            "UPDATE board_nodes SET parent_id = ?, position = ?, updated_at = ? WHERE id = ? AND project_id = ? AND route_id = ?",
-        )
-        .bind(new_parent_id)
-        .bind(new_position)
-        .bind(&now)
-        .bind(id)
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
-
-        self.bump_tree_generation().await?;
-        Ok(())
-    }
-
     // =========================================================================
     // Board Node Delete Operations
     // =========================================================================
@@ -1073,33 +899,6 @@ impl DeltaState {
                 .execute(pool)
                 .await?;
         }
-
-        self.bump_tree_generation().await?;
-        Ok(())
-    }
-
-    /// Reset tree - delete all board nodes except the root
-    pub async fn reset_tree(&self) -> DeltaStateResult<()> {
-        let pool = self.pool().await?;
-
-        sqlx::query("DELETE FROM board_node_checked_by WHERE project_id = ? AND route_id = ?")
-            .bind(self.project_id)
-            .bind(self.route_id)
-            .execute(pool)
-            .await?;
-        sqlx::query("DELETE FROM board_node_blocked_by WHERE project_id = ? AND route_id = ?")
-            .bind(self.project_id)
-            .bind(self.route_id)
-            .execute(pool)
-            .await?;
-
-        sqlx::query(
-            "DELETE FROM board_nodes WHERE project_id = ? AND route_id = ? AND parent_id IS NOT NULL",
-        )
-        .bind(self.project_id)
-        .bind(self.route_id)
-        .execute(pool)
-        .await?;
 
         self.bump_tree_generation().await?;
         Ok(())
