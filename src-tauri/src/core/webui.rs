@@ -346,53 +346,76 @@ pub fn render_connect_page(error: Option<&str>, return_to: Option<&str>) -> Mark
 // ── Empty Projects / Sidebar ──
 
 pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
+    let has_projects = !projects.is_empty();
     app_document(
         "Projects",
-        "Create your first Hirsel project",
+        "Hirsel project workspace",
         html! {
-            main class="shell" {
-                aside class="sidebar" {
-                    div class="brand" { "HIRSEL" }
-                    nav class="project-nav" {
-                        @for project in projects {
-                            a href=(format!("/app/projects/{}", project.id)) class="project-link" {
-                                (icon("folder"))
-                                (&project.name)
+            main class="welcome-page" {
+                // Centered content
+                div class="welcome-container" {
+                    // Architectural grid motif
+                    svg class="welcome-glyph" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="0.6" {
+                        rect x="4" y="4" width="40" height="40" {}
+                        line x1="4" y1="24" x2="44" y2="24" {}
+                        line x1="24" y1="4" x2="24" y2="44" {}
+                        rect x="14" y="14" width="20" height="20" opacity="0.25" {}
+                    }
+                    p class="welcome-brand" { "HIRSEL" }
+
+                    @if has_projects {
+                        // Project list + create form
+                        div class="welcome-projects" {
+                            p class="eyebrow" style="margin-bottom: 10px;" { "Your projects" }
+                            nav class="welcome-project-list" {
+                                @for project in projects {
+                                    a href=(format!("/app/projects/{}", project.id)) class="welcome-project-item" {
+                                        (icon("folder"))
+                                        span { (&project.name) }
+                                        (icon("arrow-left"))
+                                    }
+                                }
+                            }
+                        }
+                        hr style="margin: 20px 0; opacity: 0.15;" {}
+                    }
+
+                    // Create project form
+                    div class="welcome-create" {
+                        @if !has_projects {
+                            h1 class="welcome-headline" { "Point Hirsel at a repository" }
+                            p class="muted" style="margin-bottom: 20px; max-width: 360px; text-align: center;" {
+                                "Create a project to start orchestrating work."
+                            }
+                        } @else {
+                            p class="eyebrow" style="margin-bottom: 10px;" { "New project" }
+                        }
+
+                        form action="/app/projects" method="post" class="welcome-form" {
+                            div class="form-field" {
+                                label for="proj-name" { "Name" }
+                                input id="proj-name" type="text" name="name" placeholder="my-project" required;
+                            }
+                            div class="form-field" {
+                                label for="repo-url" { "Repository" }
+                                input id="repo-url" type="url" name="repo_url" placeholder="https://github.com/owner/repo" required;
+                            }
+                            div class="form-field" {
+                                label for="branch" { "Branch" }
+                                input id="branch" type="text" name="branch" value="main";
+                            }
+                            button type="submit" class="action-btn primary" style="width:100%;" {
+                                (icon("plus"))
+                                "Create project"
                             }
                         }
                     }
-                    div class="sidebar-actions" {
-                        a href="/app/settings" class="action-btn ghost" style="width:100%;" {
+
+                    // Footer link
+                    div class="welcome-footer" {
+                        a href="/app/settings" class="action-btn ghost" {
                             (icon("settings"))
                             "Backend settings"
-                        }
-                    }
-                }
-                section class="main-panel" {
-                    article class="panel" style="max-width: 540px;" {
-                        header {
-                            h2 { "Create project" }
-                            p { "Point Hirsel at a repository to get started." }
-                        }
-                        section {
-                            form action="/app/projects" method="post" {
-                                div class="form-field" {
-                                    label for="proj-name" { "Project name" }
-                                    input id="proj-name" type="text" name="name" required;
-                                }
-                                div class="form-field" {
-                                    label for="repo-url" { "Repository URL" }
-                                    input id="repo-url" type="url" name="repo_url" placeholder="https://github.com/owner/repo" required;
-                                }
-                                div class="form-field" {
-                                    label for="branch" { "Branch" }
-                                    input id="branch" type="text" name="branch" value="main";
-                                }
-                                button type="submit" class="action-btn" style="width:100%; margin-top: 8px;" {
-                                    (icon("plus"))
-                                    "Create project"
-                                }
-                            }
                         }
                     }
                 }

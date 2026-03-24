@@ -842,6 +842,93 @@ h3 {
    PAGES
    ═══════════════════════════════════════ */
 
+/* ── Welcome / Projects Page ── */
+
+.welcome-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+}
+
+.welcome-container {
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.welcome-glyph {
+  width: 40px;
+  height: 40px;
+  color: var(--dim);
+  opacity: 0.45;
+  margin-bottom: 16px;
+}
+
+.welcome-brand {
+  font-size: 11px;
+  letter-spacing: 0.35em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 28px;
+}
+
+.welcome-headline {
+  font-family: var(--headline);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 22px;
+  text-align: center;
+  line-height: 1.25;
+  margin-bottom: 8px;
+}
+
+.welcome-projects {
+  width: 100%;
+}
+
+.welcome-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.welcome-project-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.welcome-project-item:hover {
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--border-hover);
+  color: var(--text);
+}
+
+.welcome-project-item svg:first-child { width: 14px; height: 14px; color: var(--muted); }
+.welcome-project-item svg:last-child { width: 12px; height: 12px; margin-left: auto; color: var(--dim); transform: rotate(180deg); }
+
+.welcome-create {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.welcome-form {
+  width: 100%;
+}
+
+.welcome-footer {
+  margin-top: 28px;
+}
+
 .connect-page {
   min-height: 100vh;
   display: grid;
