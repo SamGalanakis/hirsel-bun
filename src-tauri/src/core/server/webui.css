@@ -368,7 +368,68 @@ h3 {
 .route-pill { display: inline-flex; align-items: center; gap: 5px; }
 .toolbar-toggle { margin-left: auto; }
 
-.focus-stage { min-height: 0; padding: 10px; }
+.focus-stage {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Focus Tabs ── */
+
+.focus-tabs {
+  display: flex;
+  gap: 0;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+
+.focus-tabs::-webkit-scrollbar { display: none; }
+
+.focus-tabs form { display: flex; }
+
+.focus-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--body);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.focus-tab svg { width: 13px; height: 13px; }
+
+.focus-tab:hover {
+  color: var(--text-2);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.focus-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+
+.focus-tab-status {
+  font-size: 14px;
+  line-height: 1;
+}
+
+/* ── Focus Content ── */
+
+.focus-content {
+  flex: 1;
+  min-height: 0;
+  padding: 10px;
+}
 
 .focus-frame {
   width: 100%;

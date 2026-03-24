@@ -27,7 +27,7 @@ use crate::core::webui::{
     render_project_page, render_project_settings_page, render_settings_page,
     render_worker_detail_page,
 };
-use crate::core::ShepherdEffort;
+use crate::core::{ShepherdChatStore, ShepherdEffort};
 use crate::gui::commands::concerns as gui_concerns;
 use crate::gui::commands::events as gui_events;
 use crate::gui::commands::projects as gui_projects;
@@ -249,6 +249,10 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/app/projects/{project_id}/efforts/{effort_id}/focus",
             post(focus_effort),
         )
+        .route(
+            "/app/projects/{project_id}/efforts/unfocus",
+            post(unfocus_effort),
+        )
         .route("/app/projects/{project_id}/routes", post(create_route))
         .route(
             "/app/projects/{project_id}/routes/{route_id}/select",
@@ -447,6 +451,35 @@ pub async fn focus_effort(
     gui_shepherd::focus_project_effort(project_id, route.id, effort_id)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
+}
+
+pub async fn unfocus_effort(Path(project_id): Path<i64>) -> Result<Redirect, (StatusCode, String)> {
+    let store = ShepherdChatStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let route = gui_routes::get_active_route(project_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    // Unfocus all efforts for this project
+    let efforts = store
+        .list_project_efforts(project_id, route.id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    for effort in &efforts {
+        if effort.focused {
+            // Set focused = 0 by re-focusing with a dummy then clearing
+            // Actually, just unfocus all directly
+            break;
+        }
+    }
+    // Simple: just unfocus all via SQL
+    let pool = crate::core::db::global_pool().await;
+    sqlx::query("UPDATE shepherd_efforts SET focused = 0 WHERE project_id = ?")
+        .bind(project_id)
+        .execute(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
 }
 

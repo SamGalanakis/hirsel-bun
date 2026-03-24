@@ -487,32 +487,79 @@ pub fn render_project_page(
 
                         // ── Focus Stage ──
                         section id="focus-panel" class="focus-stage" {
-                            @if has_focus {
-                                iframe
-                                    title={ "Project focus for " (&project.name) }
-                                    src={ "/app/projects/" (project.id) "/focus" }
-                                    class="focus-frame" {}
-                            } @else {
-                                div class="empty-focus-state" {
-                                    svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
-                                        rect x="4" y="4" width="32" height="32" {}
-                                        line x1="4" y1="20" x2="36" y2="20" {}
-                                        line x1="20" y1="4" x2="20" y2="36" {}
-                                        rect x="12" y="12" width="16" height="16" opacity="0.35" {}
+                            // Tab bar: Project + active efforts
+                            @if !efforts.is_empty() {
+                                nav class="focus-tabs" {
+                                    form action=(format!("/app/projects/{}/efforts/unfocus", project.id)) method="post" {
+                                        button type="submit" class=(if focused_effort.is_none() { "focus-tab active" } else { "focus-tab" }) {
+                                            (icon("folder"))
+                                            "Project"
+                                        }
                                     }
-                                    p class="eyebrow" { "Awaiting project focus" }
-                                    @if sync_state == "working" {
-                                        p class="muted" { "Hirsel is surveying the project in the background." }
-                                    } @else if sync_state == "failed" {
-                                        p class="muted" { "Project sync failed. Retry to build the first project picture." }
+                                    @for effort in efforts.iter().take(MAX_VISIBLE_EFFORTS) {
+                                        @let is_active = focused_effort.map(|e| e.id.as_str()) == Some(effort.id.as_str());
+                                        form action=(format!("/app/projects/{}/efforts/{}/focus", project.id, effort.id)) method="post" {
+                                            button type="submit" class=(if is_active { "focus-tab active" } else { "focus-tab" }) {
+                                                span { (&effort.title) }
+                                                @if effort.status != "active" {
+                                                    span class=(format!("focus-tab-status status-{}", effort.status)) { "·" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Content area
+                            div class="focus-content" {
+                                @if let Some(effort) = focused_effort {
+                                    // Show effort focus HTML or empty state
+                                    @if let Some(ref html) = effort.focus_html {
+                                        iframe
+                                            title={ "Effort: " (&effort.title) }
+                                            srcdoc=(html)
+                                            class="focus-frame" {}
                                     } @else {
-                                        p class="muted" { "Generate the first project picture when you are ready." }
+                                        div class="empty-focus-state" {
+                                            svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
+                                                rect x="4" y="4" width="32" height="32" {}
+                                                line x1="4" y1="20" x2="36" y2="20" {}
+                                                line x1="20" y1="4" x2="20" y2="36" {}
+                                                rect x="12" y="12" width="16" height="16" opacity="0.35" {}
+                                            }
+                                            p class="eyebrow" { (&effort.title) }
+                                            p class="muted" { "Shepherd will populate this view as the effort progresses." }
+                                        }
                                     }
-                                    @if sync_state != "working" {
-                                        form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
-                                            button type="submit" class="action-btn primary" {
-                                                (icon("refresh-cw"))
-                                                @if sync_state == "failed" { "Retry sync" } @else { "Sync" }
+                                } @else if has_focus {
+                                    // Project-level focus
+                                    iframe
+                                        title={ "Project focus for " (&project.name) }
+                                        src={ "/app/projects/" (project.id) "/focus" }
+                                        class="focus-frame" {}
+                                } @else {
+                                    // No focus at all
+                                    div class="empty-focus-state" {
+                                        svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
+                                            rect x="4" y="4" width="32" height="32" {}
+                                            line x1="4" y1="20" x2="36" y2="20" {}
+                                            line x1="20" y1="4" x2="20" y2="36" {}
+                                            rect x="12" y="12" width="16" height="16" opacity="0.35" {}
+                                        }
+                                        p class="eyebrow" { "Awaiting project focus" }
+                                        @if sync_state == "working" {
+                                            p class="muted" { "Hirsel is surveying the project in the background." }
+                                        } @else if sync_state == "failed" {
+                                            p class="muted" { "Project sync failed." }
+                                        } @else {
+                                            p class="muted" { "Generate the first project picture when you are ready." }
+                                        }
+                                        @if sync_state != "working" {
+                                            form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
+                                                button type="submit" class="action-btn primary" {
+                                                    (icon("refresh-cw"))
+                                                    @if sync_state == "failed" { "Retry sync" } @else { "Sync" }
+                                                }
                                             }
                                         }
                                     }

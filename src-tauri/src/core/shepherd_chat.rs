@@ -60,6 +60,19 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     SCHEMA_INIT
         .get_or_try_init(|| async {
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
+
+            // Additive migration: focus_html per effort
+            let has_focus_html: bool = sqlx::query_scalar(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('shepherd_efforts') WHERE name = 'focus_html'",
+            )
+            .fetch_one(pool)
+            .await?;
+            if !has_focus_html {
+                sqlx::query("ALTER TABLE shepherd_efforts ADD COLUMN focus_html TEXT")
+                    .execute(pool)
+                    .await?;
+            }
+
             Ok::<(), sqlx::Error>(())
         })
         .await?;
@@ -107,6 +120,8 @@ pub struct ShepherdEffort {
     pub updated_at: String,
     pub last_activity_at: String,
     pub archived_at: Option<String>,
+    #[serde(default)]
+    pub focus_html: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -178,6 +193,7 @@ impl ShepherdChatStore {
             updated_at: row.get("updated_at"),
             last_activity_at: row.get("last_activity_at"),
             archived_at: row.get("archived_at"),
+            focus_html: row.get("focus_html"),
         }
     }
 
@@ -515,8 +531,8 @@ impl ShepherdChatStore {
         sqlx::query(
             "INSERT INTO shepherd_efforts (
                 id, project_id, route_id, work_item_id, title, summary, status, focused,
-                created_at, updated_at, last_activity_at, archived_at
-             ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL)",
+                created_at, updated_at, last_activity_at, archived_at, focus_html
+             ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL, NULL)",
         )
         .bind(&id)
         .bind(project_id)
@@ -543,7 +559,7 @@ impl ShepherdChatStore {
         let pool = self.pool().await;
         let rows = sqlx::query(
             "SELECT id, project_id, route_id, work_item_id, title, summary, status, focused,
-                    created_at, updated_at, last_activity_at, archived_at
+                    created_at, updated_at, last_activity_at, archived_at, focus_html
              FROM shepherd_efforts
              WHERE project_id = ? AND route_id = ? AND archived_at IS NULL
              ORDER BY focused DESC, last_activity_at DESC, created_at DESC",
@@ -559,7 +575,7 @@ impl ShepherdChatStore {
         let pool = self.pool().await;
         let row = sqlx::query(
             "SELECT id, project_id, route_id, work_item_id, title, summary, status, focused,
-                    created_at, updated_at, last_activity_at, archived_at
+                    created_at, updated_at, last_activity_at, archived_at, focus_html
              FROM shepherd_efforts
              WHERE id = ?",
         )
@@ -577,7 +593,7 @@ impl ShepherdChatStore {
         let pool = self.pool().await;
         let row = sqlx::query(
             "SELECT id, project_id, route_id, work_item_id, title, summary, status, focused,
-                    created_at, updated_at, last_activity_at, archived_at
+                    created_at, updated_at, last_activity_at, archived_at, focus_html
              FROM shepherd_efforts
              WHERE project_id = ? AND route_id = ? AND archived_at IS NULL AND focused = 1
              ORDER BY last_activity_at DESC
@@ -614,6 +630,21 @@ impl ShepherdChatStore {
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn update_effort_focus_html(
+        &self,
+        effort_id: &str,
+        html: &str,
+    ) -> ShepherdChatResult<()> {
+        let pool = self.pool().await;
+        sqlx::query("UPDATE shepherd_efforts SET focus_html = ?, updated_at = ? WHERE id = ?")
+            .bind(html)
+            .bind(utc_now())
+            .bind(effort_id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 
