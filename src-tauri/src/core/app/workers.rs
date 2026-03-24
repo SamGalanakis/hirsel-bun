@@ -217,13 +217,6 @@ pub async fn get_route_workers(project_id: i64, route_id: i64) -> Result<Vec<Wor
 
     let runtime_db = config::runtime_dir(&runtime_name).join("hirsel.db");
     if !runtime_db.exists() {
-        tracing::info!(
-            project_id,
-            route_id,
-            runtime_name = %runtime_name,
-            runtime_db = %runtime_db.display(),
-            "route runtime exists in metadata but runtime database is not initialized yet; returning empty worker list"
-        );
         return Ok(Vec::new());
     }
 

@@ -26,8 +26,8 @@ use crate::core::server::routes::{CodexDeviceExchangeRequest, CodexDevicePollReq
 use crate::core::shepherd_runtime::types::ShepherdTaskFocus;
 use crate::core::shepherd_runtime::{self, ShepherdScope};
 use crate::core::webui::{
-    render_chat_panel, render_connect_page, render_empty_projects_page, render_focus_document,
-    render_project_page, render_project_settings_page, render_settings_page,
+    render_agent_cards, render_chat_panel, render_connect_page, render_empty_projects_page,
+    render_focus_document, render_project_page, render_project_settings_page, render_settings_page,
     render_worker_detail_page,
 };
 use crate::core::{app, shepherd_runtime as efforts_runtime};
@@ -1161,7 +1161,7 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
         let mut last_header = String::new();
         let mut last_chat = String::new();
         let mut last_work = String::new();
-        let mut last_workers = String::new();
+        let mut last_agents = String::new();
 
         loop {
             if let Ok((_projects, project, _route, surface, work_tree, workers, efforts, focused_effort, history, queue, _notifications)) =
@@ -1217,9 +1217,9 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
                         (crate::core::webui::render_work_tree_nodes(&work_tree))
                     }
                 }.into_string();
-                let workers_markup = maud::html! {
-                    section id="workers-panel" class="machinery-panel" {
-                        (crate::core::webui::render_worker_cards(&workers))
+                let agents_markup = maud::html! {
+                    section id="agents-panel" class="machinery-panel" {
+                        (render_agent_cards(&efforts, focused_effort.as_ref(), &workers))
                     }
                 }.into_string();
 
@@ -1242,9 +1242,9 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
                     last_work = work_markup.clone();
                     yield Ok::<Event, Infallible>(patch_elements("#work-panel", work_markup));
                 }
-                if workers_markup != last_workers {
-                    last_workers = workers_markup.clone();
-                    yield Ok::<Event, Infallible>(patch_elements("#workers-panel", workers_markup));
+                if agents_markup != last_agents {
+                    last_agents = agents_markup.clone();
+                    yield Ok::<Event, Infallible>(patch_elements("#agents-panel", agents_markup));
                 }
             }
 

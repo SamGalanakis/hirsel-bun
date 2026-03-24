@@ -469,6 +469,32 @@ h3 {
 .effort-history-title { font-weight: 500; color: var(--text-2); }
 .effort-history-summary { font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Focused effort context */
+.chat-effort-context {
+  margin: 0 var(--sp-3);
+  padding: var(--sp-2) 0;
+  display: grid;
+  gap: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.chat-effort-context-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.chat-effort-context-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+.chat-effort-context-summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* Messages */
 .chat-thread { flex: 1; min-height: 0; min-width: 0; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; padding: var(--sp-2) var(--sp-3); }
 .chat-row { display: flex; width: 100%; min-width: 0; }

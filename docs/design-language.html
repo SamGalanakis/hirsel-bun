@@ -1,344 +1,619 @@
 <!DOCTYPE html>
-
-<html class="dark" lang="en"><head>
-<meta charset="utf-8"/>
-<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
-<title>The Alchemical Ledger | Orchestration Board</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@1,6..72,200..800&amp;family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
-<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        "surface-bright": "#393939",
-                        "error-container": "#93000a",
-                        "primary": "#ffffff",
-                        "on-tertiary": "#1c1b1b",
-                        "primary-fixed-dim": "#4b463a",
-                        "on-secondary-fixed": "#161d1f",
-                        "primary-container": "#dcd4c4",
-                        "surface-container-low": "#1c1b1b",
-                        "error": "#ffb4ab",
-                        "on-secondary-container": "#dde3e7",
-                        "secondary": "#c1c8cb",
-                        "surface-tint": "#cdc6b6",
-                        "surface-container-lowest": "#0e0e0e",
-                        "on-surface-variant": "#c6c6c6",
-                        "surface-container-highest": "#353534",
-                        "on-secondary-fixed-variant": "#363c3f",
-                        "on-primary": "#1f1b11",
-                        "tertiary-container": "#929090",
-                        "on-primary-container": "#000000",
-                        "secondary-container": "#41484b",
-                        "on-error": "#690005",
-                        "outline-variant": "#474747",
-                        "surface-container": "#201f1f",
-                        "on-tertiary-fixed": "#ffffff",
-                        "tertiary-fixed": "#5f5e5e",
-                        "tertiary": "#e5e2e1",
-                        "inverse-primary": "#635e51",
-                        "on-tertiary-fixed-variant": "#e5e2e1",
-                        "on-secondary": "#161d1f",
-                        "on-surface": "#e5e2e1",
-                        "inverse-surface": "#e5e2e1",
-                        "secondary-fixed": "#c1c8cb",
-                        "background": "#131313",
-                        "on-primary-fixed": "#ffffff",
-                        "primary-fixed": "#635e51",
-                        "surface-variant": "#353534",
-                        "inverse-on-surface": "#313030",
-                        "on-primary-fixed-variant": "#eae2d1",
-                        "on-tertiary-container": "#000000",
-                        "surface-container-high": "#2a2a2a",
-                        "on-background": "#e5e2e1",
-                        "surface": "#131313",
-                        "on-error-container": "#ffdad6",
-                        "secondary-fixed-dim": "#a5acaf",
-                        "tertiary-fixed-dim": "#474746",
-                        "outline": "#919191",
-                        "surface-dim": "#131313"
-                    },
-                    fontFamily: {
-                        "headline": ["Newsreader"],
-                        "body": ["Space Grotesk"],
-                        "label": ["Space Grotesk"]
-                    },
-                    borderRadius: {
-                        "DEFAULT": "0px",
-                        "lg": "0px",
-                        "xl": "0px",
-                        "full": "0px"
-                    },
-                },
-            },
-        }
-    </script>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hirsel Design System</title>
 <style>
-        .material-symbols-outlined {
-            font-variation-settings: 'FILL' 0, 'wght' 200, 'GRAD' 0, 'opsz' 24;
-        }
-        .organic-fiber-overlay {
-            background-image:
-                url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.45' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E"),
-                url("data:image/svg+xml,%3Csvg viewBox='0 0 1000 1000' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='fiberFilter'%3E%3CfeTurbulence type='turbulence' baseFrequency='0.01' numOctaves='2' seed='5'/%3E%3CfeDisplacementMap in='SourceGraphic' scale='50'/%3E%3C/filter%3E%3Cg filter='url(%23fiberFilter)' opacity='0.08' stroke='%23ffffff'%3E%3Cpath d='M100,200 Q150,210 200,190 M400,600 Q450,580 500,620 M700,100 Q720,150 680,200 M200,800 Q250,820 300,780 M800,700 Q850,710 900,690' fill='none' stroke-width='0.5'/%3E%3Cpath d='M300,300 L320,350 M600,400 L580,450 M150,150 L170,120' fill='none' stroke-width='0.3'/%3E%3C/g%3E%3C/svg%3E");
-            opacity: 0.08;
-            pointer-events: none;
-            mix-blend-mode: overlay;
-        }
-        .nautilus-path {
-            stroke-dasharray: 1000;
-            stroke-dashoffset: 0;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 2px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: #131313;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: #474747;
-        }
-    </style>
+  @import url('https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&family=Spectral:wght@400;500;600;700&display=swap');
+
+  :root {
+    /* ── Surfaces ── */
+    --form:        #0e0d0b;
+    --form-deep:   #080807;
+    --form-raised: #141412;
+
+    /* ── Structure ── */
+    --ash:         #2a2a28;
+    --ash-light:   #3a3a34;
+    --ash-mid:     #4a4a44;
+    --ash-text:    #5a5a50;
+
+    /* ── Text ── */
+    --chalk-dim:   #7a7a70;
+    --chalk-mid:   #c8c4b8;
+    --chalk:       #e8e4d0;
+
+    /* ── Accent ── */
+    --sodium:      #e8a33c;
+    --lichen:      #8a9e6c;
+    --error:       #cc4444;
+
+    /* ── Derived ── */
+    --ghost-bar:   #322818;
+    --line:        rgba(232, 228, 208, 0.12);
+    --line-strong: rgba(232, 163, 60, 0.28);
+    --panel:       rgba(20, 20, 18, 0.82);
+    --shadow:      0 28px 80px rgba(0, 0, 0, 0.42);
+
+    /* ── Type ── */
+    --font-display: "Azeret Mono", monospace;
+    --font-ui:      "Chivo Mono", monospace;
+    --font-body:    "Spectral", serif;
+
+    /* ── Spacing (4px base) ── */
+    --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+    --sp-4: 16px; --sp-5: 20px; --sp-6: 24px; --sp-8: 32px;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--chalk);
+    background:
+      radial-gradient(circle at top left, rgba(232, 163, 60, 0.10), transparent 26rem),
+      radial-gradient(circle at bottom right, rgba(138, 158, 108, 0.06), transparent 24rem),
+      linear-gradient(180deg, var(--form-deep), var(--form));
+    font-family: var(--font-ui);
+    overflow-x: hidden;
+  }
+
+  /* Noise texture */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 320 320' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.08'/%3E%3C/svg%3E");
+    mix-blend-mode: overlay;
+    opacity: 0.4;
+  }
+
+  .page { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 36px; }
+
+  .frame {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(14, 13, 11, 0.94), rgba(8, 8, 7, 0.98));
+    box-shadow: var(--shadow);
+  }
+
+  /* ── Header ── */
+
+  .hero {
+    padding: 48px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.28em;
+    font-size: 11px;
+    color: var(--ash-text);
+  }
+
+  .hero h1 {
+    margin: 16px 0 14px;
+    font-family: var(--font-display);
+    font-size: clamp(2.4rem, 6vw, 4rem);
+    line-height: 0.92;
+    letter-spacing: -0.06em;
+    text-transform: uppercase;
+  }
+
+  .hero .slash { color: var(--sodium); }
+
+  .hero p {
+    max-width: 60ch;
+    margin: 0;
+    color: var(--chalk-mid);
+    font-family: var(--font-body);
+    font-size: 1.1rem;
+    line-height: 1.65;
+  }
+
+  /* ── Sections ── */
+
+  section { padding: 32px 48px 40px; border-bottom: 1px solid var(--line); }
+  section:last-child { border-bottom: 0; }
+
+  section h2 {
+    margin: 0 0 8px;
+    font-family: var(--font-display);
+    font-size: 1.6rem;
+    letter-spacing: -0.04em;
+    text-transform: uppercase;
+  }
+
+  section > p {
+    margin: 0 0 24px;
+    color: var(--chalk-mid);
+    font-family: var(--font-body);
+    font-size: 1rem;
+    line-height: 1.6;
+    max-width: 56ch;
+  }
+
+  /* ── Grids ── */
+
+  .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+
+  /* ── Swatches ── */
+
+  .swatch {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    overflow: hidden;
+  }
+
+  .swatch-chip { height: 80px; }
+
+  .swatch-meta {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+  }
+
+  .swatch-meta strong {
+    color: var(--chalk);
+    font-size: 0.82rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .swatch-meta span {
+    color: var(--chalk-dim);
+    font-size: 0.78rem;
+  }
+
+  /* ── Component demos ── */
+
+  .demo-panel {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    padding: 20px;
+    backdrop-filter: blur(8px);
+  }
+
+  .demo-panel h3 {
+    margin: 0 0 12px;
+    font-size: 0.82rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--sodium);
+  }
+
+  .demo-panel p {
+    color: var(--chalk-mid);
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  /* ── Buttons ── */
+
+  .btn-demo { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+
+  .btn-demo button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    font: 500 11px/1 var(--font-ui);
+    letter-spacing: 0.06em;
+    border: 1px solid rgba(232, 228, 208, 0.18);
+    background: transparent;
+    color: var(--chalk);
+    cursor: pointer;
+  }
+
+  .btn-demo button:hover {
+    background: rgba(232, 228, 208, 0.04);
+    border-color: rgba(232, 228, 208, 0.25);
+  }
+
+  .btn-demo .primary {
+    background: var(--chalk);
+    color: var(--form);
+    border-color: var(--chalk);
+  }
+
+  .btn-demo .ghost {
+    border-color: transparent;
+    color: var(--chalk-dim);
+  }
+
+  .btn-demo .danger {
+    color: var(--error);
+    border-color: rgba(204, 68, 68, 0.25);
+  }
+
+  /* ── Cards ── */
+
+  .card-demo {
+    border: 1px solid var(--line);
+    background: rgba(20, 20, 18, 0.92);
+  }
+
+  .card-demo header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--chalk-mid);
+  }
+
+  .card-demo section {
+    padding: 16px;
+    border-bottom: 0;
+  }
+
+  /* ── Pills ── */
+
+  .pill-demo { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .pill-demo span {
+    display: inline-flex;
+    padding: 3px 8px;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border: 1px solid var(--line);
+    color: var(--chalk-dim);
+  }
+
+  .pill-demo .working { border-color: rgba(138, 158, 108, 0.4); color: var(--lichen); }
+  .pill-demo .failed { border-color: rgba(204, 68, 68, 0.4); color: var(--error); }
+  .pill-demo .active { border-color: rgba(232, 163, 60, 0.4); color: var(--sodium); }
+
+  /* ── Input ── */
+
+  .input-demo input {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--line);
+    background: rgba(232, 228, 208, 0.02);
+    color: var(--chalk);
+    font: 13px/1.4 var(--font-ui);
+    margin-top: 6px;
+  }
+
+  .input-demo input:focus {
+    outline: none;
+    border-color: rgba(232, 228, 208, 0.18);
+  }
+
+  .input-demo label {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--chalk-dim);
+  }
+
+  /* ── Specimens ── */
+
+  .specimen {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    padding: 20px;
+  }
+
+  .specimen .display-sample {
+    font-family: var(--font-display);
+    font-size: clamp(1.8rem, 4vw, 3.2rem);
+    letter-spacing: -0.06em;
+    line-height: 0.96;
+    margin: 10px 0;
+  }
+
+  .specimen .body-sample {
+    font-family: var(--font-body);
+    font-size: 1.1rem;
+    line-height: 1.7;
+    color: var(--chalk-mid);
+    margin: 10px 0;
+  }
+
+  .specimen .ui-sample {
+    font-family: var(--font-ui);
+    font-size: 0.92rem;
+    line-height: 1.6;
+    color: var(--chalk-dim);
+    margin: 10px 0;
+  }
+
+  /* ── Principles ── */
+
+  .principle {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    padding: 18px;
+  }
+
+  .principle strong {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--sodium);
+    font-size: 0.8rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .principle p {
+    margin: 0;
+    color: var(--chalk-mid);
+    font-family: var(--font-body);
+    font-size: 0.95rem;
+    line-height: 1.6;
+  }
+
+  /* ── Token table ── */
+
+  .token-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+    margin-top: 14px;
+  }
+
+  .token-table th {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    color: var(--chalk-dim);
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .token-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid rgba(232, 228, 208, 0.06);
+    color: var(--chalk-mid);
+  }
+
+  .token-table td:first-child { color: var(--chalk); font-weight: 500; }
+
+  .footer {
+    padding: 18px 48px;
+    border-top: 1px solid var(--line);
+    color: var(--ash-text);
+    font-size: 0.78rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  @media (max-width: 900px) {
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    .hero, section { padding: 24px; }
+  }
+</style>
 </head>
-<body class="bg-background text-on-surface font-body overflow-hidden h-screen flex select-none relative">
-<div class="fixed inset-0 organic-fiber-overlay z-50"></div>
-<!-- SideNavBar -->
-<aside class="bg-[#1c1b1b] text-white flex flex-col h-full py-6 docked left-0 w-64 border-r border-[#474747]/20 relative z-40">
-<div class="px-6 mb-10 flex items-center gap-3">
-<div class="w-8 h-8 bg-white flex items-center justify-center">
-<span class="material-symbols-outlined text-on-primary text-sm" data-icon="architecture">architecture</span>
-</div>
-<div class="flex flex-col">
-<span class="font-body text-[0.68rem] uppercase tracking-widest text-white leading-none">Lead Architect</span>
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary opacity-70">ID: 0x942B</span>
-</div>
-</div>
-<nav class="flex-1 space-y-1">
-<div class="bg-[#2a2a2a] text-white border-l-2 border-white flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
-<span class="material-symbols-outlined text-lg" data-icon="dashboard">dashboard</span>
-<span class="font-body text-[0.68rem] uppercase tracking-widest">The Board</span>
-</div>
-<div class="text-[#c1c8cb] opacity-70 hover:bg-[#2a2a2a] hover:opacity-100 flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
-<span class="material-symbols-outlined text-lg" data-icon="alt_route">alt_route</span>
-<span class="font-body text-[0.68rem] uppercase tracking-widest">Routes</span>
-</div>
-<div class="text-[#c1c8cb] opacity-70 hover:bg-[#2a2a2a] hover:opacity-100 flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
-<span class="material-symbols-outlined text-lg" data-icon="inventory_2">inventory_2</span>
-<span class="font-body text-[0.68rem] uppercase tracking-widest">Archives</span>
-</div>
-<div class="text-[#c1c8cb] opacity-70 hover:bg-[#2a2a2a] hover:opacity-100 flex items-center px-6 py-4 gap-4 cursor-pointer transition-none">
-<span class="material-symbols-outlined text-lg" data-icon="terminal">terminal</span>
-<span class="font-body text-[0.68rem] uppercase tracking-widest">Terminal</span>
-</div>
-</nav>
-<div class="px-6 mt-auto pt-6 border-t border-[#474747]/20">
-<button class="w-full py-3 border border-primary text-primary font-body text-[0.68rem] uppercase tracking-widest hover:bg-primary hover:text-on-primary transition-none mb-6">
-                New Orchestration
-            </button>
-<div class="space-y-4">
-<div class="flex items-center gap-3 text-[#c1c8cb] opacity-70 cursor-pointer">
-<span class="material-symbols-outlined text-base" data-icon="menu_book">menu_book</span>
-<span class="font-body text-[0.6rem] uppercase tracking-widest">Documentation</span>
-</div>
-<div class="flex items-center gap-3 text-[#c1c8cb] opacity-70 cursor-pointer">
-<span class="material-symbols-outlined text-base" data-icon="query_stats">query_stats</span>
-<span class="font-body text-[0.6rem] uppercase tracking-widest">System Status</span>
-</div>
-</div>
-</div>
-</aside>
-<!-- Main Canvas -->
-<main class="flex-1 flex flex-col relative overflow-hidden">
-<!-- TopAppBar -->
-<header class="bg-[#131313] text-white flex justify-between items-center w-full px-10 h-16 border-b border-[#474747]/20 relative z-30">
-<div class="flex items-center gap-8">
-<span class="text-xl font-medium italic font-headline text-white tracking-tight">The Alchemical Ledger</span>
-<div class="hidden md:flex items-center gap-6">
-<span class="text-white border-b border-white pb-1 font-body text-[0.68rem] uppercase tracking-widest cursor-pointer">Project: Alpha-9</span>
-<span class="text-[#c1c8cb] font-body text-[0.68rem] uppercase tracking-widest cursor-pointer hover:text-white transition-none">Status: Active</span>
-</div>
-</div>
-<div class="flex items-center gap-6">
-<div class="flex items-center bg-[#1c1b1b] px-3 py-1 gap-2 border border-[#474747]/20">
-<span class="material-symbols-outlined text-sm text-secondary" data-icon="search">search</span>
-<input class="bg-transparent border-none focus:ring-0 text-[0.68rem] uppercase tracking-widest w-32 placeholder:text-secondary/40" placeholder="Locate Node..." type="text"/>
-</div>
-<div class="flex items-center gap-4">
-<span class="material-symbols-outlined text-lg cursor-pointer text-[#c1c8cb] hover:text-white" data-icon="history">history</span>
-<span class="material-symbols-outlined text-lg cursor-pointer text-[#c1c8cb] hover:text-white" data-icon="settings">settings</span>
-</div>
-</div>
-</header>
-<!-- Content Area -->
-<div class="flex-1 flex overflow-hidden">
-<!-- Board Interface -->
-<section class="flex-1 p-10 overflow-auto custom-scrollbar relative">
-<!-- Source Spec Header -->
-<div class="mb-16">
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-2">SOURCE_SPEC / ENTRY_001</span>
-<h1 class="text-5xl font-headline italic text-white max-w-2xl leading-tight">Refining the Architectural Manifesto</h1>
-<div class="mt-4 flex gap-4 items-center">
-<div class="h-px w-24 bg-[#474747]/40"></div>
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary opacity-50">Locus: 40.7128° N, 74.0060° W</span>
-</div>
-</div>
-<!-- Technical Orchestration Flow -->
-<div class="relative min-h-[600px] flex items-start gap-24">
-<!-- Flow Lines (SVG Background Layer) -->
-<svg class="absolute inset-0 pointer-events-none" height="100%" width="100%">
-<path class="opacity-30" d="M 120,40 L 120,120 L 300,120" fill="none" stroke="#474747" stroke-width="1"></path>
-<path class="opacity-30" d="M 120,120 L 120,280 L 300,280" fill="none" stroke="#474747" stroke-width="1"></path>
-<path class="opacity-30" d="M 120,280 L 120,440 L 300,440" fill="none" stroke="#474747" stroke-width="1"></path>
-<!-- Spiral Motif -->
-<g class="opacity-20" stroke="#ffffff" transform="translate(60, 100) scale(0.4)">
-<path d="M0,0 C20,0 40,20 40,40 C40,70 10,80 -20,80 C-60,80 -80,30 -80,-20 C-80,-90 -10,-130 70,-130" fill="none" stroke-width="2"></path>
-</g>
-</svg>
-<!-- Root Node -->
-<div class="relative z-10 pt-10">
-<div class="bg-white p-4 w-48 border border-white">
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-on-primary font-bold block mb-1">Root_Master</span>
-<span class="font-body text-[0.6rem] uppercase tracking-[0.2em] text-on-primary opacity-60">ACTIVE_STREAM</span>
-</div>
-</div>
-<!-- Task Grid -->
-<div class="flex-1 grid grid-cols-1 md:grid-cols-2 gap-8 z-10">
-<!-- Task Card 1 -->
-<div class="bg-[#1c1b1b] p-6 border border-[#474747]/20 hover:border-white transition-none group cursor-pointer relative">
-<div class="flex justify-between items-start mb-6">
-<div>
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-1">Task_Alpha</span>
-<h3 class="font-body text-sm font-medium text-white">Substrate Analysis</h3>
-</div>
-<div class="px-2 py-0.5 border border-primary text-primary text-[0.55rem] uppercase tracking-widest font-bold">
-                                    VERIFIED
-                                </div>
-</div>
-<p class="font-headline italic text-secondary text-sm leading-relaxed mb-6 opacity-80">Calculating the tensile strength of the digital parchment across nested dimensions.</p>
-<div class="flex justify-between items-center text-[0.6rem] text-secondary/40 font-body">
-<span>COORD: 0x94/2A</span>
-<span>TS: 169482.002</span>
-</div>
-<div class="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-white/20 group-hover:border-white transition-none"></div>
-</div>
-<!-- Task Card 2 -->
-<div class="bg-[#1c1b1b] p-6 border border-[#474747]/20 hover:border-white transition-none group cursor-pointer relative">
-<div class="flex justify-between items-start mb-6">
-<div>
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-1">Task_Beta</span>
-<h3 class="font-body text-sm font-medium text-white">Ink Distribution</h3>
-</div>
-<div class="px-2 py-0.5 bg-white text-on-primary text-[0.55rem] uppercase tracking-widest font-bold">
-                                    PROCESSING
-                                </div>
-</div>
-<p class="font-headline italic text-secondary text-sm leading-relaxed mb-6 opacity-80">Evaluating the chromatic density of architectural nodes relative to the master inkwell.</p>
-<div class="flex justify-between items-center text-[0.6rem] text-secondary/40 font-body">
-<span>COORD: 0x22/FB</span>
-<div class="flex gap-1 items-center">
-<div class="w-8 h-1 bg-white"></div>
-<div class="w-4 h-1 bg-white/20"></div>
-</div>
-</div>
-<div class="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-white/20 group-hover:border-white transition-none"></div>
-</div>
-<!-- Task Card 3 -->
-<div class="bg-[#1c1b1b] p-6 border border-[#474747]/20 hover:border-white transition-none group cursor-pointer relative">
-<div class="flex justify-between items-start mb-6">
-<div>
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-secondary block mb-1">Task_Gamma</span>
-<h3 class="font-body text-sm font-medium text-white">Binding Procedure</h3>
-</div>
-<div class="px-2 py-0.5 border border-[#474747] text-secondary text-[0.55rem] uppercase tracking-widest font-bold">
-                                    QUEUED
-                                </div>
-</div>
-<p class="font-headline italic text-secondary text-sm leading-relaxed mb-6 opacity-80">Synthesizing separate manifestos into a single, cohesive liturgical structure.</p>
-<div class="flex justify-between items-center text-[0.6rem] text-secondary/40 font-body">
-<span>COORD: 0x11/CC</span>
-<span>TS: PENDING</span>
-</div>
-<div class="absolute -top-1 -left-1 w-2 h-2 border-t border-l border-white/20 group-hover:border-white transition-none"></div>
-</div>
-<!-- Technical Noise Grid -->
-<div class="border border-dashed border-[#474747]/20 p-6 flex flex-col justify-center items-center text-center opacity-40">
-<span class="material-symbols-outlined text-4xl mb-2 text-secondary" data-icon="add">add</span>
-<span class="font-body text-[0.6rem] uppercase tracking-[0.3em] text-secondary">Awaiting New Logic</span>
-</div>
-</div>
-</div>
-<!-- Footer Annotations -->
-<div class="mt-24 pt-12 border-t border-[#474747]/10 flex justify-between items-end">
-<div class="max-w-sm">
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-white mb-2 block">ARCHITECT_NOTE</span>
-<p class="font-headline italic text-secondary text-sm leading-relaxed">
-                            "The precision of the line is not a preference, but a requisite. Ensure all orchestration follows the Fibonacci sequence of the ledger's grid."
-                        </p>
-</div>
-<div class="text-right">
-<span class="font-body text-[0.5rem] uppercase tracking-[0.4em] text-secondary/30 block mb-1">SYSTEM_VER: 0.9.24_BETA</span>
-<span class="font-body text-[0.5rem] uppercase tracking-[0.4em] text-secondary/30 block">KERNEL_TICK: 49,293,102</span>
-</div>
-</div>
-</section>
-<!-- Shepherd AI Glass Panel -->
-<aside class="w-80 bg-white/5 backdrop-blur-xl border-l border-white/10 p-8 flex flex-col z-40 relative">
-<div class="flex items-center gap-3 mb-10">
-<div class="w-10 h-10 bg-white flex items-center justify-center">
-<span class="material-symbols-outlined text-on-primary text-xl" data-icon="psychology">psychology</span>
-</div>
-<div>
-<span class="font-body text-[0.68rem] uppercase tracking-widest text-white block">Shepherd AI</span>
-<span class="font-body text-[0.55rem] uppercase tracking-widest text-secondary opacity-60">Cognitive Layer</span>
-</div>
-</div>
-<div class="flex-1 overflow-auto custom-scrollbar space-y-8 pr-2">
-<div class="space-y-3">
-<span class="font-body text-[0.55rem] uppercase tracking-widest text-secondary block">Observations</span>
-<p class="font-headline italic text-tertiary text-lg leading-snug">
-                            "The substrate analysis is yielding a higher-than-expected density. I suggest increasing the ink flow in the Alpha sector to balance the visual weight."
-                        </p>
-</div>
-<div class="space-y-4">
-<span class="font-body text-[0.55rem] uppercase tracking-widest text-secondary block">Worker Status</span>
-<div class="space-y-3">
-<div class="flex justify-between items-center bg-white/5 p-3">
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">Worker_419</span>
-<span class="w-2 h-2 bg-white"></span>
-</div>
-<div class="flex justify-between items-center bg-white/5 p-3">
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">Worker_102</span>
-<span class="w-2 h-2 bg-white"></span>
-</div>
-<div class="flex justify-between items-center bg-white/5 p-3 opacity-30">
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">Worker_088</span>
-<span class="w-2 h-2 bg-transparent border border-white"></span>
-</div>
-</div>
-</div>
-<div class="bg-white p-4">
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-on-primary block mb-1">Directive_Required</span>
-<p class="font-body text-[0.7rem] text-on-primary leading-normal mb-4">Should I proceed with the terminal binding or await manual verification of the manifesto?</p>
-<div class="flex flex-col gap-2">
-<button class="w-full py-2 bg-on-primary text-white font-body text-[0.55rem] uppercase tracking-widest hover:opacity-90 transition-none">Execute Binding</button>
-<button class="w-full py-2 border border-on-primary text-on-primary font-body text-[0.55rem] uppercase tracking-widest hover:bg-on-primary hover:text-white transition-none">Hold for Review</button>
-</div>
-</div>
-</div>
-<div class="mt-8 pt-6 border-t border-white/10">
-<div class="flex items-center gap-2 mb-4">
-<span class="w-1.5 h-1.5 bg-white"></span>
-<span class="font-body text-[0.6rem] uppercase tracking-widest text-white">System Pulse: Steady</span>
-</div>
-<div class="bg-white/5 p-3 flex items-center justify-between">
-<span class="font-body text-[0.6rem] text-secondary">Awaiting Input...</span>
-<span class="material-symbols-outlined text-sm text-secondary" data-icon="send">send</span>
-</div>
-</div>
-</aside>
-</div>
-</main>
-</body></html>
+<body>
+  <div class="page">
+    <div class="frame">
+
+      <header class="hero">
+        <div class="eyebrow">hirsel / orchestration board</div>
+        <h1>Warm Iron <span class="slash">/</span> Fast Amber</h1>
+        <p>
+          Hirsel inherits its visual language from lash — the same warm-black surfaces,
+          sodium-amber markers, and ash-grey structure, adapted for a web-based orchestration board.
+          The goal is a workshop control panel: information-dense, status-first, calm under long sessions.
+        </p>
+      </header>
+
+      <!-- ── Color ── -->
+      <section>
+        <div class="eyebrow">01</div>
+        <h2>Color</h2>
+        <p>
+          The palette is intentionally narrow. Nearly every surface is warm black and chalk until
+          sodium appears to signal intent, activation, or the active edge of work.
+        </p>
+        <div class="grid-3">
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#0e0d0b"></div>
+            <div class="swatch-meta"><strong>FORM</strong><span>#0E0D0B · base background</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#141412"></div>
+            <div class="swatch-meta"><strong>FORM_RAISED</strong><span>#141412 · cards, overlays</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#2a2a28"></div>
+            <div class="swatch-meta"><strong>ASH</strong><span>#2A2A28 · borders, dividers</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#4a4a44"></div>
+            <div class="swatch-meta"><strong>ASH_MID</strong><span>#4A4A44 · dim text, passive labels</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#7a7a70"></div>
+            <div class="swatch-meta"><strong>CHALK_DIM</strong><span>#7A7A70 · muted body text</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#c8c4b8"></div>
+            <div class="swatch-meta"><strong>CHALK_MID</strong><span>#C8C4B8 · secondary text</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#e8e4d0"></div>
+            <div class="swatch-meta"><strong>CHALK</strong><span>#E8E4D0 · primary readable text</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#e8a33c"></div>
+            <div class="swatch-meta"><strong>SODIUM</strong><span>#E8A33C · accent, active markers</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#8a9e6c"></div>
+            <div class="swatch-meta"><strong>LICHEN</strong><span>#8A9E6C · success, completion</span></div>
+          </article>
+          <article class="swatch">
+            <div class="swatch-chip" style="background:#cc4444"></div>
+            <div class="swatch-meta"><strong>ERROR</strong><span>#CC4444 · failures, danger</span></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ── Typography ── -->
+      <section>
+        <div class="eyebrow">02</div>
+        <h2>Typography</h2>
+        <p>
+          Monospace-first for the UI, with a literary body face for longer text.
+          Display type is uppercase Azeret Mono with tight tracking.
+        </p>
+        <div class="grid-3">
+          <article class="specimen">
+            <div class="eyebrow">Display / headings</div>
+            <div class="display-sample">HIRSEL / STATUS</div>
+            <div class="ui-sample">Azeret Mono · heavy · uppercase · tight tracking</div>
+          </article>
+          <article class="specimen">
+            <div class="eyebrow">Body / descriptions</div>
+            <div class="body-sample">
+              Long sessions need a calm reading voice. Spectral provides literary
+              warmth without competing with the monospace UI chrome.
+            </div>
+            <div class="ui-sample">Spectral · medium weight · 1.6+ line height</div>
+          </article>
+          <article class="specimen">
+            <div class="eyebrow">UI / labels / controls</div>
+            <div class="ui-sample">
+              EFFORTS · WORKING · QUEUED 3<br>
+              main · idle · 12:34<br>
+              Message Shepherd...
+            </div>
+            <div class="ui-sample">Chivo Mono · all chrome, labels, inputs, buttons</div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ── Components ── -->
+      <section>
+        <div class="eyebrow">03</div>
+        <h2>Components</h2>
+        <p>
+          A small set of reusable primitives: buttons, cards, pills, fields, tabs, dropdowns.
+          No border-radius anywhere. Borders use the LINE token.
+        </p>
+        <div class="grid-2">
+          <div class="demo-panel">
+            <h3>Buttons (.btn)</h3>
+            <p>Outline by default. Primary gets chalk fill. Ghost has no border. Danger is red.</p>
+            <div class="btn-demo">
+              <button>Default</button>
+              <button class="primary">Primary</button>
+              <button class="ghost">Ghost</button>
+              <button class="danger">Danger</button>
+            </div>
+          </div>
+          <div class="demo-panel">
+            <h3>Pills (.pill)</h3>
+            <p>Status indicators. Uppercase, tiny, border-colored per status.</p>
+            <div class="pill-demo">
+              <span>Idle</span>
+              <span class="working">Working</span>
+              <span class="active">Active</span>
+              <span class="failed">Failed</span>
+            </div>
+          </div>
+          <div class="demo-panel">
+            <h3>Cards (.card)</h3>
+            <div class="card-demo">
+              <header>
+                <span>Section Title</span>
+                <span style="color:var(--lichen)">Connected</span>
+              </header>
+              <section>
+                <p>Cards use LINE borders, FORM_RAISED background, with header/section structure.</p>
+              </section>
+            </div>
+          </div>
+          <div class="demo-panel">
+            <h3>Inputs (.field)</h3>
+            <div class="input-demo">
+              <label>Label</label>
+              <input type="text" placeholder="Placeholder text..." />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Tokens ── -->
+      <section>
+        <div class="eyebrow">04</div>
+        <h2>CSS Tokens</h2>
+        <p>The complete set of CSS custom properties used in webui.css.</p>
+        <table class="token-table">
+          <thead>
+            <tr><th>Token</th><th>Value</th><th>Usage</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>--bg</td><td>#0e0d0b</td><td>Page background (FORM)</td></tr>
+            <tr><td>--surface</td><td>#141412</td><td>Cards, panels (FORM_RAISED)</td></tr>
+            <tr><td>--surface-raised</td><td>#1a1a18</td><td>Elevated surfaces</td></tr>
+            <tr><td>--surface-overlay</td><td>#2a2a28</td><td>Overlays, dropdowns (ASH)</td></tr>
+            <tr><td>--border</td><td>rgba(232,228,208,0.12)</td><td>Default borders (LINE)</td></tr>
+            <tr><td>--border-hover</td><td>rgba(232,228,208,0.18)</td><td>Hover state borders</td></tr>
+            <tr><td>--border-active</td><td>rgba(232,228,208,0.25)</td><td>Active/focus borders</td></tr>
+            <tr><td>--text</td><td>#e8e4d0</td><td>Primary text (CHALK)</td></tr>
+            <tr><td>--text-2</td><td>#c8c4b8</td><td>Secondary text (CHALK_MID)</td></tr>
+            <tr><td>--text-muted</td><td>#7a7a70</td><td>Muted text (CHALK_DIM)</td></tr>
+            <tr><td>--text-dim</td><td>#4a4a44</td><td>Dimmest text (ASH_MID)</td></tr>
+            <tr><td>--sage</td><td>#8a9e6c</td><td>Success (LICHEN)</td></tr>
+            <tr><td>--golden</td><td>#e8a33c</td><td>Active accent (SODIUM)</td></tr>
+            <tr><td>--terra</td><td>#cc4444</td><td>Danger (ERROR)</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- ── Principles ── -->
+      <section>
+        <div class="eyebrow">05</div>
+        <h2>Principles</h2>
+        <p>Rules that keep the UI coherent as new surfaces get added.</p>
+        <div class="grid-2">
+          <article class="principle">
+            <strong>Accent Means Action</strong>
+            <p>Sodium is reserved for the active edge: prompts, effort markers, status changes, and headings that matter.</p>
+          </article>
+          <article class="principle">
+            <strong>Structure Before Ornament</strong>
+            <p>Every border, divider, and container should clarify hierarchy before it tries to look good.</p>
+          </article>
+          <article class="principle">
+            <strong>Density Over Sprawl</strong>
+            <p>Compact spacing, small type, tight gaps. Information density beats generous whitespace in a dev tool.</p>
+          </article>
+          <article class="principle">
+            <strong>Long Sessions Must Stay Calm</strong>
+            <p>No high-saturation backgrounds, no fragile thin text, no ornamental overload. Survive hours of use.</p>
+          </article>
+          <article class="principle">
+            <strong>Monospace Is the Default</strong>
+            <p>UI chrome, labels, buttons, and inputs all use Chivo Mono. Spectral is only for editorial body text.</p>
+          </article>
+          <article class="principle">
+            <strong>Zero Border Radius</strong>
+            <p>No rounded corners anywhere. Sharp edges reinforce the workshop aesthetic.</p>
+          </article>
+        </div>
+      </section>
+
+      <footer class="footer">
+        hirsel design system · adapted from lash TUI design language
+      </footer>
+    </div>
+  </div>
+</body>
+</html>

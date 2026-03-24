@@ -459,6 +459,23 @@ fn spawn_project_sync_task(
                             .update_effort(effort_id, Some(&summary), Some("done"))
                             .await;
                     }
+                    let completion_message = conclusion
+                        .as_deref()
+                        .filter(|text| !text.trim().is_empty())
+                        .map(|text| format!("Project sync completed.\n\n{}", text.trim()))
+                        .unwrap_or_else(|| "Project sync completed.".to_string());
+                    if let Err(error) = save_effort_assistant_note(
+                        project_id,
+                        route.id,
+                        effort_id,
+                        &item.id,
+                        "Project sync",
+                        &completion_message,
+                    )
+                    .await
+                    {
+                        tracing::warn!(%error, effort_id, "failed to save sync completion note");
+                    }
                 }
                 let details = conclusion.as_deref();
                 finish_project_sync(
@@ -478,6 +495,19 @@ fn spawn_project_sync_task(
                         let _ = store
                             .update_effort(effort_id, Some(&error), Some("failed"))
                             .await;
+                    }
+                    let failure_message = format!("Project sync failed.\n\n{}", error.trim());
+                    if let Err(note_error) = save_effort_assistant_note(
+                        project_id,
+                        route.id,
+                        effort_id,
+                        &item.id,
+                        "Project sync",
+                        &failure_message,
+                    )
+                    .await
+                    {
+                        tracing::warn!(%note_error, effort_id, "failed to save sync failure note");
                     }
                 }
                 let details = error.clone();
@@ -767,6 +797,36 @@ fn result_summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
     summary
 }
 
+async fn save_effort_assistant_note(
+    project_id: i64,
+    route_id: i64,
+    effort_id: &str,
+    work_item_id: &str,
+    title: &str,
+    message: &str,
+) -> Result<(), String> {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    let scope = ShepherdScope::Effort {
+        project_id,
+        route_id,
+        effort_id: effort_id.to_string(),
+        title: title.to_string(),
+        workspace_path: None,
+        focus: Some(ShepherdTaskFocus {
+            task_id: work_item_id.to_string(),
+            task_name: title.to_string(),
+        }),
+    };
+    let chunks_json = chunks_to_json(&[ShepherdMessageChunk::Text {
+        content: trimmed.to_string(),
+    }])?;
+    save_message(&scope, "assistant", &chunks_json).await?;
+    Ok(())
+}
+
 #[tracing::instrument(fields(project_id, route_id))]
 pub async fn start_project_sync(
     project_id: i64,
@@ -830,7 +890,21 @@ pub async fn start_project_sync(
             )
             .await
         {
-            Ok(effort) => sync_effort_id = Some(effort.id),
+            Ok(effort) => {
+                if let Err(error) = save_effort_assistant_note(
+                    project_id,
+                    route.id,
+                    &effort.id,
+                    &item.id,
+                    &effort.title,
+                    "Project sync started.\n\nI’m surveying the workspace and assembling the current project picture. Progress and conclusions will appear here.",
+                )
+                .await
+                {
+                    tracing::warn!(%error, effort_id = %effort.id, "failed to save sync start note");
+                }
+                sync_effort_id = Some(effort.id);
+            }
             Err(e) => {
                 tracing::warn!(%e, "failed to create sync effort");
             }

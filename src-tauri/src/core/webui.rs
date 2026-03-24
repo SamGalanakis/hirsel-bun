@@ -113,32 +113,61 @@ pub fn render_work_tree_nodes(nodes: &[WorkItemTree]) -> Markup {
 
 // ── Worker Cards ──
 
-pub fn render_worker_cards(workers: &[Worker]) -> Markup {
+fn worker_status_label(worker: &Worker) -> String {
+    format!("{:?}", worker.status).to_lowercase()
+}
+
+pub fn render_agent_cards(
+    efforts: &[ShepherdEffort],
+    focused_effort: Option<&ShepherdEffort>,
+    workers: &[Worker],
+) -> Markup {
     html! {
-        @if workers.is_empty() {
+        @if efforts.is_empty() && workers.is_empty() {
             div class="empty-state" {
-                p { "No workers are active on this route." }
+                p { "No agents are active on this route." }
             }
         } @else {
             div class="worker-grid" {
+                @for effort in efforts {
+                    @let is_focused = focused_effort.map(|item| item.id.as_str()) == Some(effort.id.as_str());
+                    article class=(if is_focused { "card worker-card active-agent-card" } else { "card worker-card" }) {
+                        header {
+                            h3 { (icon("cpu")) (&effort.title) }
+                            span data-slot="card-action" {
+                                span class=(format!("pill status-{}", effort.status)) {
+                                    (&effort.status)
+                                }
+                            }
+                        }
+                        section {
+                            p class="eyebrow" { "orchestrator" }
+                            @if !effort.summary.trim().is_empty() {
+                                p class="muted" { (&effort.summary) }
+                            } @else {
+                                p class="muted" { "Shepherd is coordinating this effort." }
+                            }
+                        }
+                    }
+                }
                 @for worker in workers {
                     article class="card worker-card" {
                         header {
                             h3 { (icon("cpu")) (&worker.name) }
                             span data-slot="card-action" {
-                                span class=(format!("pill status-{}", format!("{:?}", worker.status).to_lowercase())) {
-                                    (format!("{:?}", worker.status).to_lowercase())
+                                @let worker_status = worker_status_label(worker);
+                                span class=(format!("pill status-{}", worker_status)) {
+                                    (worker_status)
                                 }
                             }
                         }
-                        @if worker.current_task.is_some() || worker.capability_profile.is_some() {
-                            section {
-                                @if let Some(task) = &worker.current_task {
-                                    p class="muted" { (task) }
-                                }
-                                @if let Some(profile) = &worker.capability_profile {
-                                    p class="eyebrow" { (profile.as_str()) }
-                                }
+                        section {
+                            p class="eyebrow" { "worker" }
+                            @if let Some(task) = &worker.current_task {
+                                p class="muted" { (task) }
+                            }
+                            @if let Some(profile) = &worker.capability_profile {
+                                p class="muted" { "profile: " (profile.as_str()) }
                             }
                         }
                     }
@@ -204,10 +233,30 @@ pub fn render_chat_panel(
                     }
                 }
             }
+            @if let Some(effort) = focused_effort {
+                section class="chat-effort-context" {
+                    div class="chat-effort-context-header" {
+                        p class="eyebrow" { "Focused effort" }
+                        span class=(format!("pill status-{}", effort.status)) { (&effort.status) }
+                    }
+                    p class="chat-effort-context-title" { (&effort.title) }
+                    p class="chat-effort-context-summary muted" { (&effort.summary) }
+                }
+            }
             div id="chat-thread" class="chat-thread shepherd-messages-area" {
                 @if history.is_empty() && queue.items.is_empty() {
                     div class="chat-empty-state" {
-                        p class="muted" { "Send a message to get started." }
+                        @if let Some(effort) = focused_effort {
+                            p class="eyebrow" { (&effort.title) }
+                            p class="muted" { (&effort.summary) }
+                            @if effort.status == "active" {
+                                p class="muted" { "Shepherd is already working on this effort. Updates will appear here as progress lands." }
+                            } @else {
+                                p class="muted" { "This effort has no conversation events yet." }
+                            }
+                        } @else {
+                            p class="muted" { "Send a message to get started." }
+                        }
                     }
                 } @else {
                     @for message in history {
@@ -487,6 +536,11 @@ pub fn render_project_page(
     queue: &ShepherdQueueState,
     notifications: &UnreadNotificationsResponse,
 ) -> Markup {
+    let default_machinery_tab = if !efforts.is_empty() || !workers.is_empty() {
+        "agents"
+    } else {
+        "work"
+    };
     let route_status = surface
         .routes
         .iter()
@@ -503,7 +557,7 @@ pub fn render_project_page(
         &project.name,
         "Hirsel project workspace",
         html! {
-            main class="app-shell" data-signals:machinery-open="false" data-signals:machinery-tab="'work'" data-signals:project-picker-open="false" {
+            main class="app-shell" data-signals:machinery-open="false" data-signals:machinery-tab=(format!("'{}'", default_machinery_tab)) data-signals:project-picker-open="false" {
                 div data-init=(format!("@get('{}', {{openWhenHidden: true}})", stream_url)) {}
 
                 // ── Titlebar ──
@@ -678,9 +732,9 @@ pub fn render_project_page(
                                         "Work"
                                     }
                                     button role="tab" type="button"
-                                        data-class:aria-selected="$machineryTab === 'workers'"
-                                        data-on:click="$machineryTab = 'workers'" {
-                                        "Workers"
+                                        data-class:aria-selected="$machineryTab === 'agents'"
+                                        data-on:click="$machineryTab = 'agents'" {
+                                        "Agents"
                                     }
                                 }
                             }
@@ -688,8 +742,8 @@ pub fn render_project_page(
                                 section id="work-panel" class="machinery-panel" data-show="$machineryTab === 'work'" {
                                     (render_work_tree_nodes(work_tree))
                                 }
-                                section id="workers-panel" class="machinery-panel" data-show="$machineryTab === 'workers'" {
-                                    (render_worker_cards(workers))
+                                section id="agents-panel" class="machinery-panel" data-show="$machineryTab === 'agents'" {
+                                    (render_agent_cards(efforts, focused_effort, workers))
                                 }
                             }
                         }
