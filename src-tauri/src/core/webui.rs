@@ -824,39 +824,36 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                         }
                     }
 
-                    // ── Project ──
-                    article class="panel" {
-                        header {
-                            h3 { (icon("folder")) "Project" }
-                        }
+                    article class="panel" data-signals:confirm-delete="false" {
+                        // ── Project ──
                         section {
-                            form action={ "/app/projects/" (project.id) "/settings/project" } method="post" {
-                                div class="form-field" {
-                                    label for="proj-name" { "Name" }
-                                    input id="proj-name" type="text" name="name" value=(&project.name);
-                                }
-                                div class="form-field" {
-                                    label for="proj-desc" { "Description" }
-                                    textarea id="proj-desc" name="description" rows="3" placeholder="What is this project about?" { (project.description.as_deref().unwrap_or("")) }
+                            h3 { (icon("folder")) "Project" }
+                            form action={ "/app/projects/" (project.id) "/settings/project" } method="post" style="margin-top: 12px;" {
+                                div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" {
+                                    div class="form-field" {
+                                        label for="proj-name" { "Name" }
+                                        input id="proj-name" type="text" name="name" value=(&project.name);
+                                    }
+                                    div class="form-field" {
+                                        label for="proj-desc" { "Description" }
+                                        input id="proj-desc" type="text" name="description" placeholder="What is this project about?" value=(project.description.as_deref().unwrap_or(""));
+                                    }
                                 }
                                 button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
-                                    "Save"
+                                    "Save project"
                                 }
                             }
                         }
-                    }
-
-                    // ── Route ──
-                    article class="panel" {
-                        header {
-                            h3 { (icon("git-branch")) "Route" }
-                            span class="pill" { (&route.name) }
-                        }
+                        // ── Route ──
                         section {
-                            form action={ "/app/projects/" (project.id) "/settings/route" } method="post" {
+                            div style="display: flex; align-items: center; justify-content: space-between;" {
+                                h3 { (icon("git-branch")) "Route" }
+                                span class="pill" { (&route.name) }
+                            }
+                            form action={ "/app/projects/" (project.id) "/settings/route" } method="post" style="margin-top: 12px;" {
                                 input type="hidden" name="route_id" value=(route.id);
-                                div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;" {
+                                div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;" {
                                     div class="form-field" {
                                         label for="time-limit" { "Time limit (min)" }
                                         input id="time-limit" type="number" min="0" name="time_limit_minutes" value=(route.time_limit_minutes.unwrap_or_default());
@@ -866,31 +863,21 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                                         input id="target-branch" type="text" name="target_branch" placeholder="main" value=(route.target_branch.as_deref().unwrap_or(""));
                                     }
                                 }
-                                div class="form-field" style="flex-direction:row; align-items:center; gap:10px;" {
+                                div class="form-field" style="flex-direction:row; align-items:center; gap:10px; margin-bottom: 0;" {
                                     input id="hitl" type="checkbox" name="human_in_the_loop" checked[route.human_in_the_loop];
                                     label for="hitl" style="text-transform:none; font-size:13px; color:var(--text-2);" { "Require human in the loop" }
                                 }
                                 button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
-                                    "Save"
+                                    "Save route"
                                 }
                             }
                         }
-                    }
-
-                    // ── Danger Zone ──
-                    article class="panel danger-zone" {
-                        header {
-                            h3 { (icon("trash-2")) "Danger zone" }
-                        }
-                        section data-signals:confirm-delete="false" {
-                            p class="muted" style="margin-bottom: 12px;" {
-                                "Permanently delete this project and all its routes, work items, efforts, and history."
-                            }
-                            // First click: reveal confirm. Second click: submit the hidden form.
+                        // ── Delete (inline) ──
+                        section style="border-top-color: rgba(196, 92, 74, 0.15);" {
                             button
                                 type="button"
-                                class="action-btn danger"
+                                class="action-btn ghost danger"
                                 style="width:100%;"
                                 data-show="!$confirmDelete"
                                 data-on:click="$confirmDelete = true" {
@@ -903,7 +890,6 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                                 data-show="$confirmDelete"
                                 style="display: flex; gap: 8px;" {
                                 button type="submit" class="action-btn danger confirmed" style="flex:1;" {
-                                    (icon("trash-2"))
                                     "Confirm delete"
                                 }
                                 button type="button" class="action-btn ghost" data-on:click="$confirmDelete = false" {
