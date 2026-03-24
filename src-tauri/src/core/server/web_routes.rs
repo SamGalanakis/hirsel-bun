@@ -813,16 +813,40 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
             if let Ok((_projects, project, route, surface, work_tree, workers, efforts, focused_effort, history, queue, notifications)) =
                 load_project_page_state(project_id).await
             {
+                let has_focus = !matches!(surface.focus_view.source.as_deref(), Some("placeholder" | "seed"));
                 let focus_markup = maud::html! {
-                    section id="focus-panel" class="focus-panel" {
-                        @if !matches!(surface.focus_view.source.as_deref(), Some("placeholder" | "seed")) {
-                            iframe title={ "Project focus for " (&project.name) } src={ "/app/projects/" (project.id) "/focus" } class="focus-frame" {}
-                        } @else {
-                            div class="empty-focus" {
-                                p class="eyebrow" { "Project focus view" }
-                                h2 { "Awaiting project focus" }
-                                form action={ "/app/projects/" (project.id) "/sync" } method="post" {
-                                    button type="submit" class="primary-btn" { "Sync" }
+                    section id="focus-panel" class="focus-stage" {
+                        div class="focus-content" {
+                            @if let Some(ref effort) = focused_effort {
+                                @if let Some(ref html) = effort.focus_html {
+                                    iframe title={ "Effort: " (&effort.title) } srcdoc=(html) class="focus-frame" {}
+                                } @else {
+                                    div class="empty-focus-state" {
+                                        svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
+                                            rect x="4" y="4" width="32" height="32" {}
+                                            line x1="4" y1="20" x2="36" y2="20" {}
+                                            line x1="20" y1="4" x2="20" y2="36" {}
+                                            rect x="12" y="12" width="16" height="16" opacity="0.35" {}
+                                        }
+                                        p class="eyebrow" { (&effort.title) }
+                                        p class="muted" { "Shepherd will populate this view as the effort progresses." }
+                                    }
+                                }
+                            } @else if has_focus {
+                                iframe title={ "Project focus for " (&project.name) } src={ "/app/projects/" (project.id) "/focus" } class="focus-frame" {}
+                            } @else {
+                                div class="empty-focus-state" {
+                                    svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
+                                        rect x="4" y="4" width="32" height="32" {}
+                                        line x1="4" y1="20" x2="36" y2="20" {}
+                                        line x1="20" y1="4" x2="20" y2="36" {}
+                                        rect x="12" y="12" width="16" height="16" opacity="0.35" {}
+                                    }
+                                    p class="eyebrow" { "Awaiting project focus" }
+                                    p class="muted" { "Send a message or sync the project to get started." }
+                                    form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
+                                        button type="submit" class="action-btn primary" { "Sync" }
+                                    }
                                 }
                             }
                         }
@@ -838,34 +862,18 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
                 )
                 .into_string();
                 let work_markup = maud::html! {
-                    section id="work-panel" class="panel-card" {
-                        div class="panel-header" {
-                            h2 { "Work" }
-                        }
+                    section id="work-panel" class="machinery-panel" {
                         (crate::core::webui::render_work_tree_nodes(&work_tree))
                     }
                 }.into_string();
                 let workers_markup = maud::html! {
-                    section id="workers-panel" class="panel-card" {
-                        div class="panel-header" { h2 { "Workers" } }
+                    section id="workers-panel" class="machinery-panel" {
                         (crate::core::webui::render_worker_cards(&workers))
                     }
                 }.into_string();
 
-                let header_markup = maud::html! {
-                    header id="project-header" class="topbar" {
-                        div {
-                            h1 { (&project.name) }
-                            p class="muted small" { "Route " (&route.name) }
-                        }
-                        div class="topbar-actions" {
-                            span class="notification-pill" { (notifications.notifications.len()) " unread" }
-                            button type="button" class="ghost-btn" data-on:click="$machineryOpen = !$machineryOpen" {
-                                "Machinery"
-                            }
-                        }
-                    }
-                }.into_string();
+                // Header is static — skip SSE patching for it
+                let header_markup = String::new();
 
                 if focus_markup != last_focus {
                     last_focus = focus_markup.clone();
