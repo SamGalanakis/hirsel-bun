@@ -334,6 +334,45 @@ h3 {
 
 .notification-pill { color: var(--text-2); }
 .project-chip.active { border-color: var(--border-hover); color: var(--text); }
+.project-chip svg:last-child { width: 10px; height: 10px; color: var(--dim); }
+
+/* ── Project Dropdown ── */
+
+.project-picker { position: relative; }
+
+.project-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 50;
+  min-width: 200px;
+  border: 1px solid var(--border-hover);
+  background: var(--surface);
+  padding: 4px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.project-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.project-dropdown-item svg { width: 14px; height: 14px; color: var(--muted); }
+.project-dropdown-item svg:last-child { margin-left: auto; }
+
+.project-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+
+.project-dropdown-item.current {
+  color: var(--text);
+}
 
 /* ═══════════════════════════════════════
    WORKBENCH

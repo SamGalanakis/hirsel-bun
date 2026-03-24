@@ -94,6 +94,13 @@ fn split_visible_efforts(efforts: &[ShepherdEffort]) -> (&[ShepherdEffort], &[Sh
     }
 }
 
+/// Get the sync task status from the work tree.
+pub fn get_sync_state(work_tree: &[WorkItemTree]) -> &str {
+    sync_task(work_tree)
+        .map(|item| item.status.as_str())
+        .unwrap_or("idle")
+}
+
 // ── Work Tree ──
 
 pub fn render_work_tree_nodes(nodes: &[WorkItemTree]) -> Markup {
@@ -417,7 +424,7 @@ pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
 // ── Project Page (Main Workspace) ──
 
 pub fn render_project_page(
-    _projects: &[Project],
+    projects: &[Project],
     project: &Project,
     route: &Route,
     surface: &ProjectSurfaceSnapshot,
@@ -448,7 +455,7 @@ pub fn render_project_page(
         &project.name,
         "Hirsel project workspace",
         html! {
-            main class="app-shell" data-signals:machinery-open="false" data-signals:machinery-tab="'work'" {
+            main class="app-shell" data-signals:machinery-open="false" data-signals:machinery-tab="'work'" data-signals:project-picker-open="false" {
                 div data-init=(format!("@get('{}', {{openWhenHidden: true}})", stream_url)) {}
 
                 // ── Titlebar ──
@@ -457,9 +464,32 @@ pub fn render_project_page(
                         a href="/app" class="brandmark" { "HIRSEL" }
                         div class="title-divider" {}
                         div class="project-picker" {
-                            a href=(format!("/app/projects/{}", project.id)) class="action-btn sm ghost project-chip active" {
+                            button type="button" class="action-btn sm ghost project-chip active" data-on:click="$projectPickerOpen = !$projectPickerOpen" {
                                 (icon("folder"))
                                 (&project.name)
+                                (icon("chevron-down"))
+                            }
+                            // Dropdown
+                            div class="project-dropdown" data-show="$projectPickerOpen" {
+                                @for p in projects {
+                                    @if p.id == project.id {
+                                        span class="project-dropdown-item current" {
+                                            (icon("folder"))
+                                            (&p.name)
+                                            (icon("check"))
+                                        }
+                                    } @else {
+                                        a href=(format!("/app/projects/{}", p.id)) class="project-dropdown-item" {
+                                            (icon("folder"))
+                                            (&p.name)
+                                        }
+                                    }
+                                }
+                                hr style="margin: 4px 0; opacity: 0.15;" {}
+                                a href="/app" class="project-dropdown-item" {
+                                    (icon("plus"))
+                                    "New project"
+                                }
                             }
                             a href=(format!("/app/projects/{}/settings", project.id)) class="icon-btn" data-tooltip="Project settings" {
                                 (icon("settings"))

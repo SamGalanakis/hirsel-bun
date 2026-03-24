@@ -819,6 +819,7 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
                 load_project_page_state(project_id).await
             {
                 let has_focus = !matches!(surface.focus_view.source.as_deref(), Some("placeholder" | "seed"));
+                let sync_state = crate::core::webui::get_sync_state(&work_tree);
                 let focus_markup = maud::html! {
                     section id="focus-panel" class="focus-stage" {
                         div class="focus-content" {
@@ -847,10 +848,16 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
                                         line x1="20" y1="4" x2="20" y2="36" {}
                                         rect x="12" y="12" width="16" height="16" opacity="0.35" {}
                                     }
-                                    p class="eyebrow" { "Awaiting project focus" }
-                                    p class="muted" { "Send a message or sync the project to get started." }
-                                    form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
-                                        button type="submit" class="action-btn primary" { "Sync" }
+                                    @if sync_state == "working" {
+                                        p class="eyebrow" { "Syncing project" }
+                                        p class="muted" { "Hirsel is surveying the codebase." }
+                                        span class="pill status-working" { "Working" }
+                                    } @else {
+                                        p class="eyebrow" { "Awaiting project focus" }
+                                        p class="muted" { "Sync the project to generate the first picture." }
+                                        form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
+                                            button type="submit" class="action-btn primary" { "Sync" }
+                                        }
                                     }
                                 }
                             }
