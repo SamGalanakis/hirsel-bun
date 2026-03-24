@@ -812,7 +812,7 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
         let mut last_workers = String::new();
 
         loop {
-            if let Ok((_projects, project, route, surface, work_tree, workers, efforts, focused_effort, history, queue, notifications)) =
+            if let Ok((_projects, project, _route, surface, work_tree, workers, efforts, focused_effort, history, queue, _notifications)) =
                 load_project_page_state(project_id).await
             {
                 let has_focus = !matches!(surface.focus_view.source.as_deref(), Some("placeholder" | "seed"));
