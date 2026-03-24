@@ -635,12 +635,14 @@ h3 {
 .chat-thread {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   margin-top: 8px;
-  padding: 0 10px;
+  padding: 4px 12px 12px;
 }
 
 .shepherd-empty-state {
@@ -660,30 +662,38 @@ h3 {
   max-width: 220px;
 }
 
-.chat-row { display: flex; }
+.chat-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+}
+
 .chat-row.user { justify-content: flex-end; }
 .chat-row.assistant { justify-content: flex-start; }
 
 .shepherd-message-user, .shepherd-message-assistant {
-  max-width: 88%;
+  max-width: 85%;
   padding: 8px 10px;
   font-size: 13px;
   line-height: 1.55;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .shepherd-message-user {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
-  margin-left: 28px;
 }
 
 .shepherd-message-assistant {
   background: rgba(255, 255, 255, 0.02);
   border-left: 2px solid rgba(255, 255, 255, 0.1);
-  margin-right: 20px;
 }
 
-.message.pending { opacity: 0.65; }
+.shepherd-message-user.pending {
+  opacity: 0.6;
+  border-style: dashed;
+}
 
 .message-meta {
   display: flex;
@@ -696,7 +706,15 @@ h3 {
   color: var(--muted);
 }
 
-.message-body { margin: 0; font-size: 13px; line-height: 1.6; }
+.message-body {
+  margin: 0;
+  font-family: var(--body);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
 
 .shepherd-input-area {
   border-top: 1px solid var(--border);

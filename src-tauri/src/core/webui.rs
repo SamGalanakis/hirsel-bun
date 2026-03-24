@@ -260,22 +260,19 @@ pub fn render_chat_panel(
                             }
                         }
                     }
-                    @for item in &queue.items {
+                    // Only show pending/failed queue items (working items are already in history)
+                    @for item in queue.items.iter().filter(|q| q.status != "working") {
                         div class="chat-row user" {
                             article class="shepherd-message-user pending" {
                                 div class="message-meta" {
-                                    span { "user" }
+                                    span { "queued" }
                                     span { (format_time(&item.created_at)) }
                                 }
                                 pre class="message-body" { (render_chat_text(&item.chunks_json)) }
-                                p class="eyebrow" {
-                                    @if item.status == "working" {
-                                        "Processing on server"
-                                    } @else if item.status == "failed" {
-                                        "Failed on server"
-                                    } @else {
-                                        "Queued on server"
-                                    }
+                                @if item.status == "failed" {
+                                    p class="eyebrow status-failed" { "Failed" }
+                                } @else {
+                                    p class="eyebrow" { "Queued" }
                                 }
                                 @if let Some(error) = &item.error {
                                     p class="text-destructive" { (error) }
