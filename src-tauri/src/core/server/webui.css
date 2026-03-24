@@ -332,6 +332,9 @@ h3 {
 .brandmark { font-size: 10px; letter-spacing: 0.3em; color: var(--text-2); }
 .title-divider { width: 1px; height: 14px; background: var(--dim); opacity: 0.4; }
 
+.notification-pill { color: var(--text-2); }
+.project-chip.active { border-color: var(--border-hover); color: var(--text); }
+
 /* ═══════════════════════════════════════
    WORKBENCH
    ═══════════════════════════════════════ */
@@ -440,7 +443,8 @@ h3 {
 
 /* ── Tree ── */
 
-.tree-list { list-style: none; margin: 0; padding-left: 10px; display: grid; gap: 6px; }
+.tree-list { list-style: none; margin: 0; padding: 0; padding-left: 10px; display: grid; gap: 6px; }
+.tree-row { display: flex; flex-direction: column; gap: 2px; }
 .tree-node { border-left: 1px solid rgba(255,255,255,0.06); padding-left: 10px; }
 .tree-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .tree-title { font-weight: 500; font-size: 13px; }
@@ -568,6 +572,66 @@ h3 {
   padding: 1px 5px;
 }
 
+.effort-history {
+  margin: 8px 14px 0;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.effort-history summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.effort-history summary::-webkit-details-marker {
+  display: none;
+}
+
+.effort-history-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.effort-history-item {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.015);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.effort-history-item:hover {
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.effort-history-title {
+  font-size: 12px;
+}
+
+.effort-history-summary {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.shepherd-messages-area {
+  background: linear-gradient(180deg, rgba(19, 19, 19, 0.3), transparent 100%);
+}
+
+.chat-composer { display: grid; gap: 0; }
+
 .chat-thread {
   flex: 1;
   min-height: 0;
@@ -649,19 +713,22 @@ h3 {
   border-color: rgba(255, 255, 255, 0.18);
 }
 
-.shepherd-input-wrapper textarea {
-  min-height: 64px;
+.shepherd-input-wrapper input {
+  min-height: 44px;
   padding: 8px 78px 8px 10px;
   border: 0;
   background: transparent;
-  resize: none;
   color: var(--text);
   font-size: 13px;
   font-family: var(--body);
   width: 100%;
 }
 
-.shepherd-input-wrapper textarea::placeholder { color: var(--dim); font-size: 12px; }
+.shepherd-input-wrapper input:focus {
+  outline: none;
+}
+
+.shepherd-input-wrapper input::placeholder { color: var(--dim); font-size: 12px; }
 
 .shepherd-send-btn { position: absolute; right: 6px; bottom: 6px; }
 

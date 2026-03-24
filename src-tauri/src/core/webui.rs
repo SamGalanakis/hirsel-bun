@@ -10,6 +10,7 @@ use crate::gui::commands::shepherd::commands::ShepherdQueueState;
 use crate::gui::commands::types::UnreadNotificationsResponse;
 
 const DATASTAR_BUNDLE: &str = "/static/datastar.js";
+const MAX_VISIBLE_EFFORTS: usize = 5;
 
 fn page_head(title: &str, description: &str) -> Markup {
     html! {
@@ -83,6 +84,14 @@ fn sync_task<'a>(tree: &'a [WorkItemTree]) -> Option<&'a WorkItemTree> {
         }
     }
     None
+}
+
+fn split_visible_efforts(efforts: &[ShepherdEffort]) -> (&[ShepherdEffort], &[ShepherdEffort]) {
+    if efforts.len() <= MAX_VISIBLE_EFFORTS {
+        (efforts, &[])
+    } else {
+        efforts.split_at(MAX_VISIBLE_EFFORTS)
+    }
 }
 
 // ── Work Tree ──
@@ -165,6 +174,7 @@ pub fn render_chat_panel(
     history: &[ShepherdChatMessage],
     queue: &ShepherdQueueState,
 ) -> Markup {
+    let (visible_efforts, history_efforts) = split_visible_efforts(efforts);
     html! {
         section id="chat-panel" class="chat-panel shepherd-chat-panel" {
             div class="chat-toolbar" {
@@ -187,9 +197,9 @@ pub fn render_chat_panel(
                 }
             }
             hr role="separator" class="shepherd-header-divider" {}
-            @if !efforts.is_empty() {
+            @if !visible_efforts.is_empty() {
                 div class="effort-strip" {
-                    @for effort in efforts {
+                    @for effort in visible_efforts {
                         @if focused_effort.map(|item| item.id.as_str()) == Some(effort.id.as_str()) {
                             span class="effort-chip active" {
                                 (&effort.title)
@@ -201,6 +211,26 @@ pub fn render_chat_panel(
                                 button type="submit" class="effort-chip" {
                                     span { (&effort.title) }
                                     span class=(format!("pill status-{}", effort.status)) { (&effort.status) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            @if !history_efforts.is_empty() {
+                details class="effort-history" {
+                    summary {
+                        "History"
+                        span class="pill muted" { (history_efforts.len()) }
+                    }
+                    div class="effort-history-list" {
+                        @for effort in history_efforts {
+                            form
+                                action=(format!("/app/projects/{}/efforts/{}/focus", project_id, effort.id))
+                                method="post" {
+                                button type="submit" class="effort-history-item" {
+                                    span class="effort-history-title" { (&effort.title) }
+                                    span class="effort-history-summary" { (&effort.summary) }
                                 }
                             }
                         }
@@ -256,16 +286,22 @@ pub fn render_chat_panel(
                 }
             }
             form
+                id=(format!("chat-send-form-{}", project_id))
                 class="chat-composer shepherd-input-area"
                 data-signals:chat-draft="''"
                 data-signals:chat-sending="false"
                 data-indicator:chat-sending
-                data-on:submit__prevent=(format!("@post('/app/projects/{}/chat/send')", project_id)) {
+                data-on:submit__prevent=(format!(
+                    "@post('/app/projects/{}/chat/send', {{contentType: 'form', selector: '#chat-send-form-{}'}})",
+                    project_id,
+                    project_id
+                )) {
                 div class="shepherd-input-wrapper" {
-                    textarea
+                    input
+                        type="text"
                         name="content"
-                        rows="2"
                         placeholder="Message Shepherd..."
+                        autocomplete="off"
                         data-bind:chat-draft {}
                     button
                         type="submit"
