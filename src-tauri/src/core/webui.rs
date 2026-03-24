@@ -177,26 +177,6 @@ pub fn render_chat_panel(
     let (visible_efforts, history_efforts) = split_visible_efforts(efforts);
     html! {
         section id="chat-panel" class="chat-panel shepherd-chat-panel" {
-            div class="chat-toolbar" {
-                div class="chat-toolbar-left" {
-                    (icon("message-square"))
-                    h2 class="chat-title" {
-                        "Shepherd"
-                        @if let Some(effort) = focused_effort {
-                            span class="chat-effort-title" { " · " (&effort.title) }
-                        }
-                    }
-                }
-                div class="chat-toolbar-right" {
-                    @if queue.has_active_turn {
-                        span class="pill status-working" { "Working" }
-                    }
-                    @if !queue.items.is_empty() {
-                        span class="pill" { "Queued " (queue.items.len()) }
-                    }
-                }
-            }
-            hr role="separator" class="shepherd-header-divider" {}
             @if !visible_efforts.is_empty() {
                 div class="effort-strip" {
                     @for effort in visible_efforts {
@@ -284,6 +264,16 @@ pub fn render_chat_panel(
                     project_id,
                     project_id
                 )) {
+                @if queue.has_active_turn || !queue.items.is_empty() {
+                    div class="chat-status-bar" {
+                        @if queue.has_active_turn {
+                            span class="pill status-working" { "Working" }
+                        }
+                        @if !queue.items.is_empty() {
+                            span class="pill" { "Queued " (queue.items.len()) }
+                        }
+                    }
+                }
                 div class="shepherd-input-wrapper" {
                     input
                         type="text"

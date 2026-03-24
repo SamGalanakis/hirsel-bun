@@ -429,24 +429,25 @@ h3 {
   flex: 1;
   min-height: 0;
   padding: 10px;
+  display: flex;
+  flex-direction: column;
 }
 
 .focus-frame {
+  flex: 1;
   width: 100%;
-  height: 100%;
   border: 1px solid var(--border);
   background: #0e0e0e;
 }
 
 .empty-focus-state {
-  height: 100%;
-  min-height: 320px;
+  flex: 1;
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 10px;
   text-align: center;
   padding: 40px;
 }
@@ -790,6 +791,12 @@ h3 {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: break-word;
+}
+
+.chat-status-bar {
+  display: flex;
+  gap: 6px;
+  padding: 0 0 6px;
 }
 
 .shepherd-input-area {
