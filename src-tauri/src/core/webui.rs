@@ -1,6 +1,7 @@
 use maud::{html, Markup, PreEscaped, DOCTYPE};
 
 use crate::core::api_types::{Worker, WorkerEventResponse};
+use crate::core::icons::icon;
 use crate::core::project::{Project, ProjectSurfaceSnapshot};
 use crate::core::route::Route;
 use crate::core::worktree::{WorkItemTree, SYNC_PROJECT_TASK_MARKER, SYNC_PROJECT_TASK_TITLE};
@@ -16,19 +17,21 @@ fn page_head(title: &str, description: &str) -> Markup {
         meta name="viewport" content="width=device-width, initial-scale=1";
         title { (title) " · Hirsel" }
         meta name="description" content=(description);
-        meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src https://fonts.gstatic.com; frame-src 'self'; connect-src 'self';";
+        meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src https://fonts.gstatic.com; frame-src 'self'; connect-src 'self';";
         link rel="preconnect" href="https://fonts.googleapis.com";
         link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
         link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Space+Grotesk:wght@300;400;500;600&display=swap";
+        link rel="stylesheet" href="/static/basecoat.css";
         link rel="stylesheet" href="/static/webui.css";
         script type="module" src=(DATASTAR_BUNDLE) {}
+        script src="/static/basecoat.js" defer {}
     }
 }
 
 fn app_document(title: &str, description: &str, body: Markup) -> Markup {
     html! {
         (DOCTYPE)
-        html lang="en" {
+        html lang="en" class="dark" {
             head {
                 (page_head(title, description))
             }
@@ -84,6 +87,8 @@ fn sync_task<'a>(tree: &'a [WorkItemTree]) -> Option<&'a WorkItemTree> {
     None
 }
 
+// ── Work Tree ──
+
 pub fn render_work_tree_nodes(nodes: &[WorkItemTree]) -> Markup {
     html! {
         @if nodes.is_empty() {
@@ -97,9 +102,9 @@ pub fn render_work_tree_nodes(nodes: &[WorkItemTree]) -> Markup {
                         div class="tree-row" {
                             div class="tree-meta" {
                                 span class="tree-title" { (&node.title) }
-                                span class=(format!("status-pill status-{}", node.status)) { (&node.status) }
+                                span class=(format!("badge badge-outline status-{}", node.status)) { (&node.status) }
                                 @if let Some(profile) = node.capability_profile {
-                                    span class="capability-pill" { (profile.as_str()) }
+                                    span class="badge badge-secondary" { (profile.as_str()) }
                                 }
                             }
                             @if !node.description.trim().is_empty() {
@@ -116,6 +121,8 @@ pub fn render_work_tree_nodes(nodes: &[WorkItemTree]) -> Markup {
     }
 }
 
+// ── Worker Cards ──
+
 pub fn render_worker_cards(workers: &[Worker]) -> Markup {
     html! {
         @if workers.is_empty() {
@@ -125,18 +132,24 @@ pub fn render_worker_cards(workers: &[Worker]) -> Markup {
         } @else {
             div class="worker-grid" {
                 @for worker in workers {
-                    article class="worker-card" {
-                        div class="worker-heading" {
-                            h3 { (&worker.name) }
-                                    span class=(format!("status-pill status-{}", format!("{:?}", worker.status).to_lowercase())) {
-                                (format!("{:?}", worker.status).to_lowercase())
+                    article class="card worker-card" {
+                        header {
+                            h3 { (icon("cpu")) (&worker.name) }
+                            span data-slot="card-action" {
+                                span class=(format!("badge badge-outline status-{}", format!("{:?}", worker.status).to_lowercase())) {
+                                    (format!("{:?}", worker.status).to_lowercase())
+                                }
                             }
                         }
-                        @if let Some(task) = &worker.current_task {
-                            p class="muted" { (task) }
-                        }
-                        @if let Some(profile) = &worker.capability_profile {
-                            p class="muted small" { "Capability: " (profile.as_str()) }
+                        @if worker.current_task.is_some() || worker.capability_profile.is_some() {
+                            section {
+                                @if let Some(task) = &worker.current_task {
+                                    p class="text-muted-foreground" { (task) }
+                                }
+                                @if let Some(profile) = &worker.capability_profile {
+                                    p class="eyebrow" { (profile.as_str()) }
+                                }
+                            }
                         }
                     }
                 }
@@ -144,6 +157,8 @@ pub fn render_worker_cards(workers: &[Worker]) -> Markup {
         }
     }
 }
+
+// ── Chat Panel ──
 
 pub fn render_chat_panel(
     project_id: i64,
@@ -154,18 +169,19 @@ pub fn render_chat_panel(
         section id="chat-panel" class="chat-panel shepherd-chat-panel" {
             div class="chat-toolbar" {
                 div class="chat-toolbar-left" {
+                    (icon("message-square"))
                     h2 class="chat-title" { "Shepherd" }
                 }
                 div class="chat-toolbar-right" {
                     @if queue.has_active_turn {
-                        span class="muted small" { "Working" }
+                        span class="badge badge-outline status-working" { "Working" }
                     }
                     @if !queue.items.is_empty() {
-                        span class="muted small" { "Queued " (queue.items.len()) }
+                        span class="badge badge-outline" { "Queued " (queue.items.len()) }
                     }
                 }
             }
-            div class="shepherd-header-divider" {}
+            hr role="separator" class="shepherd-header-divider" {}
             div id="chat-thread" class="chat-thread shepherd-messages-area" {
                 @if history.is_empty() && queue.items.is_empty() {
                     div class="shepherd-empty-state" {
@@ -192,7 +208,7 @@ pub fn render_chat_panel(
                                     span { (format_time(&item.created_at)) }
                                 }
                                 pre class="message-body" { (render_chat_text(&item.chunks_json)) }
-                                p class="muted small" {
+                                p class="eyebrow" {
                                     @if item.status == "working" {
                                         "Processing on server"
                                     } @else if item.status == "failed" {
@@ -202,7 +218,7 @@ pub fn render_chat_panel(
                                     }
                                 }
                                 @if let Some(error) = &item.error {
-                                    p class="error-text" { (error) }
+                                    p class="text-destructive" { (error) }
                                 }
                             }
                         }
@@ -223,8 +239,9 @@ pub fn render_chat_panel(
                         data-bind:chat-draft {}
                     button
                         type="submit"
-                        class="shepherd-send-btn"
+                        class="btn btn-sm btn-primary shepherd-send-btn"
                         data-attr:disabled="$chatSending || !$chatDraft.trim()" {
+                        (icon("send"))
                         "Send"
                     }
                 }
@@ -233,31 +250,46 @@ pub fn render_chat_panel(
     }
 }
 
+// ── Connect Page ──
+
 pub fn render_connect_page(error: Option<&str>, return_to: Option<&str>) -> Markup {
     app_document(
         "Connect",
         "Connect to a Hirsel backend",
         html! {
             main class="connect-page" {
-                section class="connect-card" {
-                    h1 { "Connect to Hirsel" }
-                    p class="muted" { "Enter the backend API key to open this Hirsel server." }
-                    @if let Some(error) = error {
-                        p class="error-text" { (error) }
+                section class="card connect-card" {
+                    header {
+                        h2 { "Connect to Hirsel" }
+                        p { "Enter the backend API key to open this Hirsel server." }
                     }
-                    form action="/connect/session" method="post" class="stack" {
-                        input type="hidden" name="return_to" value=(return_to.unwrap_or("/app"));
-                        label class="stack" {
-                            span { "API key" }
-                            input type="password" name="api_key" autocomplete="current-password" required;
+                    section {
+                        @if let Some(error) = error {
+                            div class="alert alert-destructive" {
+                                (icon("x"))
+                                strong { "Error" }
+                                section { p { (error) } }
+                            }
                         }
-                        button type="submit" class="primary-btn" { "Open Hirsel" }
+                        form action="/connect/session" method="post" {
+                            input type="hidden" name="return_to" value=(return_to.unwrap_or("/app"));
+                            div role="group" class="field" {
+                                label for="api-key" { "API key" }
+                                input id="api-key" type="password" name="api_key" autocomplete="current-password" required;
+                            }
+                            button type="submit" class="btn btn-primary" style="width:100%; margin-top: 8px;" {
+                                (icon("key"))
+                                "Open Hirsel"
+                            }
+                        }
                     }
                 }
             }
         },
     )
 }
+
+// ── Empty Projects / Sidebar ──
 
 pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
     app_document(
@@ -269,28 +301,44 @@ pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
                     div class="brand" { "HIRSEL" }
                     nav class="project-nav" {
                         @for project in projects {
-                            a href=(format!("/app/projects/{}", project.id)) class="project-link" { (&project.name) }
+                            a href=(format!("/app/projects/{}", project.id)) class="project-link" {
+                                (icon("folder"))
+                                (&project.name)
+                            }
                         }
                     }
-                    a href="/app/settings" class="ghost-btn full" { "Backend settings" }
+                    div class="sidebar-actions" {
+                        a href="/app/settings" class="btn btn-ghost" style="width:100%;" {
+                            (icon("settings"))
+                            "Backend settings"
+                        }
+                    }
                 }
                 section class="main-panel" {
-                    article class="form-card" {
-                        h1 { "Create project" }
-                        form action="/app/projects" method="post" class="stack" {
-                            label class="stack" {
-                                span { "Project name" }
-                                input type="text" name="name" required;
+                    article class="card" style="max-width: 540px;" {
+                        header {
+                            h2 { "Create project" }
+                            p { "Point Hirsel at a repository to get started." }
+                        }
+                        section {
+                            form action="/app/projects" method="post" {
+                                div role="group" class="field" {
+                                    label for="proj-name" { "Project name" }
+                                    input id="proj-name" type="text" name="name" required;
+                                }
+                                div role="group" class="field" {
+                                    label for="repo-url" { "Repository URL" }
+                                    input id="repo-url" type="url" name="repo_url" placeholder="https://github.com/owner/repo" required;
+                                }
+                                div role="group" class="field" {
+                                    label for="branch" { "Branch" }
+                                    input id="branch" type="text" name="branch" value="main";
+                                }
+                                button type="submit" class="btn btn-primary" style="width:100%; margin-top: 8px;" {
+                                    (icon("plus"))
+                                    "Create project"
+                                }
                             }
-                            label class="stack" {
-                                span { "Repository URL" }
-                                input type="url" name="repo_url" placeholder="https://github.com/owner/repo" required;
-                            }
-                            label class="stack" {
-                                span { "Branch" }
-                                input type="text" name="branch" value="main";
-                            }
-                            button type="submit" class="primary-btn" { "Create project" }
                         }
                     }
                 }
@@ -298,6 +346,8 @@ pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
         },
     )
 }
+
+// ── Project Page (Main Workspace) ──
 
 pub fn render_project_page(
     _projects: &[Project],
@@ -331,30 +381,55 @@ pub fn render_project_page(
         html! {
             main class="app-shell" data-signals:machinery-open="false" data-signals:machinery-tab="'work'" {
                 div data-init=(format!("@get('{}', {{openWhenHidden: true}})", stream_url)) {}
+
+                // ── Titlebar ──
                 header class="titlebar" {
                     div class="titlebar-left" {
                         a href="/app" class="brandmark" { "HIRSEL" }
                         div class="title-divider" {}
                         div class="project-picker" {
-                            a href=(format!("/app/projects/{}", project.id)) class="project-chip active" { (&project.name) }
-                            a href=(format!("/app/projects/{}/settings", project.id)) class="icon-chip" { "Project settings" }
+                            a href=(format!("/app/projects/{}", project.id)) class="btn btn-sm btn-ghost project-chip active" {
+                                (icon("folder"))
+                                (&project.name)
+                            }
+                            a href=(format!("/app/projects/{}/settings", project.id)) class="btn btn-sm-icon btn-ghost" data-tooltip="Project settings" {
+                                (icon("pencil"))
+                            }
                         }
                     }
                     div class="titlebar-right" {
                         @if !notifications.notifications.is_empty() {
-                            span class="notification-pill" { (notifications.notifications.len()) }
+                            span class="badge badge-outline notification-pill" {
+                                (icon("bell"))
+                                (notifications.notifications.len())
+                            }
                         }
-                        a href="/app/settings" class="icon-chip" { "Settings" }
+                        a href="/app/settings" class="btn btn-sm-icon btn-ghost" data-tooltip="Settings" {
+                            (icon("settings"))
+                        }
                     }
                 }
+
+                // ── Workbench ──
                 section class="workbench" {
                     section class="surface-stack" {
+
+                        // ── Surface Toolbar ──
                         header class="surface-toolbar" {
-                            div class="route-pill" { (&route.name) " · " (route_status) }
-                            button type="button" class="toolbar-toggle" data-on:click="$machineryOpen = !$machineryOpen" {
+                            div class="route-strip" {
+                                span class="badge badge-outline route-pill" {
+                                    (icon("git-branch"))
+                                    (&route.name)
+                                    " · "
+                                    (route_status)
+                                }
+                            }
+                            button type="button" class="btn btn-sm btn-ghost toolbar-toggle" data-on:click="$machineryOpen = !$machineryOpen" {
                                 "Machinery"
                             }
                         }
+
+                        // ── Focus Stage ──
                         section id="focus-panel" class="focus-stage" {
                             @if has_focus {
                                 iframe
@@ -371,15 +446,16 @@ pub fn render_project_page(
                                     }
                                     p class="eyebrow" { "Awaiting project focus" }
                                     @if sync_state == "working" {
-                                        p class="muted" { "Hirsel is surveying the project in the background." }
+                                        p class="text-muted-foreground" { "Hirsel is surveying the project in the background." }
                                     } @else if sync_state == "failed" {
-                                        p class="muted" { "Project sync failed. Retry to build the first project picture." }
+                                        p class="text-muted-foreground" { "Project sync failed. Retry to build the first project picture." }
                                     } @else {
-                                        p class="muted" { "Generate the first project picture when you are ready." }
+                                        p class="text-muted-foreground" { "Generate the first project picture when you are ready." }
                                     }
                                     @if sync_state != "working" {
                                         form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
-                                            button type="submit" class="primary-btn" {
+                                            button type="submit" class="btn btn-primary" {
+                                                (icon("refresh-cw"))
                                                 @if sync_state == "failed" { "Retry sync" } @else { "Sync" }
                                             }
                                         }
@@ -387,47 +463,57 @@ pub fn render_project_page(
                                 }
                             }
                         }
+
+                        // ── Machinery Drawer ──
                         section class="machinery-drawer" data-show="$machineryOpen" {
                             div class="machinery-header" {
-                                div class="machinery-title" { "Machinery" }
+                                span class="eyebrow" { "Machinery" }
                                 div class="machinery-actions" {
                                     form action=(format!("/app/projects/{}/routes", project.id)) method="post" class="inline-form" {
                                         input type="text" name="name" placeholder="New route name" required;
-                                        button type="submit" class="ghost-btn" { "Fork route" }
+                                        button type="submit" class="btn btn-sm btn-ghost" {
+                                            (icon("copy-plus"))
+                                            "Fork"
+                                        }
                                     }
                                     @if surface.routes.len() > 1 {
                                         form action={ "/app/projects/" (project.id) "/routes/" (route.id) "/archive" } method="post" {
-                                            button type="submit" class="ghost-btn danger" { "Archive route" }
+                                            button type="submit" class="btn btn-sm btn-ghost btn-destructive-text" {
+                                                (icon("archive"))
+                                                "Archive"
+                                            }
                                         }
                                     }
                                 }
                             }
-                            div class="machinery-tabs" {
-                                button
-                                    type="button"
-                                    class="machinery-tab"
-                                    data-class:active="$machineryTab === 'work'"
-                                    data-on:click="$machineryTab = 'work'" {
-                                    "Work"
-                                }
-                                button
-                                    type="button"
-                                    class="machinery-tab"
-                                    data-class:active="$machineryTab === 'workers'"
-                                    data-on:click="$machineryTab = 'workers'" {
-                                    "Workers"
+                            // Tabs
+                            div class="tabs machinery-tabs-container" {
+                                div role="tablist" {
+                                    button role="tab" type="button"
+                                        aria-selected="true"
+                                        data-class:aria-selected="$machineryTab === 'work'"
+                                        data-on:click="$machineryTab = 'work'" {
+                                        "Work"
+                                    }
+                                    button role="tab" type="button"
+                                        data-class:aria-selected="$machineryTab === 'workers'"
+                                        data-on:click="$machineryTab = 'workers'" {
+                                        "Workers"
+                                    }
                                 }
                             }
                             div class="machinery-body" {
-                                section id="work-panel" class="panel-card machinery-panel" data-show="$machineryTab === 'work'" {
+                                section id="work-panel" class="machinery-panel" data-show="$machineryTab === 'work'" {
                                     (render_work_tree_nodes(work_tree))
                                 }
-                                section id="workers-panel" class="panel-card machinery-panel" data-show="$machineryTab === 'workers'" {
+                                section id="workers-panel" class="machinery-panel" data-show="$machineryTab === 'workers'" {
                                     (render_worker_cards(workers))
                                 }
                             }
                         }
                     }
+
+                    // ── Chat Rail ──
                     aside class="chat-rail" {
                         (render_chat_panel(project.id, history, queue))
                     }
@@ -436,6 +522,8 @@ pub fn render_project_page(
         },
     )
 }
+
+// ── Settings Page ──
 
 pub fn render_settings_page(
     provider: &str,
@@ -451,67 +539,114 @@ pub fn render_settings_page(
         html! {
             main class="shell shell-single" {
                 section class="main-panel main-panel-narrow" {
-                    article class="form-card" {
-                        div class="panel-header" {
-                            div class="stack" {
-                                p class="eyebrow" { "Backend" }
-                                h1 { "Backend settings" }
-                            }
-                            a href="/app" class="ghost-btn" { "Back" }
+
+                    // ── Header ──
+                    div class="panel-header" style="margin-bottom: 12px;" {
+                        div {
+                            p class="eyebrow" { "Backend" }
+                            h1 { "Settings" }
                         }
-                        form action="/app/settings/llm" method="post" class="stack" {
-                            label class="stack" {
-                                span { "Provider" }
-                                select name="provider" {
-                                    option value="codex" selected[provider == "codex"] { "Codex" }
-                                    option value="openrouter" selected[provider == "openrouter"] { "OpenRouter" }
+                        a href="/app" class="btn btn-ghost" {
+                            (icon("arrow-left"))
+                            "Back"
+                        }
+                    }
+
+                    // ── LLM Provider ──
+                    article class="card" {
+                        header {
+                            h3 { (icon("cpu")) "LLM Provider" }
+                        }
+                        section {
+                            form action="/app/settings/llm" method="post" {
+                                div role="group" class="field" {
+                                    label for="provider" { "Provider" }
+                                    select id="provider" name="provider" {
+                                        option value="codex" selected[provider == "codex"] { "Codex (OpenAI)" }
+                                        option value="openrouter" selected[provider == "openrouter"] { "OpenRouter" }
+                                    }
+                                }
+                                div role="group" class="field" {
+                                    label for="or-base" { "OpenRouter base URL" }
+                                    input id="or-base" type="text" name="openrouter_base_url" value=(openrouter_base_url.unwrap_or(""));
+                                }
+                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                    (icon("save"))
+                                    "Save provider"
                                 }
                             }
-                            label class="stack" {
-                                span { "OpenRouter base URL" }
-                                input type="text" name="openrouter_base_url" value=(openrouter_base_url.unwrap_or(""));
-                            }
-                            button type="submit" class="primary-btn" { "Save provider" }
                         }
                     }
-                    article class="form-card" {
-                        div class="stack" {
-                            p class="eyebrow" { "Services" }
-                            h2 { "Credentials" }
-                        }
-                        form action="/app/settings/openrouter" method="post" class="stack" {
-                            p class="muted small" { "OpenRouter API key" }
-                            @if let Some(masked) = openrouter_masked {
-                                p class="muted" { "Current: " (masked) }
+
+                    // ── Codex ──
+                    article class="card" id="codex-status" {
+                        header {
+                            h3 { (icon("key")) "Codex" }
+                            span data-slot="card-action" {
+                                @if codex_connected {
+                                    span class="badge badge-outline status-working" { "Connected" }
+                                }
                             }
-                            input type="password" name="api_key" placeholder="sk-or-..." ;
-                            button type="submit" class="primary-btn" { "Save OpenRouter key" }
                         }
-                        form action="/app/settings/tavily" method="post" class="stack" {
-                            p class="muted small" { "Tavily API key" }
-                            @if let Some(masked) = tavily_masked {
-                                p class="muted" { "Current: " (masked) }
+                        section {
+                            @if codex_connected {
+                                p class="text-muted-foreground" { "Codex OAuth is connected. Sessions will use Codex for model inference." }
+                            } @else if let Some((device_auth_id, user_code, verify_url)) = codex_state {
+                                div data-init=(format!("@get('/app/settings/codex/stream?device_auth_id={}&user_code={}', {{openWhenHidden: true}})", device_auth_id, user_code)) {}
+                                p class="text-muted-foreground" { "Open the verification page, enter the code, and keep this page open." }
+                                div style="margin: 12px 0;" {
+                                    span class="code-block" { (user_code) }
+                                }
+                                p {
+                                    a href=(verify_url) target="_blank" rel="noreferrer" class="btn btn-ghost" {
+                                        (icon("globe"))
+                                        "Open Codex verification"
+                                    }
+                                }
+                                p class="eyebrow" { "Waiting for approval…" }
+                            } @else {
+                                form action="/app/settings/codex/start" method="post" {
+                                    button type="submit" class="btn btn-primary" {
+                                        (icon("link"))
+                                        "Connect Codex"
+                                    }
+                                }
                             }
-                            input type="password" name="api_key" placeholder="tvly-..." ;
-                            button type="submit" class="ghost-btn" { "Save Tavily key" }
                         }
                     }
-                    article class="form-card" id="codex-status" {
-                        div class="stack" {
-                            p class="eyebrow" { "OpenAI" }
-                            h2 { "Codex" }
+
+                    // ── API Keys ──
+                    article class="card" {
+                        header {
+                            h3 { (icon("key")) "API Keys" }
                         }
-                        @if codex_connected {
-                            p { "Codex is connected." }
-                        } @else if let Some((device_auth_id, user_code, verify_url)) = codex_state {
-                            div data-init=(format!("@get('/app/settings/codex/stream?device_auth_id={}&user_code={}', {{openWhenHidden: true}})", device_auth_id, user_code)) {}
-                            p class="muted" { "Open the verification page, enter the code, and keep this page open." }
-                            p class="code-block" { (user_code) }
-                            p { a href=(verify_url) target="_blank" rel="noreferrer" { "Open Codex verification" } }
-                            p class="muted small" { "Waiting for approval…" }
-                        } @else {
-                            form action="/app/settings/codex/start" method="post" {
-                                button type="submit" class="primary-btn" { "Connect Codex" }
+                        section {
+                            form action="/app/settings/openrouter" method="post" {
+                                div role="group" class="field" {
+                                    label for="or-key" { "OpenRouter API key" }
+                                    @if let Some(masked) = openrouter_masked {
+                                        p class="text-muted-foreground" style="font-size: 12px;" { "Current: " (masked) }
+                                    }
+                                    input id="or-key" type="password" name="api_key" placeholder="sk-or-...";
+                                }
+                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                    (icon("save"))
+                                    "Save OpenRouter key"
+                                }
+                            }
+                            hr role="separator" style="margin: 16px 0;" {}
+                            form action="/app/settings/tavily" method="post" {
+                                div role="group" class="field" {
+                                    label for="tav-key" { "Tavily API key" }
+                                    @if let Some(masked) = tavily_masked {
+                                        p class="text-muted-foreground" style="font-size: 12px;" { "Current: " (masked) }
+                                    }
+                                    input id="tav-key" type="password" name="api_key" placeholder="tvly-...";
+                                }
+                                button type="submit" class="btn btn-ghost" style="width:100%;" {
+                                    (icon("save"))
+                                    "Save Tavily key"
+                                }
                             }
                         }
                     }
@@ -521,6 +656,8 @@ pub fn render_settings_page(
     )
 }
 
+// ── Project Settings ──
+
 pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup {
     app_document(
         "Project settings",
@@ -528,47 +665,70 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
         html! {
             main class="shell shell-single" {
                 section class="main-panel main-panel-narrow" {
-                    article class="form-card" {
-                        div class="panel-header" {
-                            div class="stack" {
-                                p class="eyebrow" { "Project" }
-                                h1 { "Project settings" }
-                            }
-                            a href=(format!("/app/projects/{}", project.id)) class="ghost-btn" { "Back" }
+
+                    // ── Header ──
+                    div class="panel-header" style="margin-bottom: 12px;" {
+                        div {
+                            p class="eyebrow" { "Project" }
+                            h1 { "Project settings" }
                         }
-                        form action={ "/app/projects/" (project.id) "/settings/project" } method="post" class="stack" {
-                            label class="stack" {
-                                span { "Project name" }
-                                input type="text" name="name" value=(&project.name);
-                            }
-                            label class="stack" {
-                                span { "Description" }
-                                textarea name="description" rows="5" { (project.description.as_deref().unwrap_or("")) }
-                            }
-                            button type="submit" class="primary-btn" { "Save project" }
+                        a href=(format!("/app/projects/{}", project.id)) class="btn btn-ghost" {
+                            (icon("arrow-left"))
+                            "Back"
                         }
                     }
-                    article class="form-card" {
-                        div class="stack" {
-                            p class="eyebrow" { "Route" }
-                            h2 { "Selected route" }
+
+                    // ── Project Card ──
+                    article class="card" {
+                        header {
+                            h3 { (icon("pencil")) "Project" }
                         }
-                        form action={ "/app/projects/" (project.id) "/settings/route" } method="post" class="stack" {
-                            input type="hidden" name="route_id" value=(route.id);
-                            p class="muted" { "Current route: " (&route.name) }
-                            label class="stack" {
-                                span { "Time limit (minutes)" }
-                                input type="number" min="0" name="time_limit_minutes" value=(route.time_limit_minutes.unwrap_or_default());
+                        section {
+                            form action={ "/app/projects/" (project.id) "/settings/project" } method="post" {
+                                div role="group" class="field" {
+                                    label for="proj-name" { "Project name" }
+                                    input id="proj-name" type="text" name="name" value=(&project.name);
+                                }
+                                div role="group" class="field" {
+                                    label for="proj-desc" { "Description" }
+                                    textarea id="proj-desc" name="description" rows="4" { (project.description.as_deref().unwrap_or("")) }
+                                }
+                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                    (icon("save"))
+                                    "Save project"
+                                }
                             }
-                            label class="inline-check" {
-                                input type="checkbox" name="human_in_the_loop" checked[route.human_in_the_loop];
-                                span { "Require human in the loop" }
+                        }
+                    }
+
+                    // ── Route Card ──
+                    article class="card" {
+                        header {
+                            h3 { (icon("git-branch")) "Route" }
+                            span data-slot="card-action" {
+                                span class="badge badge-outline" { (&route.name) }
                             }
-                            label class="stack" {
-                                span { "Target branch" }
-                                input type="text" name="target_branch" value=(route.target_branch.as_deref().unwrap_or(""));
+                        }
+                        section {
+                            form action={ "/app/projects/" (project.id) "/settings/route" } method="post" {
+                                input type="hidden" name="route_id" value=(route.id);
+                                div role="group" class="field" {
+                                    label for="time-limit" { "Time limit (minutes)" }
+                                    input id="time-limit" type="number" min="0" name="time_limit_minutes" value=(route.time_limit_minutes.unwrap_or_default());
+                                }
+                                div role="group" class="field" data-orientation="horizontal" {
+                                    input id="hitl" type="checkbox" name="human_in_the_loop" role="switch" checked[route.human_in_the_loop];
+                                    label for="hitl" { "Require human in the loop" }
+                                }
+                                div role="group" class="field" {
+                                    label for="target-branch" { "Target branch" }
+                                    input id="target-branch" type="text" name="target_branch" value=(route.target_branch.as_deref().unwrap_or(""));
+                                }
+                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                    (icon("save"))
+                                    "Save route"
+                                }
                             }
-                            button type="submit" class="primary-btn" { "Save route" }
                         }
                     }
                 }
@@ -576,6 +736,8 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
         },
     )
 }
+
+// ── Worker Detail ──
 
 pub fn render_worker_detail_page(
     project: &Project,
@@ -594,21 +756,38 @@ pub fn render_worker_detail_page(
             main class="shell shell-single" {
                 div data-init=(format!("@get('{}', {{openWhenHidden: true}})", stream_url)) {}
                 section class="main-panel main-panel-wide" {
-                    article class="form-card" {
-                        div class="panel-header" {
-                            h1 { (&worker.name) }
-                            a href=(format!("/app/projects/{}", project.id)) class="ghost-btn" { "Back" }
+
+                    // ── Header ──
+                    div class="panel-header" style="margin-bottom: 12px;" {
+                        div {
+                            h1 { (icon("cpu")) (&worker.name) }
+                            p class="text-muted-foreground" {
+                                "Route " (&route.name)
+                                " · "
+                                span class=(format!("status-{}", format!("{:?}", worker.status).to_lowercase())) {
+                                    (format!("{:?}", worker.status).to_lowercase())
+                                }
+                            }
                         }
-                        p class="muted" { "Route " (&route.name) " · " (format!("{:?}", worker.status).to_lowercase()) }
-                        section id="worker-events" class="worker-events" {
-                            @for event in events {
-                                article class="event-row" {
-                                    div class="message-meta" {
-                                        span { (&event.event_type) }
-                                        span { (format_time(&event.timestamp)) }
-                                    }
-                                    @if let Some(content) = &event.content {
-                                        pre class="message-body" { (content) }
+                        a href=(format!("/app/projects/{}", project.id)) class="btn btn-ghost" {
+                            (icon("arrow-left"))
+                            "Back"
+                        }
+                    }
+
+                    // ── Events ──
+                    article class="card" {
+                        section {
+                            div id="worker-events" class="worker-events" {
+                                @for event in events {
+                                    article class="event-row" {
+                                        div class="message-meta" {
+                                            span class="badge badge-outline" { (&event.event_type) }
+                                            span { (format_time(&event.timestamp)) }
+                                        }
+                                        @if let Some(content) = &event.content {
+                                            pre class="message-body" { (content) }
+                                        }
                                     }
                                 }
                             }

@@ -12,6 +12,7 @@ pub mod api_types;
 pub mod board;
 pub mod capabilities;
 pub mod config;
+// Intentionally not `pub` — only used by webui.rs
 pub mod conflict_resolver;
 pub mod constants;
 pub mod credentials;
@@ -27,6 +28,7 @@ pub mod forge;
 pub mod git;
 pub mod github;
 pub mod http_client;
+pub(crate) mod icons;
 pub mod lifecycle;
 pub mod llm_provider;
 pub mod mcp;
