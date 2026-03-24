@@ -113,6 +113,7 @@ pub async fn start_daemon(config: DaemonConfig) -> Result<()> {
     let app_config = Arc::new(RwLock::new(hirsel_config));
     let state = Arc::new(AppState {
         orchestrator,
+        api_key: String::new(),
         config: app_config,
     });
 

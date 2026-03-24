@@ -4,14 +4,11 @@
 
 use super::ResultExt;
 use crate::core::delta::DeltaState;
-use crate::core::draft::StartingPoint;
 use crate::core::project::{
-    validate_project_focus_view_html, CreateProjectRequest, Project, ProjectFocusView,
-    ProjectRetainedContext, ProjectStore, ProjectSurfaceSnapshot, RouteSummary,
+    CreateProjectRequest, Project, ProjectStore, ProjectSurfaceSnapshot, RouteSummary,
     UpdateProjectRequest,
 };
 use crate::core::route::{CreateRouteRepoRequest, RouteStore};
-use tauri::Emitter;
 
 /// List all projects, sorted by most recently created
 #[tracing::instrument]
@@ -19,33 +16,6 @@ use tauri::Emitter;
 pub async fn list_projects() -> Result<Vec<Project>, String> {
     let store = ProjectStore::open().await.str_err()?;
     store.list_projects().await.str_err()
-}
-
-/// Get a project by ID
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_project(project_id: i64) -> Result<Project, String> {
-    let store = ProjectStore::open().await.str_err()?;
-    store.get_project(project_id).await.str_err()
-}
-
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_project_focus_view(project_id: i64) -> Result<ProjectFocusView, String> {
-    let store = ProjectStore::open().await.str_err()?;
-    store.get_project_focus_view(project_id).await.str_err()
-}
-
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_project_retained_context(
-    project_id: i64,
-) -> Result<ProjectRetainedContext, String> {
-    let store = ProjectStore::open().await.str_err()?;
-    store
-        .get_project_retained_context(project_id)
-        .await
-        .str_err()
 }
 
 #[tracing::instrument]
@@ -78,106 +48,6 @@ pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapsh
         focus_view,
         routes: summaries,
     })
-}
-
-#[tracing::instrument(skip(app, html))]
-#[tauri::command]
-pub async fn update_project_focus_view(
-    app: tauri::AppHandle,
-    project_id: i64,
-    html: String,
-    source: Option<String>,
-) -> Result<ProjectFocusView, String> {
-    validate_project_focus_view_html(&html)?;
-
-    let store = ProjectStore::open().await.str_err()?;
-    let view = store
-        .update_project_focus_view(project_id, &html, source.as_deref())
-        .await
-        .str_err()?;
-
-    let _ = app.emit(
-        "project-focus-view-updated",
-        serde_json::json!({
-            "projectId": project_id,
-            "updatedAt": view.updated_at,
-        }),
-    );
-
-    Ok(view)
-}
-
-#[tracing::instrument(skip(app, markdown))]
-#[tauri::command]
-pub async fn update_project_retained_context(
-    app: tauri::AppHandle,
-    project_id: i64,
-    markdown: String,
-    source: Option<String>,
-) -> Result<ProjectRetainedContext, String> {
-    let store = ProjectStore::open().await.str_err()?;
-    let context = store
-        .update_project_retained_context(project_id, &markdown, source.as_deref())
-        .await
-        .str_err()?;
-
-    let _ = app.emit(
-        "project-retained-context-updated",
-        serde_json::json!({
-            "projectId": project_id,
-            "updatedAt": context.updated_at,
-        }),
-    );
-
-    Ok(context)
-}
-
-/// Create a new project from a local folder path
-#[tracing::instrument]
-#[tauri::command]
-pub async fn create_project_from_path(
-    path: String,
-    name: Option<String>,
-) -> Result<Project, String> {
-    let store = ProjectStore::open().await.str_err()?;
-
-    let project_name = name.unwrap_or_else(|| {
-        std::path::Path::new(&path)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "Unnamed Project".to_string())
-    });
-
-    let mut final_name = project_name.clone();
-    if let Ok(Some(_)) = store.get_project_by_name(&final_name).await {
-        let base_name = final_name.clone();
-        let mut counter = 1;
-        while store
-            .get_project_by_name(&final_name)
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            counter += 1;
-            final_name = format!("{} ({})", base_name, counter);
-        }
-    }
-
-    let req = CreateProjectRequest {
-        name: final_name,
-        repos: vec![CreateRouteRepoRequest {
-            name: Some("local".to_string()),
-            starting_point: StartingPoint::LocalFolder { path },
-            target_branch: Some("main".to_string()),
-        }],
-        default_repo_index: Some(0),
-        description: None,
-        x: None,
-        y: None,
-    };
-
-    store.create_project(&req).await.str_err()
 }
 
 /// Create a new project with one or more linked repos
@@ -221,31 +91,6 @@ pub async fn create_project(
     Ok(project)
 }
 
-/// Update project metadata only.
-#[tracing::instrument]
-#[tauri::command]
-pub async fn update_project_metadata(
-    project_id: i64,
-    x: Option<f64>,
-    y: Option<f64>,
-    description: Option<String>,
-) -> Result<Project, String> {
-    let project_req = UpdateProjectRequest {
-        name: None,
-        description,
-        x,
-        y,
-    };
-
-    let store = ProjectStore::open().await.str_err()?;
-    let project = store
-        .update_project(project_id, &project_req)
-        .await
-        .str_err()?;
-
-    Ok(project)
-}
-
 /// Replace the project description.
 #[tracing::instrument]
 #[tauri::command]
@@ -274,23 +119,4 @@ pub async fn update_project_name(project_id: i64, name: String) -> Result<Projec
     };
 
     store.update_project(project_id, &req).await.str_err()
-}
-
-/// Update a project's icon URL
-#[tracing::instrument]
-#[tauri::command]
-pub async fn update_project_icon(project_id: i64, icon: Option<String>) -> Result<Project, String> {
-    let store = ProjectStore::open().await.str_err()?;
-    store
-        .set_project_icon(project_id, icon.as_deref())
-        .await
-        .str_err()
-}
-
-/// Delete a project and all associated data
-#[tracing::instrument]
-#[tauri::command]
-pub async fn delete_project(project_id: i64) -> Result<(), String> {
-    let store = ProjectStore::open().await.str_err()?;
-    store.delete_project(project_id).await.str_err()
 }

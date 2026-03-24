@@ -1,1 +1,0 @@
-export { WorkTreePane } from './WorkTreePane';

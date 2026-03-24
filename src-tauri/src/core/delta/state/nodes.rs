@@ -810,6 +810,119 @@ impl DeltaState {
         Ok(())
     }
 
+    /// Mark an assigned work item as actively being worked.
+    pub async fn start_work_item(&self, id: &str) -> DeltaStateResult<BoardNode> {
+        let pool = self.pool().await?;
+        let node = self.get_node(id).await?;
+        if node.archived_at.is_some() {
+            return Err(DeltaStateError::NodeNotFound(format!(
+                "Node '{}' is archived and cannot be started",
+                id
+            )));
+        }
+
+        let now = utc_now();
+        sqlx::query(
+            "UPDATE board_nodes
+             SET status = 'working',
+                 claimed_by = NULL,
+                 claimed_at = NULL,
+                 completed_by = NULL,
+                 completed_at = NULL,
+                 check_result = NULL,
+                 check_feedback = NULL,
+                 updated_at = ?
+             WHERE id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(&now)
+        .bind(id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+
+        self.bump_tree_generation().await?;
+        self.get_node(id).await
+    }
+
+    /// Mark a work item as completed by a non-worker agent.
+    pub async fn complete_work_item(
+        &self,
+        id: &str,
+        completed_by: &str,
+    ) -> DeltaStateResult<BoardNode> {
+        let pool = self.pool().await?;
+        let node = self.get_node(id).await?;
+        if node.archived_at.is_some() {
+            return Err(DeltaStateError::NodeNotFound(format!(
+                "Node '{}' is archived and cannot be completed",
+                id
+            )));
+        }
+
+        let now = utc_now();
+        sqlx::query(
+            "UPDATE board_nodes
+             SET status = 'done',
+                 claimed_by = NULL,
+                 claimed_at = NULL,
+                 completed_by = ?,
+                 completed_at = ?,
+                 updated_at = ?
+             WHERE id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(completed_by)
+        .bind(&now)
+        .bind(&now)
+        .bind(id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+
+        self.bump_tree_generation().await?;
+        self.get_node(id).await
+    }
+
+    /// Mark a work item as failed by a non-worker agent.
+    pub async fn fail_work_item(
+        &self,
+        id: &str,
+        completed_by: &str,
+    ) -> DeltaStateResult<BoardNode> {
+        let pool = self.pool().await?;
+        let node = self.get_node(id).await?;
+        if node.archived_at.is_some() {
+            return Err(DeltaStateError::NodeNotFound(format!(
+                "Node '{}' is archived and cannot be failed",
+                id
+            )));
+        }
+
+        let now = utc_now();
+        sqlx::query(
+            "UPDATE board_nodes
+             SET status = 'failed',
+                 claimed_by = NULL,
+                 claimed_at = NULL,
+                 completed_by = ?,
+                 completed_at = ?,
+                 updated_at = ?
+             WHERE id = ? AND project_id = ? AND route_id = ?",
+        )
+        .bind(completed_by)
+        .bind(&now)
+        .bind(&now)
+        .bind(id)
+        .bind(self.project_id)
+        .bind(self.route_id)
+        .execute(pool)
+        .await?;
+
+        self.bump_tree_generation().await?;
+        self.get_node(id).await
+    }
+
     /// Record routine item activity without creating a separate escalation.
     pub async fn record_item_event(
         &self,

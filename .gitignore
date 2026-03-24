@@ -5,6 +5,7 @@ node_modules/
 build/
 dist/
 references/
+.hirsel-dev/
 .hirsel-remote-dev/
 src-tauri/runs/
 src-tauri/runtimes/
@@ -22,9 +23,6 @@ Thumbs.db
 
 # Logs
 *.log
-
-# Lock files
-bun.lock
 
 # IDE
 .idea/

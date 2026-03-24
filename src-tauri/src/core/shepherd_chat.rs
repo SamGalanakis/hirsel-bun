@@ -28,6 +28,22 @@ CREATE TABLE IF NOT EXISTS shepherd_chat_messages (
 CREATE INDEX IF NOT EXISTS idx_shepherd_chat_run ON shepherd_chat_messages(runtime_name);
 CREATE INDEX IF NOT EXISTS idx_shepherd_chat_project ON shepherd_chat_messages(project_id);
 CREATE INDEX IF NOT EXISTS idx_shepherd_chat_timestamp ON shepherd_chat_messages(timestamp);
+
+CREATE TABLE IF NOT EXISTS shepherd_chat_queue (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER,
+    runtime_name TEXT,
+    chunks_json TEXT NOT NULL,
+    focus_json TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_shepherd_chat_queue_scope
+ON shepherd_chat_queue(project_id, runtime_name, status, created_at);
 "#;
 
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
@@ -54,6 +70,21 @@ pub struct ShepherdChatMessage {
     pub chunks_json: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShepherdQueuedTurn {
+    pub id: i64,
+    pub project_id: Option<i64>,
+    pub runtime_name: Option<String>,
+    pub chunks_json: String,
+    pub focus_json: Option<String>,
+    pub status: String,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+}
+
 /// Error type for Shepherd chat operations
 #[derive(Debug, thiserror::Error)]
 pub enum ShepherdChatError {
@@ -69,6 +100,8 @@ pub type ShepherdChatResult<T> = Result<T, ShepherdChatError>;
 pub struct ShepherdChatStore;
 
 impl ShepherdChatStore {
+    pub const PROJECT_CHAT_RUN_NAME: &str = "__project__";
+
     /// Open the global Shepherd chat store
     pub async fn open() -> ShepherdChatResult<Self> {
         let pool = global_pool().await;
@@ -179,8 +212,6 @@ impl ShepherdChatStore {
         Ok(())
     }
 
-    const PROJECT_CHAT_RUN_NAME: &str = "__project__";
-
     /// Clear project-scoped Shepherd history without touching runtime-scoped history.
     pub async fn clear_project_history(&self, project_id: i64) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
@@ -276,6 +307,229 @@ impl ShepherdChatStore {
     /// Clear all project-scoped Shepherd messages for a project.
     pub async fn clear_project_messages(&self, project_id: i64) -> ShepherdChatResult<()> {
         self.clear_project_history(project_id).await
+    }
+
+    pub async fn enqueue_turn(
+        &self,
+        project_id: Option<i64>,
+        runtime_name: Option<&str>,
+        chunks_json: &str,
+        focus_json: Option<&str>,
+    ) -> ShepherdChatResult<ShepherdQueuedTurn> {
+        let pool = self.pool().await;
+        let created_at = utc_now();
+        let scope_runtime = match (project_id, runtime_name) {
+            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
+            (_, value) => value,
+        };
+
+        let result = sqlx::query(
+            "INSERT INTO shepherd_chat_queue (
+                project_id, runtime_name, chunks_json, focus_json, status, error, created_at
+             ) VALUES (?, ?, ?, ?, 'pending', NULL, ?)",
+        )
+        .bind(project_id)
+        .bind(scope_runtime)
+        .bind(chunks_json)
+        .bind(focus_json)
+        .bind(&created_at)
+        .execute(pool)
+        .await?;
+
+        self.get_queue_item(result.last_insert_rowid()).await
+    }
+
+    pub async fn get_queue_item(&self, id: i64) -> ShepherdChatResult<ShepherdQueuedTurn> {
+        let pool = self.pool().await;
+        let row = sqlx::query(
+            "SELECT id, project_id, runtime_name, chunks_json, focus_json, status, error, created_at, started_at, finished_at
+             FROM shepherd_chat_queue
+             WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+
+        Ok(ShepherdQueuedTurn {
+            id: row.get("id"),
+            project_id: row.get("project_id"),
+            runtime_name: row.get("runtime_name"),
+            chunks_json: row.get("chunks_json"),
+            focus_json: row.get("focus_json"),
+            status: row.get("status"),
+            error: row.get("error"),
+            created_at: row.get("created_at"),
+            started_at: row.get("started_at"),
+            finished_at: row.get("finished_at"),
+        })
+    }
+
+    pub async fn list_queue(
+        &self,
+        project_id: Option<i64>,
+        runtime_name: Option<&str>,
+    ) -> ShepherdChatResult<Vec<ShepherdQueuedTurn>> {
+        let pool = self.pool().await;
+        let scope_runtime = match (project_id, runtime_name) {
+            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
+            (_, value) => value,
+        };
+
+        let rows = if project_id.is_some() || scope_runtime.is_some() {
+            sqlx::query(
+                "SELECT id, project_id, runtime_name, chunks_json, focus_json, status, error, created_at, started_at, finished_at
+                 FROM shepherd_chat_queue
+                 WHERE project_id IS ? AND runtime_name IS ?
+                   AND status IN ('pending', 'working', 'failed')
+                 ORDER BY created_at ASC, id ASC",
+            )
+            .bind(project_id)
+            .bind(scope_runtime)
+            .fetch_all(pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT id, project_id, runtime_name, chunks_json, focus_json, status, error, created_at, started_at, finished_at
+                 FROM shepherd_chat_queue
+                 WHERE project_id IS NULL AND runtime_name IS NULL
+                   AND status IN ('pending', 'working', 'failed')
+                 ORDER BY created_at ASC, id ASC",
+            )
+            .fetch_all(pool)
+            .await?
+        };
+
+        Ok(rows
+            .into_iter()
+            .map(|row| ShepherdQueuedTurn {
+                id: row.get("id"),
+                project_id: row.get("project_id"),
+                runtime_name: row.get("runtime_name"),
+                chunks_json: row.get("chunks_json"),
+                focus_json: row.get("focus_json"),
+                status: row.get("status"),
+                error: row.get("error"),
+                created_at: row.get("created_at"),
+                started_at: row.get("started_at"),
+                finished_at: row.get("finished_at"),
+            })
+            .collect())
+    }
+
+    pub async fn claim_next_turn(
+        &self,
+        project_id: Option<i64>,
+        runtime_name: Option<&str>,
+    ) -> ShepherdChatResult<Option<ShepherdQueuedTurn>> {
+        let pool = self.pool().await;
+        let scope_runtime = match (project_id, runtime_name) {
+            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
+            (_, value) => value,
+        };
+
+        let row = if project_id.is_some() || scope_runtime.is_some() {
+            sqlx::query(
+                "SELECT id
+                 FROM shepherd_chat_queue
+                 WHERE project_id IS ? AND runtime_name IS ? AND status = 'pending'
+                 ORDER BY created_at ASC, id ASC
+                 LIMIT 1",
+            )
+            .bind(project_id)
+            .bind(scope_runtime)
+            .fetch_optional(pool)
+            .await?
+        } else {
+            sqlx::query(
+                "SELECT id
+                 FROM shepherd_chat_queue
+                 WHERE project_id IS NULL AND runtime_name IS NULL AND status = 'pending'
+                 ORDER BY created_at ASC, id ASC
+                 LIMIT 1",
+            )
+            .fetch_optional(pool)
+            .await?
+        };
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let id: i64 = row.get("id");
+        let started_at = utc_now();
+        sqlx::query(
+            "UPDATE shepherd_chat_queue
+             SET status = 'working', error = NULL, started_at = ?, finished_at = NULL
+             WHERE id = ?",
+        )
+        .bind(&started_at)
+        .bind(id)
+        .execute(pool)
+        .await?;
+
+        Ok(Some(self.get_queue_item(id).await?))
+    }
+
+    pub async fn complete_turn(&self, id: i64) -> ShepherdChatResult<()> {
+        let pool = self.pool().await;
+        let finished_at = utc_now();
+        sqlx::query(
+            "UPDATE shepherd_chat_queue
+             SET status = 'done', error = NULL, finished_at = ?
+             WHERE id = ?",
+        )
+        .bind(&finished_at)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn fail_turn(&self, id: i64, error: &str) -> ShepherdChatResult<()> {
+        let pool = self.pool().await;
+        let finished_at = utc_now();
+        sqlx::query(
+            "UPDATE shepherd_chat_queue
+             SET status = 'failed', error = ?, finished_at = ?
+             WHERE id = ?",
+        )
+        .bind(error)
+        .bind(&finished_at)
+        .bind(id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn clear_queue(
+        &self,
+        project_id: Option<i64>,
+        runtime_name: Option<&str>,
+    ) -> ShepherdChatResult<()> {
+        let pool = self.pool().await;
+        let scope_runtime = match (project_id, runtime_name) {
+            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
+            (_, value) => value,
+        };
+
+        if project_id.is_some() || scope_runtime.is_some() {
+            sqlx::query(
+                "DELETE FROM shepherd_chat_queue
+                 WHERE project_id IS ? AND runtime_name IS ?",
+            )
+            .bind(project_id)
+            .bind(scope_runtime)
+            .execute(pool)
+            .await?;
+        } else {
+            sqlx::query(
+                "DELETE FROM shepherd_chat_queue
+                 WHERE project_id IS NULL AND runtime_name IS NULL",
+            )
+            .execute(pool)
+            .await?;
+        }
+        Ok(())
     }
 }
 

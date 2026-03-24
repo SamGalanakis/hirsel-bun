@@ -2,15 +2,16 @@
 
 Deploy Hirsel as a headless backend server.
 
-## What this Docker setup is
+## What this container does
 
-This image runs the server binary only:
+This image runs the backend only:
 
 - `hirsel serve`
-- local Hirsel state under `/data`
-- basic host tools needed by the backend (`git`, `ssh`, `curl`)
+- Hirsel state under `/data`
+- backend-served Datastar web UI
+- worker execution on the same host/container environment
 
-It does **not** bundle the old ACP adapters or the Tauri GUI stack.
+It does **not** bundle the desktop wrapper. Desktop or mobile clients connect to this backend over HTTP.
 
 ## Network architecture
 
@@ -22,7 +23,7 @@ Desktop / phone app ──┐
 Backend host ─────────┘  backend.example.internal:8080
 ```
 
-Clients connect to whatever URL you provide. Hirsel does not manage the network layer itself.
+Clients connect to whatever URL you provide. Hirsel does not manage VPNs, tunnels, reverse proxies, or DNS.
 
 ## Quick start with Docker Compose
 
@@ -63,9 +64,9 @@ docker run -d \
 curl http://backend.example.internal:8080/health
 ```
 
-## Client configuration
+## Client setup
 
-On each client device, configure the backend target in `~/.hirsel/config.toml`:
+On each desktop or mobile client, point Hirsel at this backend URL and API key. The thin desktop shell stores:
 
 ```toml
 [backend]
@@ -119,13 +120,8 @@ docker compose up -d --build
 docker compose down
 ```
 
-## Important runtime note
+## Runtime note
 
-Workers always run on the backend host.
+Workers run on the backend side, not on the client device.
 
-For this Docker deployment, that means workers run **inside this container** unless you explicitly configure container runners or choose a non-containerized host deployment.
-
-So this image is a good default for simple self-hosting, but it does **not** try to ship every possible project toolchain. If your workers need custom language/runtime environments, prefer:
-
-- host/binary deployment, or
-- explicit worker runner container images configured in Hirsel.
+For this Docker deployment that means workers run inside this container unless you build a different host/runtime story around it. If your projects need a broader toolchain or nested sandboxing, prefer a host deployment where you control the worker environment directly.

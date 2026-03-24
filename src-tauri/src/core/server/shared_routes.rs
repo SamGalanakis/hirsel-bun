@@ -20,6 +20,10 @@ use std::sync::Arc;
 
 use super::{routes, AppState};
 
+pub fn build_web_routes() -> Router<Arc<AppState>> {
+    super::web_routes::build_web_routes()
+}
+
 /// Routes shared between daemon and remote server
 ///
 /// These handle core route-runtime operations that both servers need.

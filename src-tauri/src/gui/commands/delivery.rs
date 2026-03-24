@@ -5,15 +5,12 @@
 
 use super::ResultExt;
 use crate::core::config::Config;
-use crate::core::delivery::{
-    delivery_branch_name, pr_body, pr_title, DeliveryOrchestrator, DeliveryState, PushResult,
-};
+use crate::core::delivery::{delivery_branch_name, DeliveryOrchestrator};
 use crate::core::delta::{
     BoardDeliveryStatus, BoardVersion, Delivery, DeliveryAttempt, DeltaState,
 };
-use crate::core::forge::{MergeResult, PrInfo};
+use crate::core::hirsel_dir;
 use crate::core::route::RouteStore;
-use crate::core::{hirsel_dir, SQLiteState};
 use serde::Serialize;
 
 /// Look up the route's git remote URL from its default starting point.
@@ -27,141 +24,6 @@ async fn route_remote_url(project_id: i64, route_id: i64) -> Option<String> {
     }?;
 
     default_repo.starting_point.git_url().map(|s| s.to_string())
-}
-
-/// Get the delivery state for a run
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_delivery_state(
-    runtime_name: String,
-    target_branch: String,
-) -> Result<DeliveryState, String> {
-    // Get branch_off_commit from run state
-    let branch_off_commit = match SQLiteState::new(&runtime_name).await {
-        Ok(state) => state.get_branch_off_commit().await.ok().flatten(),
-        Err(_) => None,
-    };
-
-    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
-
-    orchestrator
-        .get_delivery_state(&target_branch, branch_off_commit.as_deref())
-        .await
-        .str_err()
-}
-
-/// Check merge state for a run
-#[tracing::instrument]
-#[tauri::command]
-pub async fn check_merge_state(
-    runtime_name: String,
-    target_branch: String,
-) -> Result<String, String> {
-    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
-
-    let state = orchestrator.check_merge_state(&target_branch).str_err()?;
-
-    Ok(state.as_str().to_string())
-}
-
-/// Get conflicting files for a merge
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_conflicting_files(
-    runtime_name: String,
-    target_branch: String,
-) -> Result<Vec<String>, String> {
-    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
-
-    orchestrator.get_conflicting_files(&target_branch).str_err()
-}
-
-/// Check staleness (commits on target since branch-off)
-#[tracing::instrument]
-#[tauri::command]
-pub async fn check_staleness(
-    runtime_name: String,
-    target_branch: String,
-    branch_off_commit: String,
-) -> Result<u32, String> {
-    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
-
-    orchestrator
-        .check_staleness(&target_branch, &branch_off_commit)
-        .str_err()
-}
-
-/// Tier 1: Push branch to remote
-#[tracing::instrument]
-#[tauri::command]
-pub async fn push_run_branch(runtime_name: String) -> Result<PushResult, String> {
-    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
-
-    orchestrator.push_branch(None, None).str_err()
-}
-
-/// Tier 2: Create a pull request
-#[tracing::instrument]
-#[tauri::command]
-pub async fn create_run_pr(
-    runtime_name: String,
-    target_branch: String,
-    title: String,
-    body: String,
-) -> Result<PrInfo, String> {
-    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
-
-    orchestrator
-        .create_pr(&target_branch, &title, &body)
-        .await
-        .str_err()
-}
-
-/// Tier 3: Auto-merge (push, create PR, merge) with AI-assisted conflict resolution
-#[tracing::instrument]
-#[tauri::command]
-pub async fn auto_merge_run(
-    runtime_name: String,
-    target_branch: String,
-    title: String,
-    body: String,
-) -> Result<MergeResult, String> {
-    let config = Config::load().map(|(c, _)| c).unwrap_or_default();
-
-    let orchestrator = DeliveryOrchestrator::from_runtime_name(&runtime_name, None).str_err()?;
-
-    orchestrator
-        .auto_merge_with_resolution(&target_branch, &title, &body, config, None)
-        .await
-        .str_err()
-}
-
-/// Generate PR title from run
-#[tracing::instrument]
-#[tauri::command]
-pub async fn generate_pr_title(
-    runtime_name: String,
-    summary: Option<String>,
-) -> Result<String, String> {
-    Ok(pr_title(&runtime_name, summary.as_deref()))
-}
-
-/// Generate PR body from run
-#[tracing::instrument]
-#[tauri::command]
-pub async fn generate_pr_body(
-    runtime_name: String,
-    task_ids: Vec<String>,
-    eval_ids: Vec<String>,
-) -> Result<String, String> {
-    Ok(pr_body(&runtime_name, &task_ids, &eval_ids))
-}
-
-/// Generate delivery branch name
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_delivery_branch_name(runtime_name: String) -> Result<String, String> {
-    Ok(delivery_branch_name(&runtime_name))
 }
 
 // =============================================================================

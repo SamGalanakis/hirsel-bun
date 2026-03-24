@@ -50,6 +50,7 @@ pub mod state;
 pub mod state_access;
 pub mod storage;
 pub mod system;
+pub mod webui;
 pub mod worker_concerns;
 pub mod workers;
 pub mod worktree;
@@ -89,6 +90,7 @@ pub use shepherd::{
 };
 pub use shepherd_chat::{
     ShepherdChatError, ShepherdChatMessage, ShepherdChatResult, ShepherdChatStore,
+    ShepherdQueuedTurn,
 };
 
 // Conflict resolver

@@ -626,26 +626,10 @@ fn detect_icon_from_repos(repos: &[crate::core::route::CreateRouteRepoRequest]) 
     None
 }
 
-/// Extract a favicon/avatar URL from a git remote URL.
+/// Extract a favicon URL from a git remote URL.
+/// Uses Google's favicon service for all git hosts (including GitHub)
+/// to get the site favicon rather than user profile photos.
 fn favicon_from_git_url(url: &str) -> Option<String> {
-    // GitHub: git@github.com:owner/repo.git or https://github.com/owner/repo
-    if url.contains("github.com") {
-        let owner = if let Some(rest) = url.strip_prefix("git@github.com:") {
-            rest.split('/').next()
-        } else {
-            // https://github.com/owner/repo
-            let parts: Vec<&str> = url.split("github.com/").collect();
-            parts.get(1).and_then(|p| p.split('/').next())
-        };
-        if let Some(owner) = owner {
-            let owner = owner.trim_end_matches(".git");
-            if !owner.is_empty() {
-                return Some(format!("https://github.com/{}.png?size=64", owner));
-            }
-        }
-    }
-
-    // GitLab, Bitbucket, etc.: use Google's favicon service
     let domain = extract_domain(url)?;
     Some(format!(
         "https://www.google.com/s2/favicons?domain={}&sz=64",

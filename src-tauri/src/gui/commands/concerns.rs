@@ -4,57 +4,7 @@ use super::types::{UnreadNotification, UnreadNotificationsResponse};
 use super::ResultExt;
 use crate::core::project::ProjectStore;
 use crate::core::route::RouteStore;
-use crate::core::{WorkerConcern, WorkerConcernStore};
-
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_worker_concerns(
-    project_id: i64,
-    route_id: i64,
-    include_resolved: Option<bool>,
-    limit: Option<i64>,
-) -> Result<Vec<WorkerConcern>, String> {
-    let store = WorkerConcernStore::open().await.str_err()?;
-    store
-        .list_route(
-            project_id,
-            route_id,
-            include_resolved.unwrap_or(false),
-            limit,
-        )
-        .await
-        .str_err()
-}
-
-#[tracing::instrument]
-#[tauri::command]
-pub async fn mark_worker_concern_read(concern_id: i64) -> Result<(), String> {
-    let store = WorkerConcernStore::open().await.str_err()?;
-    store.mark_read(concern_id, "user").await.str_err()
-}
-
-#[tracing::instrument]
-#[tauri::command]
-pub async fn mark_route_concerns_read(project_id: i64, route_id: i64) -> Result<(), String> {
-    let store = WorkerConcernStore::open().await.str_err()?;
-    store
-        .mark_route_read(project_id, route_id, "user")
-        .await
-        .str_err()
-}
-
-#[tracing::instrument(skip(resolution))]
-#[tauri::command]
-pub async fn resolve_worker_concern(
-    concern_id: i64,
-    resolution: Option<String>,
-) -> Result<WorkerConcern, String> {
-    let store = WorkerConcernStore::open().await.str_err()?;
-    store
-        .resolve(concern_id, "user", resolution.as_deref())
-        .await
-        .str_err()
-}
+use crate::core::WorkerConcernStore;
 
 #[tracing::instrument]
 #[tauri::command]

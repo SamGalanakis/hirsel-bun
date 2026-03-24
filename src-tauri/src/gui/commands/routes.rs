@@ -1,30 +1,10 @@
 //! Route management commands for project exploration branches
 
-use crate::core::draft::StartingPoint;
-use crate::core::route::{
-    CreateRouteRepoRequest, CreateRouteRequest, Route, RouteRepo, RouteStore, RouteTree,
-    UpdateRouteRepoRequest, UpdateRouteSettingsRequest,
-};
+use crate::core::route::{CreateRouteRequest, Route, RouteStore, UpdateRouteSettingsRequest};
 use crate::core::route_runtime::get_route_runtime_name;
 use crate::core::state::SQLiteState;
 
 use super::ResultExt;
-
-/// List all routes for a project
-#[tracing::instrument]
-#[tauri::command]
-pub async fn list_routes(project_id: i64) -> Result<Vec<Route>, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store.list_routes().await.str_err()
-}
-
-/// List archived routes for a project
-#[tracing::instrument]
-#[tauri::command]
-pub async fn list_archived_routes(project_id: i64) -> Result<Vec<Route>, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store.list_archived_routes().await.str_err()
-}
 
 /// Get a route by ID
 #[tracing::instrument]
@@ -32,105 +12,6 @@ pub async fn list_archived_routes(project_id: i64) -> Result<Vec<Route>, String>
 pub async fn get_route(project_id: i64, route_id: i64) -> Result<Route, String> {
     let store = RouteStore::new(project_id).await.str_err()?;
     store.get_route(route_id).await.str_err()
-}
-
-/// Get a route by name
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_route_by_name(project_id: i64, name: String) -> Result<Option<Route>, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store.get_route_by_name(&name).await.str_err()
-}
-
-/// Get the route tree for a project
-#[tracing::instrument]
-#[tauri::command]
-pub async fn get_route_tree(project_id: i64) -> Result<Vec<RouteTree>, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store.get_route_tree().await.str_err()
-}
-
-/// List repos linked to a route
-#[tracing::instrument]
-#[tauri::command]
-pub async fn list_route_repos(project_id: i64, route_id: i64) -> Result<Vec<RouteRepo>, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store.list_route_repos(route_id).await.str_err()
-}
-
-/// Add a linked repo to a route
-#[tracing::instrument]
-#[tauri::command]
-pub async fn create_route_repo(
-    project_id: i64,
-    route_id: i64,
-    name: Option<String>,
-    starting_point: StartingPoint,
-    target_branch: Option<String>,
-) -> Result<RouteRepo, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store
-        .create_route_repo(
-            route_id,
-            &CreateRouteRepoRequest {
-                name,
-                starting_point,
-                target_branch,
-            },
-        )
-        .await
-        .str_err()
-}
-
-/// Update a linked route repo
-#[tracing::instrument]
-#[tauri::command]
-pub async fn update_route_repo(
-    project_id: i64,
-    route_id: i64,
-    repo_id: i64,
-    name: Option<String>,
-    starting_point: Option<StartingPoint>,
-    target_branch: Option<String>,
-    is_archived: Option<bool>,
-) -> Result<RouteRepo, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store
-        .update_route_repo(
-            route_id,
-            repo_id,
-            &UpdateRouteRepoRequest {
-                name,
-                starting_point,
-                target_branch,
-                is_archived,
-            },
-        )
-        .await
-        .str_err()
-}
-
-/// Archive a route repo
-#[tracing::instrument]
-#[tauri::command]
-pub async fn delete_route_repo(project_id: i64, route_id: i64, repo_id: i64) -> Result<(), String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store.delete_route_repo(route_id, repo_id).await.str_err()
-}
-
-/// Set default repo for route execution/delivery context
-#[tracing::instrument]
-#[tauri::command]
-pub async fn set_default_route_repo(
-    project_id: i64,
-    route_id: i64,
-    repo_id: i64,
-) -> Result<Route, String> {
-    let store = RouteStore::new(project_id).await.str_err()?;
-    store
-        .set_default_route_repo(route_id, repo_id)
-        .await
-        .str_err()
 }
 
 /// Replace selected-route execution defaults.

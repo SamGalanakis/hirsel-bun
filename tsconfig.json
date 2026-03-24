@@ -11,14 +11,8 @@
     "isolatedModules": true,
     "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": [],
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["src/*"]
-    },
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js"
+    "types": []
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "include": ["src/main.ts"],
   "exclude": ["node_modules"]
 }

@@ -2,7 +2,7 @@ use base64::Engine;
 use lash::{Message, MessageRole, Part, PartKind, PruneState};
 
 use super::types::{ShepherdMessageChunk, ShepherdScope};
-use crate::core::{ShepherdChatMessage, ShepherdChatStore};
+use crate::core::{ShepherdChatMessage, ShepherdChatStore, ShepherdQueuedTurn};
 use crate::gui::commands::ResultExt;
 
 pub(super) const MAX_IMAGE_COUNT: usize = 8;
@@ -278,16 +278,15 @@ pub(super) async fn save_message(
     }
 }
 
-pub(super) async fn clear_scope_messages(scope: &ShepherdScope) -> Result<(), String> {
+pub(super) async fn load_scope_queue(
+    scope: &ShepherdScope,
+) -> Result<Vec<ShepherdQueuedTurn>, String> {
     let store = ShepherdChatStore::open().await.str_err()?;
-
     match scope {
-        ShepherdScope::General => store.clear_messages(None).await.str_err()?,
+        ShepherdScope::General => store.list_queue(None, None).await.str_err(),
         ShepherdScope::Project { project_id, .. } => {
-            store.clear_project_messages(*project_id).await.str_err()?
+            store.list_queue(Some(*project_id), None).await.str_err()
         }
-        ShepherdScope::Branch { .. } => {}
+        ShepherdScope::Branch { .. } => Ok(Vec::new()),
     }
-
-    Ok(())
 }

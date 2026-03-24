@@ -60,6 +60,7 @@ pub struct PartialConfig {
     pub human_in_the_loop: Option<bool>,
     pub context_warning_threshold: Option<f64>,
     pub coordinator_port: Option<u16>,
+    pub scribe_batch_window_seconds: Option<u32>,
     pub llm: Option<LlmConfig>,
     pub sandbox: Option<RunnerConfig>,
     pub backend: Option<BackendConfig>,
@@ -195,6 +196,18 @@ impl ConfigStore {
                         }
                     };
                 }
+                "scribe_batch_window_seconds" => {
+                    partial.scribe_batch_window_seconds = match value.parse() {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            tracing::debug!(
+                                "Failed to parse config 'scribe_batch_window_seconds': {}",
+                                e
+                            );
+                            None
+                        }
+                    };
+                }
                 "llm" => {
                     partial.llm = match serde_json::from_str(&value) {
                         Ok(v) => Some(v),
@@ -274,6 +287,11 @@ impl ConfigStore {
         .await?;
         self.set("coordinator_port", &config.coordinator_port.to_string())
             .await?;
+        self.set(
+            "scribe_batch_window_seconds",
+            &config.scribe_batch_window_seconds.to_string(),
+        )
+        .await?;
 
         // LLM config
         self.set("llm", &serde_json::to_string(&config.llm)?)

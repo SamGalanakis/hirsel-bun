@@ -15,31 +15,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
-    "@tailwindcss/vite": "^4.1.18",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/cli": "^2",
     "@types/node": "^22",
-    "basecoat-css": "^0.3",
-    "tailwindcss": "^4.1.18",
     "typescript": "^5",
-    "vite": "^7.3.1",
-    "vite-plugin-solid": "^2.11.6"
-  },
-  "dependencies": {
-    "@codemirror/commands": "^6.10.1",
-    "@codemirror/lang-markdown": "^6.5.0",
-    "@codemirror/language": "^6.12.1",
-    "@codemirror/state": "^6.5.4",
-    "@codemirror/view": "^6.39.12",
-    "@tailwindcss/typography": "^0.5.19",
-"dompurify": "^3.3.1",
-    "elkjs": "^0.11.0",
-    "lucide": "^0.562.0",
-    "marked": "^17.0.1",
-    "solid-js": "^1.9.5"
-  },
-  "overrides": {
-    "@codemirror/state": "^6.5.4",
-    "@codemirror/view": "^6.39.12"
+    "vite": "^7.3.1"
   }
 }

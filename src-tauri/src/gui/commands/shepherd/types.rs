@@ -38,34 +38,6 @@ pub enum ShepherdScope {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum StartShepherdSessionRequest {
-    #[serde(rename = "general")]
-    General,
-    #[serde(rename = "project")]
-    Project {
-        #[serde(rename = "projectId")]
-        project_id: i64,
-    },
-    #[serde(rename = "projectFocused")]
-    ProjectFocused {
-        #[serde(rename = "projectId")]
-        project_id: i64,
-        #[serde(rename = "taskId")]
-        task_id: String,
-        #[serde(rename = "taskName")]
-        task_name: String,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartShepherdSessionResponse {
-    pub session_id: String,
-    pub scope: ShepherdScope,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ShepherdMessageChunk {
     Text {

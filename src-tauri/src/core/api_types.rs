@@ -256,11 +256,28 @@ impl From<LlmProviderResponse> for config::LlmProvider {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelOverridesResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub medium: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmConfigResponse {
     pub provider: LlmProviderResponse,
     pub openrouter_base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_variant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_models: Option<AgentModelOverridesResponse>,
 }
 
 impl From<config::LlmConfig> for LlmConfigResponse {
@@ -268,6 +285,13 @@ impl From<config::LlmConfig> for LlmConfigResponse {
         Self {
             provider: value.provider.into(),
             openrouter_base_url: value.openrouter_base_url,
+            model: value.model,
+            model_variant: value.model_variant,
+            agent_models: value.agent_models.map(|am| AgentModelOverridesResponse {
+                low: am.low,
+                medium: am.medium,
+                high: am.high,
+            }),
         }
     }
 }
@@ -277,6 +301,13 @@ impl From<LlmConfigResponse> for config::LlmConfig {
         Self {
             provider: value.provider.into(),
             openrouter_base_url: value.openrouter_base_url,
+            model: value.model,
+            model_variant: value.model_variant,
+            agent_models: value.agent_models.map(|am| config::AgentModelOverrides {
+                low: am.low,
+                medium: am.medium,
+                high: am.high,
+            }),
         }
     }
 }

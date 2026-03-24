@@ -1,8 +1,3 @@
-use lash::tools::ApplyPatchTool;
-use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
-use serde_json::{json, Value};
-use tauri::Emitter;
-
 use crate::core::db::{global_pool, utc_now};
 use crate::core::delta::{DeltaState, UpdateBoardNodeRequest};
 use crate::core::project::{validate_project_focus_view_html, ProjectStore};
@@ -10,6 +5,9 @@ use crate::core::route::{CreateRouteRequest, Route, RouteStore};
 use crate::core::WorkerConcernStore;
 use crate::core::{ensure_sync_project_task, CapabilityProfile};
 use crate::gui::commands::{delivery, events, routes, workers, worktree};
+use lash::tools::ApplyPatchTool;
+use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
+use serde_json::{json, Value};
 
 const NODE_READ_DEFAULT_LIMIT: usize = 2000;
 const NODE_READ_MAX_LINE_LEN: usize = 2000;
@@ -33,12 +31,12 @@ macro_rules! tool_definition {
 }
 
 pub(super) struct ShepherdToolProvider {
-    app: tauri::AppHandle,
+    app: Option<tauri::AppHandle>,
     default_project_id: Option<i64>,
 }
 
 impl ShepherdToolProvider {
-    pub(super) fn new(app: tauri::AppHandle, default_project_id: Option<i64>) -> Self {
+    pub(super) fn new(app: Option<tauri::AppHandle>, default_project_id: Option<i64>) -> Self {
         Self {
             app,
             default_project_id,
@@ -1013,13 +1011,16 @@ impl ShepherdToolProvider {
             .await
         {
             Ok(view) => {
-                let _ = self.app.emit(
-                    "project-focus-view-updated",
-                    json!({
-                        "projectId": project_id,
-                        "updatedAt": view.updated_at,
-                    }),
-                );
+                if let Some(app) = &self.app {
+                    let _ = tauri::Emitter::emit(
+                        app,
+                        "project-focus-view-updated",
+                        json!({
+                            "projectId": project_id,
+                            "updatedAt": view.updated_at,
+                        }),
+                    );
+                }
                 ToolResult::ok(json!({
                     "__type__": "edit_result",
                     "summary": format!("Updated project focus view for project {}", project_id),
@@ -1068,13 +1069,16 @@ impl ShepherdToolProvider {
             .await
         {
             Ok(context) => {
-                let _ = self.app.emit(
-                    "project-retained-context-updated",
-                    json!({
-                        "projectId": project_id,
-                        "updatedAt": context.updated_at,
-                    }),
-                );
+                if let Some(app) = &self.app {
+                    let _ = tauri::Emitter::emit(
+                        app,
+                        "project-retained-context-updated",
+                        json!({
+                            "projectId": project_id,
+                            "updatedAt": context.updated_at,
+                        }),
+                    );
+                }
                 ToolResult::ok(json!({
                     "__type__": "edit_result",
                     "summary": format!("Updated retained context for project {}", project_id),

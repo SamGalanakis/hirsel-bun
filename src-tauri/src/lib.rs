@@ -22,72 +22,136 @@ pub mod worker;
 /// Initialize tracing subscriber with profiling support.
 /// When built with `--features profiling` AND HIRSEL_PROFILING=1, outputs Chrome Trace Format
 /// JSON to `~/.hirsel/profiling/trace-{timestamp}.json` for viewing in Perfetto UI.
-#[cfg(feature = "profiling")]
 fn init_tracing() {
+    use std::fs;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::EnvFilter;
 
-    let filter = EnvFilter::from_default_env()
-        .add_directive("sqlx=off".parse().unwrap())
-        .add_directive("rustls=warn".parse().unwrap())
-        .add_directive("rustls_platform_verifier=warn".parse().unwrap())
-        .add_directive("hyper=warn".parse().unwrap())
-        .add_directive("reqwest=warn".parse().unwrap());
+    static FILE_GUARD: OnceLock<Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>> =
+        OnceLock::new();
 
-    if std::env::var("HIRSEL_PROFILING").as_deref() == Ok("1") {
-        let profiling_dir = std::env::var("HIRSEL_PROFILING_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                let dir = core::hirsel_dir()
-                    .join("profiling")
-                    .join(chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string());
-                dir
-            });
-        std::fs::create_dir_all(&profiling_dir).expect("Failed to create profiling directory");
-
-        let trace_filename =
-            std::env::var("HIRSEL_TRACE_FILENAME").unwrap_or_else(|_| "trace.json".to_string());
-        let trace_file = profiling_dir.join(trace_filename);
-        eprintln!("[profiling] Writing trace to {}", trace_file.display());
-
-        let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
-            .file(trace_file)
-            .include_args(true)
-            .build();
-
-        // Store guard in a static so traces flush on process exit.
-        // FlushGuard is !Sync, so we use Mutex instead of OnceLock.
-        static FLUSH_GUARD: std::sync::Mutex<Option<tracing_chrome::FlushGuard>> =
-            std::sync::Mutex::new(None);
-        *FLUSH_GUARD.lock().unwrap() = Some(guard);
-
-        let fmt_layer = tracing_subscriber::fmt::layer().with_filter(filter);
-        let _ = tracing_subscriber::registry()
-            .with(fmt_layer)
-            .with(chrome_layer)
-            .try_init();
-    } else {
-        let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+    fn process_role() -> &'static str {
+        match std::env::args().nth(1).as_deref() {
+            Some("serve") => "server",
+            Some("__daemon") | Some("daemon") => "daemon",
+            Some("__worker-runtime") | Some("worker-runtime") => "worker",
+            Some("worker-mcp") | Some("eval-mcp") => "worker",
+            Some("scribe") => "scribe",
+            _ => "gui",
+        }
     }
-}
 
-/// Initialize tracing subscriber for debug logging.
-/// Only active when built with `--features dev` AND RUST_LOG is set.
-#[cfg(all(feature = "dev", not(feature = "profiling")))]
-fn init_tracing() {
-    use tracing_subscriber::EnvFilter;
-    let filter = EnvFilter::from_default_env()
-        .add_directive("sqlx=warn".parse().unwrap())
-        .add_directive("rustls=warn".parse().unwrap())
-        .add_directive("rustls_platform_verifier=warn".parse().unwrap())
-        .add_directive("hyper=warn".parse().unwrap())
-        .add_directive("reqwest=warn".parse().unwrap());
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-}
+    fn cleanup_old_logs(dir: &Path, keep_files: usize) {
+        let Ok(read_dir) = fs::read_dir(dir) else {
+            return;
+        };
 
-/// No-op tracing init when dev feature is not enabled.
-#[cfg(not(feature = "dev"))]
-fn init_tracing() {}
+        let mut files = read_dir
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let path = entry.path();
+                let metadata = entry.metadata().ok()?;
+                if !metadata.is_file() {
+                    return None;
+                }
+                let modified = metadata.modified().ok()?;
+                Some((path, modified))
+            })
+            .collect::<Vec<_>>();
+
+        files.sort_by(|a, b| b.1.cmp(&a.1));
+        for (path, _) in files.into_iter().skip(keep_files) {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    fn default_filter() -> EnvFilter {
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+            EnvFilter::new("hirsel=info,sqlx=warn,rustls=warn,rustls_platform_verifier=warn,hyper=warn,reqwest=warn")
+        })
+    }
+
+    let role = process_role();
+    let logs_dir = core::hirsel_dir().join("logs").join(role);
+    if let Err(error) = fs::create_dir_all(&logs_dir) {
+        eprintln!(
+            "[hirsel] failed to create log directory {}: {}",
+            logs_dir.display(),
+            error
+        );
+    }
+    let keep_files = std::env::var("HIRSEL_LOG_KEEP_FILES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(14);
+    cleanup_old_logs(&logs_dir, keep_files);
+
+    let log_prefix = format!("{}.log", role);
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, log_prefix);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    *FILE_GUARD.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(guard);
+
+    let stdout_filter = default_filter();
+    let file_filter = default_filter();
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_filter(stdout_filter);
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_writer(non_blocking)
+        .with_filter(file_filter);
+
+    #[cfg(feature = "profiling")]
+    {
+        if std::env::var("HIRSEL_PROFILING").as_deref() == Ok("1") {
+            let profiling_dir = std::env::var("HIRSEL_PROFILING_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| {
+                    core::hirsel_dir()
+                        .join("profiling")
+                        .join(chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string())
+                });
+            fs::create_dir_all(&profiling_dir).expect("Failed to create profiling directory");
+
+            let trace_filename =
+                std::env::var("HIRSEL_TRACE_FILENAME").unwrap_or_else(|_| "trace.json".to_string());
+            let trace_file = profiling_dir.join(trace_filename);
+            eprintln!("[profiling] Writing trace to {}", trace_file.display());
+            eprintln!("[hirsel] {} logs -> {}", role, logs_dir.display());
+
+            let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
+                .file(trace_file)
+                .include_args(true)
+                .build();
+
+            static FLUSH_GUARD: Mutex<Option<tracing_chrome::FlushGuard>> = Mutex::new(None);
+            *FLUSH_GUARD.lock().unwrap() = Some(guard);
+
+            let _ = tracing_subscriber::registry()
+                .with(stdout_layer)
+                .with(file_layer)
+                .with(chrome_layer)
+                .try_init();
+            return;
+        }
+    }
+
+    eprintln!("[hirsel] {} logs -> {}", role, logs_dir.display());
+    let _ = tracing_subscriber::registry()
+        .with(stdout_layer)
+        .with(file_layer)
+        .try_init();
+}
 
 // Re-export commonly used types
 pub use cli::{
@@ -273,48 +337,19 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
 pub fn run() {
     init_tracing();
 
-    let mut builder = tauri::Builder::default();
-
-    // When profiling, init_tracing() already set up a global subscriber (fmt + chrome),
-    // so skip tauri_plugin_log to avoid "logger already initialized" panic.
-    #[cfg(feature = "profiling")]
-    let skip_tauri_log = std::env::var("HIRSEL_PROFILING").as_deref() == Ok("1");
-    #[cfg(not(feature = "profiling"))]
-    let skip_tauri_log = false;
-
-    if !skip_tauri_log {
-        builder = builder.plugin(
-            tauri_plugin_log::Builder::new()
-                .filter(|metadata| {
-                    let target = metadata.target();
-                    !target.starts_with("rustls")
-                        && !target.starts_with("hyper")
-                        && !target.starts_with("reqwest")
-                        && !target.starts_with("zbus")
-                        && !target.starts_with("mio")
-                        && !target.starts_with("tracing::span")
-                        && !target.starts_with("sqlx")
-                })
-                .build(),
-        );
-    }
-
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-        // When a second instance tries to launch, focus the existing window
-        use tauri::Manager;
-        tracing::info!("Second instance attempted with args: {:?}", args);
-        if let Some(window) = app.get_webview_window("main") {
-            // Unminimize if minimized, then focus
-            let _ = window.unminimize();
-            let _ = window.set_focus();
-        }
-    }));
-
-    // Create worker event stream manager as shared state
-    let worker_stream_manager = std::sync::Arc::new(gui::WorkerEventStreamManager::new());
+    let builder =
+        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // When a second instance tries to launch, focus the existing window
+            use tauri::Manager;
+            tracing::info!("Second instance attempted with args: {:?}", args);
+            if let Some(window) = app.get_webview_window("main") {
+                // Unminimize if minimized, then focus
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }));
 
     builder
-        .manage(worker_stream_manager)
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
             use tauri::Manager;

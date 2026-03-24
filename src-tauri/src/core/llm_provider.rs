@@ -61,6 +61,33 @@ async fn load_openrouter_key(store: &CredentialStore) -> Result<String, String> 
     })
 }
 
+/// Resolve the model and variant from config, falling back to provider defaults.
+pub fn resolve_model(config: &Config, provider: &Provider) -> (String, Option<String>) {
+    // If user explicitly configured a model, use it
+    if let Some(ref model) = config.llm.model {
+        let variant = config
+            .llm
+            .model_variant
+            .clone()
+            .or_else(|| provider.default_model_variant(model).map(str::to_string));
+        return (model.clone(), variant);
+    }
+
+    // Fall back to provider's high-tier default (Shepherd = high intelligence)
+    if let Some((m, variant)) = provider.default_agent_model("high") {
+        return (m.to_string(), variant.map(str::to_string));
+    }
+
+    // Last resort: provider's default model
+    let model = provider.default_model().to_string();
+    let variant = config
+        .llm
+        .model_variant
+        .clone()
+        .or_else(|| provider.default_model_variant(&model).map(str::to_string));
+    (model, variant)
+}
+
 pub async fn resolve_provider(config: &Config) -> Result<Provider, String> {
     let store = CredentialStore::open()
         .await

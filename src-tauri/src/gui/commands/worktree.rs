@@ -4,9 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::ResultExt;
 use crate::core::{
-    ensure_sync_project_task, CapabilityProfile, DeltaDispatchService, DeltaState,
-    EnsureSyncProjectTaskResult, ProjectStore, Route, RouteStore, WorkItem, WorkItemTree,
-    WorkTreeSnapshot,
+    CapabilityProfile, DeltaDispatchService, DeltaState, WorkItem, WorkItemTree, WorkTreeSnapshot,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,31 +39,6 @@ fn visible_work_tree(nodes: Vec<crate::core::delta::BoardNodeTree>) -> Vec<WorkI
             .collect();
     }
     active_nodes.into_iter().map(WorkItemTree::from).collect()
-}
-
-async fn resolve_target_route(project_id: i64, route_id: Option<i64>) -> Result<Route, String> {
-    let route_store = RouteStore::new(project_id).await.str_err()?;
-
-    if let Some(route_id) = route_id {
-        return route_store.get_route(route_id).await.str_err();
-    }
-
-    let project_store = ProjectStore::open().await.str_err()?;
-    let project = project_store.get_project(project_id).await.str_err()?;
-
-    if let Some(active_route_id) = project.active_route_id {
-        if let Ok(route) = route_store.get_route(active_route_id).await {
-            return Ok(route);
-        }
-    }
-
-    route_store
-        .list_routes()
-        .await
-        .str_err()?
-        .into_iter()
-        .next()
-        .ok_or_else(|| "No routes exist for this project".to_string())
 }
 
 #[tracing::instrument]
@@ -107,22 +80,6 @@ pub async fn create_work_item(
         .await
         .str_err()?;
     Ok(item.into())
-}
-
-#[tracing::instrument]
-#[tauri::command]
-pub async fn reparent_work_item(
-    project_id: i64,
-    route_id: i64,
-    item_id: String,
-    new_parent_id: Option<String>,
-    new_position: i32,
-) -> Result<(), String> {
-    let state = DeltaState::with_route(project_id, route_id);
-    state
-        .move_node(&item_id, new_parent_id.as_deref(), new_position)
-        .await
-        .str_err()
 }
 
 #[tracing::instrument]
@@ -194,27 +151,4 @@ pub async fn archive_work_item(
 ) -> Result<(), String> {
     let state = DeltaState::with_route(project_id, route_id);
     state.archive_work_item(&item_id).await.str_err()
-}
-
-#[tracing::instrument]
-#[tauri::command]
-pub async fn ensure_sync_project_task_cmd(
-    project_id: i64,
-    route_id: Option<i64>,
-    request_sync: Option<bool>,
-    refresh: Option<bool>,
-) -> Result<EnsureSyncProjectTaskResult, String> {
-    let project_store = ProjectStore::open().await.str_err()?;
-    let project = project_store.get_project(project_id).await.str_err()?;
-    let route = resolve_target_route(project_id, route_id).await?;
-
-    ensure_sync_project_task(
-        project_id,
-        &route,
-        &project.name,
-        request_sync.unwrap_or(false),
-        refresh.unwrap_or(false),
-    )
-    .await
-    .str_err()
 }

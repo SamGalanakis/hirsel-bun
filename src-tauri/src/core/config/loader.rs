@@ -7,7 +7,42 @@ use super::{
     BackendConfig, Config, ConfigError, LlmConfig, LlmProvider, McpServerConfig, S3Config,
     StorageBackend, StorageConfig, StorageProvider,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+fn validate_top_level_keys(table: &toml::Table) -> Result<(), ConfigError> {
+    let allowed: BTreeSet<&str> = [
+        "root",
+        "run",
+        "agent",
+        "eval_timeout",
+        "human_in_the_loop",
+        "context_warning_threshold",
+        "coordinator_port",
+        "scribe_batch_window_seconds",
+        "llm",
+        "sandbox",
+        "backend",
+        "mcp_servers",
+        "storage",
+    ]
+    .into_iter()
+    .collect();
+
+    let unknown = table
+        .keys()
+        .filter(|key| !allowed.contains(key.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if unknown.is_empty() {
+        return Ok(());
+    }
+
+    Err(ConfigError::ValidationError(format!(
+        "unknown config keys: {}",
+        unknown.join(", ")
+    )))
+}
 
 /// Parse an S3Config from a TOML table
 fn parse_s3_config(table: &toml::Table) -> S3Config {
@@ -78,6 +113,22 @@ pub fn load_config_file(
                 path: config_path.to_path_buf(),
                 message: e.to_string(),
             })?;
+
+    validate_top_level_keys(&table)?;
+
+    if let Some(root) = table.get("root").and_then(|value| value.as_str()) {
+        let trimmed = root.trim();
+        if !trimmed.is_empty() {
+            config.root = trimmed.into();
+        }
+    }
+
+    if let Some(run) = table.get("run").and_then(|value| value.as_str()) {
+        let trimmed = run.trim();
+        if !trimmed.is_empty() {
+            config.run = Some(trimmed.to_string());
+        }
+    }
 
     // Load agent config
     if let Some(agent_data) = table.get("agent") {
@@ -156,6 +207,24 @@ pub fn load_config_file(
                     n
                 ));
             }
+        }
+    }
+
+    if let Some(val) = table.get("scribe_batch_window_seconds") {
+        if let Some(n) = val.as_integer() {
+            if n > 0 {
+                config.scribe_batch_window_seconds = n as u32;
+            } else {
+                warnings.push(format!(
+                    "Config warning: scribe_batch_window_seconds must be a positive integer, got {}",
+                    n
+                ));
+            }
+        } else {
+            warnings.push(format!(
+                "Config warning: scribe_batch_window_seconds should be an integer, got {}",
+                val.type_str()
+            ));
         }
     }
 

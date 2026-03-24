@@ -1,62 +1,65 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
 use lash::{
     default_context_strategy, default_execution_mode, AgentStateEnvelope, EventSink, ExecutionMode,
-    HostProfile, InputItem, LashRuntime, OutputState, PluginHost, RuntimeHostConfig,
-    RuntimeServices, SessionPolicy, ToolProvider, TurnInput, TurnStatus,
+    HostProfile, InputItem, LashRuntime, PluginHost, RuntimeHostConfig, RuntimeServices,
+    SessionPolicy, ToolProvider, TurnInput,
 };
-use tauri::Emitter;
-use tokio::sync::Mutex;
-use tracing::{info, warn};
+use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use super::history::{
-    build_runtime_messages, build_user_chunks, chunks_to_json, clear_scope_messages,
-    decode_png_images, load_scope_messages, save_message, validate_chunks, RUNTIME_HISTORY_LIMIT,
+    build_runtime_messages, build_user_chunks, chunks_to_json, decode_png_images,
+    load_scope_messages, load_scope_queue, parse_chunks_from_json, save_message,
+    RUNTIME_HISTORY_LIMIT,
 };
 use super::runtime::{
-    build_assistant_chunks, build_scope, build_user_turn_text, looks_like_runtime_traceback,
-    resolve_runtime_cwd, resolve_scope_project_id, resolve_scope_workspace,
-    shepherd_prompt_overrides, AssistantDraft, ShepherdEvent, ShepherdLashSink,
+    build_user_turn_text, looks_like_runtime_traceback, resolve_runtime_cwd,
+    resolve_scope_project_id, resolve_scope_workspace, shepherd_prompt_overrides, ShepherdLashSink,
 };
-use super::session::{sessions, ShepherdSession};
 use super::tools::ShepherdToolProvider;
-use super::types::{
-    ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus, StartShepherdSessionRequest,
-    StartShepherdSessionResponse,
-};
+use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::core::credentials::CredentialStore;
-use crate::core::{llm_provider, ShepherdChatMessage};
+use crate::core::{
+    ensure_sync_project_task, llm_provider, DeltaState, ProjectStore, Route, RouteStore,
+    ShepherdChatMessage, ShepherdChatStore, ShepherdQueuedTurn, WorkItem,
+};
 use crate::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
 
 struct SilentLashSink;
+
+static ACTIVE_SCOPE_PROCESSORS: OnceLock<StdMutex<HashSet<String>>> = OnceLock::new();
+
+fn active_scope_processors() -> &'static StdMutex<HashSet<String>> {
+    ACTIVE_SCOPE_PROCESSORS.get_or_init(|| StdMutex::new(HashSet::new()))
+}
 
 #[async_trait::async_trait]
 impl EventSink for SilentLashSink {
     async fn emit(&self, _event: lash::AgentEvent) {}
 }
 
-/// Start a Shepherd session.
-#[tauri::command]
-pub async fn start_shepherd_session(
-    request: StartShepherdSessionRequest,
-) -> Result<StartShepherdSessionResponse, String> {
-    let scope = build_scope(request);
-    let session_id = uuid::Uuid::new_v4().to_string();
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartProjectSyncResponse {
+    pub route_id: i64,
+    pub item: WorkItem,
+    pub started: bool,
+}
 
-    sessions()
-        .lock()
-        .map_err(|_| "failed to lock Shepherd session map".to_string())?
-        .insert(
-            session_id.clone(),
-            ShepherdSession {
-                scope: scope.clone(),
-                active_turn: None,
-                runtime: None,
-            },
-        );
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnqueueShepherdMessageResponse {
+    pub queued: bool,
+    pub queue_depth: usize,
+}
 
-    Ok(StartShepherdSessionResponse { session_id, scope })
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShepherdQueueState {
+    pub items: Vec<ShepherdQueuedTurn>,
+    pub has_active_turn: bool,
 }
 
 async fn load_tavily_api_key() -> Option<String> {
@@ -67,13 +70,13 @@ async fn load_tavily_api_key() -> Option<String> {
 }
 
 async fn build_runtime_services(
-    app: &tauri::AppHandle,
+    app: Option<&tauri::AppHandle>,
     default_project_id: Option<i64>,
     agent_id: &str,
     execution_mode: ExecutionMode,
 ) -> Result<RuntimeServices, String> {
     let tools: Arc<dyn ToolProvider> =
-        Arc::new(ShepherdToolProvider::new(app.clone(), default_project_id));
+        Arc::new(ShepherdToolProvider::new(app.cloned(), default_project_id));
     let (hirsel_config, _) =
         crate::core::config::Config::load().map_err(|e| format!("failed to load config: {}", e))?;
     let plugin_factories = embedded_tool_plugin_factories(
@@ -93,7 +96,7 @@ async fn build_runtime_services(
 }
 
 async fn create_runtime_from_history(
-    app: &tauri::AppHandle,
+    app: Option<&tauri::AppHandle>,
     runtime_id: &str,
     scope: &ShepherdScope,
     focus: Option<&ShepherdTaskFocus>,
@@ -104,14 +107,7 @@ async fn create_runtime_from_history(
     let (hirsel_config, _) =
         crate::core::config::Config::load().map_err(|e| format!("failed to load config: {}", e))?;
     let provider = llm_provider::resolve_provider(&hirsel_config).await?;
-    let (model, model_variant) = provider
-        .default_agent_model("high")
-        .map(|(m, variant)| (m.to_string(), variant.map(str::to_string)))
-        .unwrap_or_else(|| {
-            let model = provider.default_model().to_string();
-            let variant = provider.default_model_variant(&model).map(str::to_string);
-            (model, variant)
-        });
+    let (model, model_variant) = llm_provider::resolve_model(&hirsel_config, &provider);
     let execution_mode = default_execution_mode();
     let context_strategy = default_context_strategy();
     let session_policy = SessionPolicy {
@@ -149,8 +145,59 @@ async fn create_runtime_from_history(
         .map_err(|e| format!("failed to create shepherd lash runtime: {}", e))
 }
 
+async fn resolve_target_route(project_id: i64, route_id: Option<i64>) -> Result<Route, String> {
+    let route_store = RouteStore::new(project_id)
+        .await
+        .map_err(|e| format!("failed to open route store: {}", e))?;
+
+    if let Some(route_id) = route_id {
+        return route_store
+            .get_route(route_id)
+            .await
+            .map_err(|e| format!("failed to load route {}: {}", route_id, e));
+    }
+
+    let project_store = ProjectStore::open()
+        .await
+        .map_err(|e| format!("failed to open project store: {}", e))?;
+    let project = project_store
+        .get_project(project_id)
+        .await
+        .map_err(|e| format!("failed to load project {}: {}", project_id, e))?;
+
+    if let Some(active_route_id) = project.active_route_id {
+        if let Ok(route) = route_store.get_route(active_route_id).await {
+            return Ok(route);
+        }
+    }
+
+    route_store
+        .list_routes()
+        .await
+        .map_err(|e| format!("failed to list routes: {}", e))?
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No routes exist for this project".to_string())
+}
+
+fn scope_queue_key(scope: &ShepherdScope) -> Option<String> {
+    match scope {
+        ShepherdScope::General => Some("general".to_string()),
+        ShepherdScope::Project { project_id, .. } => Some(format!("project:{}", project_id)),
+        ShepherdScope::Branch { .. } => None,
+    }
+}
+
+fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<&str>) {
+    match scope {
+        ShepherdScope::General => (None, None),
+        ShepherdScope::Project { project_id, .. } => (Some(*project_id), None),
+        ShepherdScope::Branch { .. } => (None, None),
+    }
+}
+
 async fn create_runtime_from_state(
-    app: &tauri::AppHandle,
+    app: Option<&tauri::AppHandle>,
     runtime_id: &str,
     scope: &ShepherdScope,
     focus: Option<&ShepherdTaskFocus>,
@@ -190,14 +237,15 @@ fn truncate_internal_note(text: &str, max_chars: usize) -> String {
     out
 }
 
+#[tracing::instrument(skip(user_images_png, cancel, parent_state))]
 async fn run_private_branch_turn(
-    app: &tauri::AppHandle,
+    app: Option<&tauri::AppHandle>,
     parent_session_id: &str,
     parent_scope: &ShepherdScope,
     parent_focus: Option<ShepherdTaskFocus>,
     user_turn_text: &str,
     user_images_png: &[Vec<u8>],
-    cancel: tokio_util::sync::CancellationToken,
+    cancel: CancellationToken,
     parent_state: AgentStateEnvelope,
 ) -> Result<Option<String>, String> {
     let ShepherdScope::Project {
@@ -220,6 +268,8 @@ async fn run_private_branch_turn(
     };
     let cwd = resolve_runtime_cwd(resolve_scope_workspace(&branch_scope).await);
     let scope_project_id = resolve_scope_project_id(&branch_scope).await;
+    tracing::info!("starting private shepherd branch turn");
+
     let mut branch_runtime = create_runtime_from_state(
         app,
         &branch_id,
@@ -260,450 +310,470 @@ async fn run_private_branch_turn(
     let conclusion =
         super::runtime::ShepherdLashSink::sanitize_assistant_text(&turn.assistant_output.safe_text);
     if conclusion.trim().is_empty() || looks_like_runtime_traceback(&conclusion) {
+        tracing::warn!("private shepherd branch produced no usable conclusion");
         return Ok(None);
     }
 
+    tracing::info!("private shepherd branch completed");
     Ok(Some(truncate_internal_note(&conclusion, 4000)))
 }
 
-/// Send a message to Shepherd and stream a lash response.
-async fn run_shepherd_turn(
-    app: tauri::AppHandle,
-    session_id: String,
-    content: Option<String>,
-    chunks: Option<Vec<ShepherdMessageChunk>>,
-    focus: Option<ShepherdTaskFocus>,
-    persist_input_message: bool,
-) -> Result<(), String> {
-    let (scope, cancel, mut session_runtime) = {
-        let mut guard = sessions()
-            .lock()
-            .map_err(|_| "failed to lock Shepherd session map".to_string())?;
-        let session = guard
-            .get_mut(&session_id)
-            .ok_or_else(|| format!("Unknown Shepherd session: {}", session_id))?;
-
-        if session.active_turn.is_some() {
-            return Err("Shepherd session already has an active turn".to_string());
-        }
-
-        let cancel = tokio_util::sync::CancellationToken::new();
-        session.active_turn = Some(cancel.clone());
-        (session.scope.clone(), cancel, session.runtime.take())
+#[tracing::instrument(skip(prompt), fields(project_id, route_id = route.id, item_id = %item_id))]
+async fn run_project_sync_branch(
+    project_id: i64,
+    route: Route,
+    item_id: String,
+    item_title: String,
+    prompt: String,
+) -> Result<Option<String>, String> {
+    let scope = ShepherdScope::Project {
+        project_id,
+        workspace_path: None,
+        focus: Some(ShepherdTaskFocus {
+            task_id: item_id.clone(),
+            task_name: item_title.clone(),
+        }),
     };
-
-    let result = async {
-        let focus = focus.or_else(|| match &scope {
-            ShepherdScope::Project { focus, .. } | ShepherdScope::Branch { focus, .. } => {
-                focus.clone()
-            }
-            _ => None,
-        });
-
-        let user_chunks = build_user_chunks(content, chunks)?;
-        let user_chunks_json = chunks_to_json(&user_chunks)?;
-        let user_images_png = decode_png_images(&user_chunks)?;
-        let user_turn_text = build_user_turn_text(&user_chunks);
-
-        let history = if session_runtime.is_none() {
-            load_scope_messages(&scope, RUNTIME_HISTORY_LIMIT).await?
-        } else {
-            Vec::new()
-        };
-        let cwd = resolve_runtime_cwd(resolve_scope_workspace(&scope).await);
-        let scope_project_id = resolve_scope_project_id(&scope).await;
-
-        if session_runtime.is_none() {
-            session_runtime = Some(
-                create_runtime_from_history(
-                    &app,
-                    &session_id,
-                    &scope,
-                    focus.as_ref(),
-                    scope_project_id,
-                    &cwd,
-                    &history,
-                )
-                .await?,
-            );
-        }
-
-        let runtime = session_runtime
-            .as_mut()
-            .ok_or_else(|| "failed to initialize shepherd runtime".to_string())?;
-
-        if persist_input_message {
-            save_message(&scope, "user", &user_chunks_json).await?;
-        }
-
-        let branch_conclusion = if persist_input_message {
-            let parent_state = runtime.export_state();
-            match run_private_branch_turn(
-                &app,
-                &session_id,
-                &scope,
-                focus.clone(),
-                &user_turn_text,
-                &user_images_png,
-                cancel.clone(),
-                parent_state,
-            )
-            .await
-            {
-                Ok(conclusion) => conclusion,
-                Err(error) => {
-                    warn!("failed to run private shepherd branch: {}", error);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let draft = Arc::new(Mutex::new(AssistantDraft::default()));
-        let sink = ShepherdLashSink::new(app.clone(), session_id.clone(), draft.clone());
-
-        let mut turn_items = Vec::new();
-        if let Some(branch_conclusion) = branch_conclusion.as_ref() {
-            turn_items.push(InputItem::Text {
-                text: format!(
-                    "Private branch conclusion for this turn. Use it as internal reasoning context only. Do not mention branching, hidden analysis, or this note to the user.\n\n{}",
-                    branch_conclusion
-                ),
-            });
-        }
-        turn_items.push(InputItem::Text {
-            text: user_turn_text.clone(),
-        });
-        let mut image_blobs: HashMap<String, Vec<u8>> = HashMap::new();
-        for (idx, bytes) in user_images_png.into_iter().enumerate() {
-            let id = format!("image-{}", idx + 1);
-            turn_items.push(InputItem::ImageRef { id: id.clone() });
-            image_blobs.insert(id, bytes);
-        }
-
-        let mut turn = runtime
-            .stream_turn(
-                TurnInput {
-                    items: turn_items,
-                    image_blobs,
-                    mode: None,
-                },
-                &sink,
-                cancel.clone(),
-            )
-            .await
-            .map_err(|e| format!("failed to run shepherd turn: {}", e))?;
-        let mut recovered_empty_output = false;
-        let mut recovered_runtime_traceback = false;
-
-        loop {
-            info!(
-                "shepherd lash turn complete: session={}, status={:?}, reason={:?}, output_state={:?}, safe_len={}, raw_len={}, errors={}",
-                session_id,
-                turn.status,
-                turn.done_reason,
-                turn.assistant_output.state,
-                turn.assistant_output.safe_text.len(),
-                turn.assistant_output.raw_text.len(),
-                turn.errors.len()
-            );
-
-            let mut final_draft = draft.lock().await;
-            let streamed_text = ShepherdLashSink::sanitize_assistant_text(final_draft.text.trim());
-            let assembled_text =
-                ShepherdLashSink::sanitize_assistant_text(&turn.assistant_output.safe_text);
-            let runtime_output =
-                ShepherdLashSink::sanitize_assistant_text(&final_draft.runtime_output);
-            let final_text = if !assembled_text.trim().is_empty() {
-                assembled_text.trim().to_string()
-            } else if !streamed_text.trim().is_empty() {
-                streamed_text
-            } else {
-                runtime_output.trim().to_string()
-            };
-
-            if !final_text.is_empty() {
-                app.emit(
-                    "shepherd-event",
-                    (
-                        &session_id,
-                        &ShepherdEvent::TextDelta {
-                            session_id: session_id.clone(),
-                            text: final_text.clone(),
-                        },
-                    ),
-                )
-                .map_err(|e| format!("failed to emit shepherd text delta: {}", e))?;
-                final_draft.text = final_text.clone();
-            }
-            info!(
-                "shepherd draft summary: session={}, text_len={}, final_len={}, errored={}",
-                session_id,
-                final_draft.text.len(),
-                final_text.len(),
-                final_draft.errored
-            );
-
-            if matches!(turn.status, TurnStatus::Failed)
-                && final_text.is_empty()
-                && final_draft.tools.is_empty()
-            {
-                let message = turn
-                    .errors
-                    .first()
-                    .map(|issue| issue.message.clone())
-                    .unwrap_or_else(|| "Shepherd turn failed".to_string());
-                final_draft.errored = true;
-                drop(final_draft);
-                app.emit(
-                    "shepherd-event",
-                    (
-                        &session_id,
-                        &ShepherdEvent::Error {
-                            session_id: session_id.clone(),
-                            message,
-                        },
-                    ),
-                )
-                .map_err(|e| format!("failed to emit shepherd error event: {}", e))?;
-                return Ok(());
-            }
-
-            if matches!(turn.status, TurnStatus::Interrupted) {
-                drop(final_draft);
-                return Ok(());
-            }
-
-            if !recovered_runtime_traceback
-                && matches!(turn.status, TurnStatus::Completed)
-                && (matches!(turn.assistant_output.state, OutputState::TracebackOnly)
-                    || looks_like_runtime_traceback(&final_text))
-            {
-                warn!(
-                    "shepherd runtime traceback surfaced as assistant text; running one recovery pass: session={}, output_state={:?}",
-                    session_id,
-                    turn.assistant_output.state
-                );
-                *final_draft = AssistantDraft::default();
-                drop(final_draft);
-                recovered_runtime_traceback = true;
-                turn = runtime
-                    .stream_turn(
-                        TurnInput {
-                            items: vec![InputItem::Text {
-                                text: "The previous attempt surfaced an internal runtime traceback. Answer the user's most recent message directly in plain language with no code blocks, no repl execution, and no traceback text.".to_string(),
-                            }],
-                            image_blobs: HashMap::new(),
-                            mode: None,
-                        },
-                        &sink,
-                        cancel.clone(),
-                    )
-                    .await
-                    .map_err(|e| format!("failed to run shepherd traceback recovery turn: {}", e))?;
-                continue;
-            }
-
-            if !recovered_empty_output
-                && matches!(turn.status, TurnStatus::Completed)
-                && final_text.is_empty()
-                && final_draft.tools.is_empty()
-            {
-                warn!(
-                    "shepherd empty output on completed turn; running one recovery pass: session={}, output_state={:?}, raw_assistant_output={:?}, runtime_output={:?}",
-                    session_id,
-                    turn.assistant_output.state,
-                    turn.assistant_output.raw_text,
-                    final_draft.runtime_output
-                );
-                *final_draft = AssistantDraft::default();
-                drop(final_draft);
-                recovered_empty_output = true;
-                turn = runtime
-                    .stream_turn(
-                        TurnInput {
-                            items: vec![InputItem::Text {
-                                text: "Respond directly to the user's most recent message in plain language. Provide a complete, non-empty answer.".to_string(),
-                            }],
-                            image_blobs: HashMap::new(),
-                            mode: None,
-                        },
-                        &sink,
-                        cancel.clone(),
-                    )
-                    .await
-                    .map_err(|e| format!("failed to run shepherd recovery turn: {}", e))?;
-                continue;
-            }
-
-            if final_text.is_empty() && final_draft.tools.is_empty() {
-                warn!(
-                    "shepherd empty sanitized output: session={}, output_state={:?}, raw_assistant_output={:?}, runtime_output={:?}",
-                    session_id,
-                    turn.assistant_output.state,
-                    turn.assistant_output.raw_text,
-                    final_draft.runtime_output
-                );
-                let message = "Shepherd returned no user-visible output for this turn.".to_string();
-                drop(final_draft);
-                app.emit(
-                    "shepherd-event",
-                    (
-                        &session_id,
-                        &ShepherdEvent::Error {
-                            session_id: session_id.clone(),
-                            message,
-                        },
-                    ),
-                )
-                .map_err(|e| format!("failed to emit shepherd error event: {}", e))?;
-                return Ok(());
-            }
-
-            if final_draft.errored && final_text.is_empty() && final_draft.tools.is_empty() {
-                return Ok(());
-            }
-
-            let assistant_chunks = build_assistant_chunks(&final_draft, &final_text);
-            if !assistant_chunks.is_empty() {
-                let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
-                save_message(&scope, "assistant", &assistant_chunks_json).await?;
-            }
-
-            drop(final_draft);
-            break;
-        }
-
-        app.emit(
-            "shepherd-event",
-            (
-                &session_id,
-                &ShepherdEvent::MessageComplete {
-                    session_id: session_id.clone(),
-                },
-            ),
-        )
-        .map_err(|e| format!("failed to emit shepherd complete event: {}", e))?;
-
-        Ok(())
-    }
-    .await;
-
-    if let Ok(mut guard) = sessions().lock() {
-        if let Some(session) = guard.get_mut(&session_id) {
-            session.active_turn = None;
-            if let Some(runtime) = session_runtime.take() {
-                session.runtime = Some(runtime);
-            }
-        }
-    }
-
-    result
-}
-
-/// Send a user-visible message to Shepherd and stream a lash response.
-#[tauri::command]
-pub async fn send_shepherd_message(
-    app: tauri::AppHandle,
-    session_id: String,
-    content: Option<String>,
-    chunks: Option<Vec<ShepherdMessageChunk>>,
-    focus: Option<ShepherdTaskFocus>,
-) -> Result<(), String> {
-    run_shepherd_turn(app, session_id, content, chunks, focus, true).await
-}
-
-/// Run a hidden background prompt against the active Shepherd session.
-#[tauri::command]
-pub async fn run_shepherd_background_prompt(
-    app: tauri::AppHandle,
-    session_id: String,
-    content: String,
-    focus: Option<ShepherdTaskFocus>,
-) -> Result<(), String> {
-    let trimmed = content.trim();
-    if trimmed.is_empty() {
-        return Err("background prompt content is empty".to_string());
-    }
-
-    run_shepherd_turn(
-        app,
-        session_id,
-        Some(trimmed.to_string()),
+    let cwd = resolve_runtime_cwd(resolve_scope_workspace(&scope).await);
+    let history = load_scope_messages(&scope, RUNTIME_HISTORY_LIMIT).await?;
+    let runtime = create_runtime_from_history(
         None,
-        focus,
-        false,
+        &format!("project-sync-{}", uuid::Uuid::new_v4()),
+        &scope,
+        match &scope {
+            ShepherdScope::Project { focus, .. } => focus.as_ref(),
+            _ => None,
+        },
+        Some(project_id),
+        &cwd,
+        &history,
+    )
+    .await?;
+    let parent_state = runtime.export_state();
+    drop(runtime);
+
+    run_private_branch_turn(
+        None,
+        &format!("project-sync-parent-{}", uuid::Uuid::new_v4()),
+        &scope,
+        match &scope {
+            ShepherdScope::Project { focus, .. } => focus.clone(),
+            _ => None,
+        },
+        &format!(
+            "{}\n\nDo not call the `sync_project` tool from this run. This run is already the project sync.",
+            prompt
+        ),
+        &[],
+        CancellationToken::new(),
+        parent_state,
     )
     .await
 }
 
-/// Cancel the active turn without destroying the session.
-///
-/// The session and its LashRuntime stay alive so the user can immediately
-/// send another message.
-#[tauri::command]
-pub async fn cancel_shepherd_turn(app: tauri::AppHandle, session_id: String) -> Result<(), String> {
-    let cancelled = {
-        let mut guard = sessions()
+async fn finish_project_sync(
+    project_id: i64,
+    route_id: i64,
+    item_id: &str,
+    status: &'static str,
+    summary: &str,
+    details: Option<&str>,
+) {
+    let state = DeltaState::with_route(project_id, route_id);
+    let result = match status {
+        "done" => state.complete_work_item(item_id, "channel:main").await,
+        "failed" => state.fail_work_item(item_id, "channel:main").await,
+        _ => unreachable!("unexpected sync terminal status"),
+    };
+
+    if let Err(error) = result {
+        tracing::error!(%error, project_id, route_id, item_id, "failed to update sync task terminal status");
+        return;
+    }
+
+    if let Err(error) = state
+        .record_item_event(item_id, "channel", "main", "sync_status", summary, details)
+        .await
+    {
+        tracing::warn!(%error, project_id, route_id, item_id, "failed to record sync task event");
+    }
+}
+
+#[tracing::instrument(fields(project_id, route_id = route.id, item_id = %item.id))]
+fn spawn_project_sync_task(project_id: i64, route: Route, item: WorkItem, prompt: String) {
+    tokio::spawn(async move {
+        tracing::info!("starting detached project sync task");
+        match run_project_sync_branch(
+            project_id,
+            route.clone(),
+            item.id.clone(),
+            item.title.clone(),
+            prompt,
+        )
+        .await
+        {
+            Ok(conclusion) => {
+                let details = conclusion.as_deref();
+                finish_project_sync(
+                    project_id,
+                    route.id,
+                    &item.id,
+                    "done",
+                    "Project sync completed.",
+                    details,
+                )
+                .await;
+                tracing::info!("detached project sync task completed");
+            }
+            Err(error) => {
+                let details = error.clone();
+                finish_project_sync(
+                    project_id,
+                    route.id,
+                    &item.id,
+                    "failed",
+                    "Project sync failed.",
+                    Some(&details),
+                )
+                .await;
+                tracing::error!(%error, "detached project sync task failed");
+            }
+        }
+    });
+}
+
+fn tool_chunks_from_records(tool_calls: &[lash::ToolCallRecord]) -> Vec<ShepherdMessageChunk> {
+    tool_calls
+        .iter()
+        .enumerate()
+        .map(|(idx, record)| {
+            let (title, kind) = ShepherdLashSink::tool_title_kind(&record.tool);
+            ShepherdMessageChunk::Tool {
+                id: record
+                    .call_id
+                    .clone()
+                    .unwrap_or_else(|| format!("tool-{}", idx + 1)),
+                title,
+                kind,
+                status: if record.success {
+                    "completed".to_string()
+                } else {
+                    "failed".to_string()
+                },
+                input: serde_json::to_string(&record.args).ok(),
+                output: serde_json::to_string(&record.result).ok(),
+            }
+        })
+        .collect()
+}
+
+async fn mark_scope_processor_finished(scope_key: &str) {
+    if let Ok(mut active) = active_scope_processors().lock() {
+        active.remove(scope_key);
+    }
+}
+
+async fn process_scope_queue(scope: ShepherdScope, scope_key: String) {
+    let store = match ShepherdChatStore::open().await {
+        Ok(store) => store,
+        Err(error) => {
+            tracing::error!(%error, %scope_key, "failed to open shepherd chat store for queue processor");
+            mark_scope_processor_finished(&scope_key).await;
+            return;
+        }
+    };
+
+    let (project_id, runtime_name) = scope_storage_ids(&scope);
+
+    loop {
+        let next = match store.claim_next_turn(project_id, runtime_name).await {
+            Ok(next) => next,
+            Err(error) => {
+                tracing::error!(%error, %scope_key, "failed to claim shepherd queue item");
+                break;
+            }
+        };
+
+        let Some(job) = next else {
+            break;
+        };
+
+        let focus = job
+            .focus_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<ShepherdTaskFocus>(json).ok());
+        let user_chunks = parse_chunks_from_json(&job.chunks_json);
+
+        let result = run_shepherd_turn_for_scope(
+            &format!("queued-turn-{}", job.id),
+            &scope,
+            user_chunks,
+            focus,
+            true,
+            true,
+        )
+        .await;
+
+        match result {
+            Ok(_) => {
+                if let Err(error) = store.complete_turn(job.id).await {
+                    tracing::error!(%error, queue_id = job.id, %scope_key, "failed to mark shepherd queue item complete");
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, queue_id = job.id, %scope_key, "queued shepherd turn failed");
+                if let Err(mark_error) = store.fail_turn(job.id, &error).await {
+                    tracing::error!(%mark_error, queue_id = job.id, %scope_key, "failed to mark shepherd queue item failed");
+                }
+            }
+        }
+    }
+
+    mark_scope_processor_finished(&scope_key).await;
+}
+
+fn kick_scope_queue_processor(scope: ShepherdScope) -> Result<(), String> {
+    let Some(scope_key) = scope_queue_key(&scope) else {
+        return Err("branch scope cannot own durable queued turns".to_string());
+    };
+
+    {
+        let mut active = active_scope_processors()
             .lock()
-            .map_err(|_| "failed to lock Shepherd session map".to_string())?;
-
-        let session = guard
-            .get_mut(&session_id)
-            .ok_or_else(|| format!("Unknown Shepherd session: {}", session_id))?;
-
-        session.active_turn.take()
-    };
-
-    if let Some(cancel) = cancelled {
-        cancel.cancel();
+            .map_err(|_| "failed to lock shepherd queue processor set".to_string())?;
+        if active.contains(&scope_key) {
+            return Ok(());
+        }
+        active.insert(scope_key.clone());
     }
 
-    // Emit MessageComplete so the frontend finalizes the streaming message
-    let event = ShepherdEvent::MessageComplete {
-        session_id: session_id.clone(),
-    };
-    let _ = app.emit("shepherd-event", (&session_id, &event));
+    tokio::spawn(async move {
+        process_scope_queue(scope, scope_key).await;
+    });
 
     Ok(())
 }
 
-/// Stop an active Shepherd session.
-#[tauri::command]
-pub async fn stop_shepherd_session(
-    app: tauri::AppHandle,
-    session_id: String,
-) -> Result<(), String> {
-    let cancelled = sessions()
-        .lock()
-        .map_err(|_| "failed to lock Shepherd session map".to_string())?
-        .remove(&session_id)
-        .and_then(|s| s.active_turn);
+#[tracing::instrument(skip(user_chunks))]
+async fn run_shepherd_turn_for_scope(
+    runtime_id: &str,
+    scope: &ShepherdScope,
+    user_chunks: Vec<ShepherdMessageChunk>,
+    focus: Option<ShepherdTaskFocus>,
+    persist_input_message: bool,
+    use_private_branch: bool,
+) -> Result<Vec<ShepherdMessageChunk>, String> {
+    let focus = focus.or_else(|| match scope {
+        ShepherdScope::Project { focus, .. } | ShepherdScope::Branch { focus, .. } => focus.clone(),
+        _ => None,
+    });
+    let user_chunks_json = chunks_to_json(&user_chunks)?;
+    let user_images_png = decode_png_images(&user_chunks)?;
+    let user_turn_text = build_user_turn_text(&user_chunks);
+    let history = load_scope_messages(scope, RUNTIME_HISTORY_LIMIT).await?;
+    let cwd = resolve_runtime_cwd(resolve_scope_workspace(scope).await);
+    let scope_project_id = resolve_scope_project_id(scope).await;
+    tracing::info!("starting shepherd turn");
 
-    if let Some(cancel) = cancelled {
-        cancel.cancel();
+    let runtime = create_runtime_from_history(
+        None,
+        runtime_id,
+        scope,
+        focus.as_ref(),
+        scope_project_id,
+        &cwd,
+        &history,
+    )
+    .await?;
+
+    if persist_input_message {
+        save_message(scope, "user", &user_chunks_json).await?;
     }
 
-    let ended = ShepherdEvent::SessionEnded {
-        session_id: session_id.clone(),
+    let cancel = CancellationToken::new();
+    let branch_conclusion = if use_private_branch {
+        let parent_state = runtime.export_state();
+        run_private_branch_turn(
+            None,
+            runtime_id,
+            scope,
+            focus.clone(),
+            &user_turn_text,
+            &user_images_png,
+            cancel.clone(),
+            parent_state,
+        )
+        .await?
+    } else {
+        None
     };
-    app.emit("shepherd-event", (&session_id, &ended))
-        .map_err(|e| format!("failed to emit shepherd session end event: {}", e))?;
-    Ok(())
+
+    let mut turn_items = Vec::new();
+    if let Some(branch_conclusion) = branch_conclusion.as_ref() {
+        turn_items.push(InputItem::Text {
+            text: format!(
+                "Private branch conclusion for this turn. Use it as internal reasoning context only. Do not mention branching, hidden analysis, or this note to the user.\n\n{}",
+                branch_conclusion
+            ),
+        });
+    }
+    turn_items.push(InputItem::Text {
+        text: user_turn_text,
+    });
+    let mut image_blobs = HashMap::new();
+    for (idx, bytes) in user_images_png.into_iter().enumerate() {
+        let id = format!("image-{}", idx + 1);
+        turn_items.push(InputItem::ImageRef { id: id.clone() });
+        image_blobs.insert(id, bytes);
+    }
+
+    let mut runtime = runtime;
+    let turn = runtime
+        .stream_turn(
+            TurnInput {
+                items: turn_items,
+                image_blobs,
+                mode: None,
+            },
+            &SilentLashSink,
+            cancel,
+        )
+        .await
+        .map_err(|e| format!("failed to run shepherd turn: {}", e))?;
+
+    let final_text = ShepherdLashSink::sanitize_assistant_text(&turn.assistant_output.safe_text);
+    let mut assistant_chunks = Vec::new();
+    if !final_text.trim().is_empty() {
+        assistant_chunks.push(ShepherdMessageChunk::Text {
+            content: final_text,
+        });
+    }
+    assistant_chunks.extend(tool_chunks_from_records(&turn.tool_calls));
+
+    if assistant_chunks.is_empty() {
+        tracing::error!("shepherd turn completed without user-visible output");
+        return Err("Shepherd returned no user-visible output for this turn.".to_string());
+    }
+
+    let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
+    save_message(scope, "assistant", &assistant_chunks_json).await?;
+    tracing::info!(
+        chunk_count = assistant_chunks.len(),
+        "shepherd turn completed"
+    );
+    Ok(assistant_chunks)
 }
 
-/// List active Shepherd sessions.
-#[tauri::command]
-pub async fn list_shepherd_sessions() -> Result<Vec<String>, String> {
-    let guard = sessions()
-        .lock()
-        .map_err(|_| "failed to lock Shepherd session map".to_string())?;
-    Ok(guard.keys().cloned().collect())
+#[tracing::instrument(fields(project_id, route_id))]
+pub async fn start_project_sync(
+    project_id: i64,
+    route_id: Option<i64>,
+    refresh: bool,
+) -> Result<StartProjectSyncResponse, String> {
+    let project_store = ProjectStore::open()
+        .await
+        .map_err(|e| format!("failed to open project store: {}", e))?;
+    let project = project_store
+        .get_project(project_id)
+        .await
+        .map_err(|e| format!("failed to load project {}: {}", project_id, e))?;
+    let route = resolve_target_route(project_id, route_id).await?;
+    let result = ensure_sync_project_task(project_id, &route, &project.name, true, refresh)
+        .await
+        .map_err(|e| format!("failed to prepare project sync task: {}", e))?;
+    let state = DeltaState::with_route(project_id, route.id);
+
+    if result.item.status == "working" {
+        tracing::info!("project sync already running");
+        return Ok(StartProjectSyncResponse {
+            route_id: route.id,
+            item: result.item,
+            started: false,
+        });
+    }
+
+    let item = state
+        .start_work_item(&result.item.id)
+        .await
+        .map(WorkItem::from)
+        .map_err(|e| format!("failed to start sync task {}: {}", result.item.id, e))?;
+
+    if let Err(error) = state
+        .record_item_event(
+            &item.id,
+            "channel",
+            "main",
+            "sync_started",
+            "Project sync started.",
+            Some("The backend is surveying the project and updating Hirsel in the background."),
+        )
+        .await
+    {
+        tracing::warn!(%error, item_id = %item.id, "failed to record sync start event");
+    }
+
+    spawn_project_sync_task(project_id, route, item.clone(), result.prompt);
+
+    Ok(StartProjectSyncResponse {
+        route_id: result.route_id,
+        item,
+        started: true,
+    })
+}
+
+pub async fn enqueue_shepherd_message_for_scope(
+    scope: ShepherdScope,
+    content: Option<String>,
+    chunks: Option<Vec<ShepherdMessageChunk>>,
+    focus: Option<ShepherdTaskFocus>,
+) -> Result<EnqueueShepherdMessageResponse, String> {
+    if matches!(scope, ShepherdScope::Branch { .. }) {
+        return Err("Branch scopes cannot accept durable user-facing messages".to_string());
+    }
+
+    let user_chunks = build_user_chunks(content, chunks)?;
+    let chunks_json = chunks_to_json(&user_chunks)?;
+    let focus_json = focus
+        .as_ref()
+        .map(|value| {
+            serde_json::to_string(value).map_err(|e| format!("failed to serialize focus: {}", e))
+        })
+        .transpose()?;
+    let store = ShepherdChatStore::open()
+        .await
+        .map_err(|e| format!("failed to open shepherd chat store: {}", e))?;
+    let (project_id, runtime_name) = scope_storage_ids(&scope);
+    store
+        .enqueue_turn(
+            project_id,
+            runtime_name,
+            &chunks_json,
+            focus_json.as_deref(),
+        )
+        .await
+        .map_err(|e| format!("failed to enqueue shepherd message: {}", e))?;
+    kick_scope_queue_processor(scope.clone())?;
+    let queue_items = load_scope_queue(&scope).await?;
+
+    Ok(EnqueueShepherdMessageResponse {
+        queued: true,
+        queue_depth: queue_items
+            .iter()
+            .filter(|item| item.status == "pending")
+            .count(),
+    })
+}
+
+pub async fn get_shepherd_queue(scope: ShepherdScope) -> Result<ShepherdQueueState, String> {
+    let items = load_scope_queue(&scope).await?;
+    let has_active_turn = items.iter().any(|item| item.status == "working");
+    Ok(ShepherdQueueState {
+        items,
+        has_active_turn,
+    })
 }
 
 /// Get Shepherd chat history for the requested scope.
-#[tauri::command]
 pub async fn get_shepherd_history(
     scope: ShepherdScope,
     limit: usize,
@@ -714,24 +784,4 @@ pub async fn get_shepherd_history(
         ShepherdScope::Project { .. } => messages,
         _ => messages.into_iter().take(limit).collect(),
     })
-}
-
-/// Clear Shepherd history for the requested scope.
-#[tauri::command]
-pub async fn clear_shepherd_history(scope: ShepherdScope) -> Result<(), String> {
-    clear_scope_messages(&scope).await
-}
-
-/// Save a Shepherd message chunk payload.
-#[tauri::command]
-pub async fn save_shepherd_message(
-    scope: ShepherdScope,
-    role: String,
-    chunks_json: String,
-) -> Result<i64, String> {
-    let chunks: Vec<ShepherdMessageChunk> =
-        serde_json::from_str(&chunks_json).map_err(|e| format!("invalid chunk payload: {}", e))?;
-    validate_chunks(&chunks)?;
-    let normalized = chunks_to_json(&chunks)?;
-    save_message(&scope, &role, &normalized).await
 }

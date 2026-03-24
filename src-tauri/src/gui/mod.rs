@@ -1,7 +1,7 @@
 //! GUI module for Tauri IPC commands
 //!
-//! This module provides the bridge between the frontend (SolidJS/TypeScript)
-//! and the backend (Rust). All commands are exposed via Tauri's IPC system.
+//! This module provides the tiny bridge between the desktop wrapper and the
+//! backend. The product UI itself is served by the backend over HTTP/SSE.
 
 pub mod commands;
 pub mod error;

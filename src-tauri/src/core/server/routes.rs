@@ -18,7 +18,6 @@ use crate::core::orchestrator::{
     DeliverRunRequest, HealthResponse, Orchestrator, OrchestratorError, ResumeRunRequest,
     ResumeWorkerRequest, SpawnSingleWorkerRequest,
 };
-
 /// Convert OrchestratorError to HTTP response
 impl IntoResponse for OrchestratorError {
     fn into_response(self) -> axum::response::Response {
@@ -34,7 +33,7 @@ impl IntoResponse for OrchestratorError {
 }
 
 #[derive(Serialize)]
-struct ErrorResponse {
+pub struct ErrorResponse {
     error: String,
 }
 

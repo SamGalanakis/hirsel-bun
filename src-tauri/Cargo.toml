@@ -12,10 +12,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # Default: GUI
 default = ["gui"]
 
-# GUI (Tauri desktop app, includes the embedded backend runtime)
+# GUI (Tauri desktop shell that loads the backend-served web app)
 gui = [
     "dep:tauri",
-    "dep:tauri-plugin-log",
     "dep:tauri-plugin-single-instance",
     "dep:rfd",
     "tauri-build",
@@ -33,7 +32,7 @@ worker = ["dep:axum", "dep:tower-http"]
 s3-storage = ["dep:aws-sdk-s3", "dep:aws-config", "dep:tempfile"]
 
 # Development features (debug logging, etc.)
-dev = ["dep:tracing-subscriber"]
+dev = []
 
 # Profiling (tracing-chrome output for Perfetto UI)
 profiling = ["dev", "dep:tracing-chrome"]
@@ -45,7 +44,6 @@ chrono = "0.4"
 [dependencies]
 # === GUI dependencies (feature-gated) ===
 tauri = { version = "2", features = ["protocol-asset"], optional = true }
-tauri-plugin-log = { version = "2", optional = true }
 tauri-plugin-single-instance = { version = "2", optional = true }
 rfd = { version = "0.17", optional = true }
 
@@ -64,6 +62,7 @@ thiserror = "2"
 git2 = { version = "0.20", features = ["vendored-libgit2"] }
 dirs = "6"
 tracing = "0.1"
+tracing-appender = "0.2"
 regex = "1"
 toml = "0.9"
 clap = { version = "4", features = ["derive"] }
@@ -80,6 +79,8 @@ async-trait = "0.1"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.9.2"
 reqwest = { version = "0.13", features = ["json", "stream"] }
+maud = { version = "0.27", features = ["axum"] }
+datastar = { version = "0.3.1", features = ["axum", "tracing"] }
 urlencoding = "2"
 serde_urlencoded = "0.7"
 flate2 = "1"
@@ -96,8 +97,8 @@ aws-sdk-s3 = { version = "1", optional = true }
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
 tempfile = { version = "3", optional = true }
 
-# Development/debugging (feature-gated)
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"], optional = true }
+# Development/debugging
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
 tracing-chrome = { version = "0.7", optional = true }
 
 [dev-dependencies]

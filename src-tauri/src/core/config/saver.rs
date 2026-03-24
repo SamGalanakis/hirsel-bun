@@ -34,6 +34,10 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
         config.context_warning_threshold
     ));
     output.push_str(&format!("coordinator_port = {}\n", config.coordinator_port));
+    output.push_str(&format!(
+        "scribe_batch_window_seconds = {}\n",
+        config.scribe_batch_window_seconds
+    ));
     output.push('\n');
 
     // Backend connection

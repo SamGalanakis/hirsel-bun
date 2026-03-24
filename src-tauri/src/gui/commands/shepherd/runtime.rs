@@ -1,99 +1,15 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 
-use lash::{AgentEvent, EventSink, PromptOverrideMode, PromptSectionName, PromptSectionOverride};
-use serde::Serialize;
-use tauri::Emitter;
-use tokio::sync::Mutex;
-use tracing::warn;
+use lash::{PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 
 use super::history::{chunk_image_count, chunk_text};
-use super::types::{
-    ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus, StartShepherdSessionRequest,
-};
+use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::core::{ProjectStore, RouteFiles, RouteStore};
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub(super) enum ShepherdEvent {
-    TextDelta {
-        session_id: String,
-        text: String,
-    },
-    ToolCallStart {
-        session_id: String,
-        tool_call_id: String,
-        title: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        kind: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        input: Option<String>,
-    },
-    ToolCallUpdate {
-        session_id: String,
-        tool_call_id: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        title: Option<String>,
-        status: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        output: Option<String>,
-    },
-    Error {
-        session_id: String,
-        message: String,
-    },
-    MessageComplete {
-        session_id: String,
-    },
-    TokenUsage {
-        session_id: String,
-        input_tokens: i64,
-        output_tokens: i64,
-        cached_tokens: i64,
-    },
-    SessionEnded {
-        session_id: String,
-    },
-}
-
-#[derive(Default)]
-pub(super) struct AssistantDraft {
-    pub text: String,
-    pub thinking: String,
-    pub tools: Vec<ShepherdMessageChunk>,
-    pub runtime_output: String,
-    pub errored: bool,
-}
-
-pub(super) struct ShepherdLashSink {
-    app: tauri::AppHandle,
-    session_id: String,
-    tool_seq: AtomicU64,
-    draft: Arc<Mutex<AssistantDraft>>,
-}
+pub(super) struct ShepherdLashSink;
 
 impl ShepherdLashSink {
-    pub(super) fn new(
-        app: tauri::AppHandle,
-        session_id: String,
-        draft: Arc<Mutex<AssistantDraft>>,
-    ) -> Self {
-        Self {
-            app,
-            session_id,
-            draft,
-            tool_seq: AtomicU64::new(1),
-        }
-    }
-
-    fn emit(&self, event: &ShepherdEvent) {
-        if let Err(e) = self.app.emit("shepherd-event", (&self.session_id, event)) {
-            warn!("failed to emit shepherd-event: {}", e);
-        }
-    }
-
-    fn tool_title_kind(name: &str) -> (String, Option<String>) {
+    pub(super) fn tool_title_kind(name: &str) -> (String, Option<String>) {
         match name {
             "list_routes" => ("Routes".to_string(), Some("search".to_string())),
             "fork_route" => ("Fork Route".to_string(), Some("execute".to_string())),
@@ -171,138 +87,6 @@ impl ShepherdLashSink {
         } else {
             out
         }
-    }
-}
-
-#[async_trait::async_trait]
-impl EventSink for ShepherdLashSink {
-    async fn emit(&self, event: AgentEvent) {
-        match event {
-            AgentEvent::TextDelta { content } => {
-                let sanitized = Self::sanitize_assistant_text(&content);
-                if sanitized.is_empty() {
-                    return;
-                }
-                let mut draft = self.draft.lock().await;
-                draft.text.push_str(&sanitized);
-            }
-            AgentEvent::CodeBlock { code } => {
-                let _ = code;
-            }
-            AgentEvent::CodeOutput { output, error } => {
-                let mut draft = self.draft.lock().await;
-                if !output.trim().is_empty() {
-                    if !draft.runtime_output.is_empty() {
-                        draft.runtime_output.push('\n');
-                    }
-                    draft.runtime_output.push_str(&output);
-                }
-                if let Some(err) = error {
-                    if !err.trim().is_empty() {
-                        if !draft.runtime_output.is_empty() {
-                            draft.runtime_output.push('\n');
-                        }
-                        draft
-                            .runtime_output
-                            .push_str(&format!("Runtime error: {}", err));
-                    }
-                }
-            }
-            AgentEvent::ToolCall {
-                name,
-                args,
-                result,
-                success,
-                ..
-            } => {
-                let tool_call_id = format!(
-                    "shepherd-tool-{}",
-                    self.tool_seq.fetch_add(1, Ordering::Relaxed)
-                );
-                let (title, kind) = Self::tool_title_kind(&name);
-                let input = serde_json::to_string(&args).ok();
-                let output = serde_json::to_string(&result).ok();
-
-                self.emit(&ShepherdEvent::ToolCallStart {
-                    session_id: self.session_id.clone(),
-                    tool_call_id: tool_call_id.clone(),
-                    title: title.clone(),
-                    kind: kind.clone(),
-                    input: input.clone(),
-                });
-
-                let status = if success { "completed" } else { "failed" }.to_string();
-                self.emit(&ShepherdEvent::ToolCallUpdate {
-                    session_id: self.session_id.clone(),
-                    tool_call_id: tool_call_id.clone(),
-                    title: Some(title.clone()),
-                    status: status.clone(),
-                    output: output.clone(),
-                });
-
-                let mut draft = self.draft.lock().await;
-                draft.tools.push(ShepherdMessageChunk::Tool {
-                    id: tool_call_id,
-                    title,
-                    kind,
-                    status,
-                    input,
-                    output,
-                });
-            }
-            AgentEvent::Message { text, kind } => {
-                if kind == "final" {
-                    let sanitized_final = Self::sanitize_assistant_text(&text);
-                    let mut draft = self.draft.lock().await;
-                    if draft.text.trim().is_empty() && !sanitized_final.trim().is_empty() {
-                        draft.text.push_str(sanitized_final.trim());
-                    }
-                }
-            }
-            AgentEvent::Error { message, .. } => {
-                self.emit(&ShepherdEvent::Error {
-                    session_id: self.session_id.clone(),
-                    message: message.clone(),
-                });
-                let mut draft = self.draft.lock().await;
-                draft.errored = true;
-            }
-            AgentEvent::TokenUsage { usage, .. } => {
-                self.emit(&ShepherdEvent::TokenUsage {
-                    session_id: self.session_id.clone(),
-                    input_tokens: usage.input_tokens,
-                    output_tokens: usage.output_tokens,
-                    cached_tokens: usage.cached_input_tokens,
-                });
-            }
-            AgentEvent::Prompt { .. }
-            | AgentEvent::LlmRequest { .. }
-            | AgentEvent::LlmResponse { .. }
-            | AgentEvent::RetryStatus { .. }
-            | AgentEvent::InjectedMessagesCommitted { .. }
-            | AgentEvent::PluginEvent { .. }
-            | AgentEvent::Done => {}
-        }
-    }
-}
-
-pub(super) fn build_scope(request: StartShepherdSessionRequest) -> ShepherdScope {
-    match request {
-        StartShepherdSessionRequest::General => ShepherdScope::General,
-        StartShepherdSessionRequest::Project { project_id } => ShepherdScope::Project {
-            project_id,
-            workspace_path: None,
-            focus: None,
-        },
-        StartShepherdSessionRequest::ProjectFocused {
-            project_id,
-            task_id,
-            task_name,
-        } => ShepherdScope::Project {
-            project_id,
-            workspace_path: None,
-            focus: Some(ShepherdTaskFocus { task_id, task_name }),
-        },
     }
 }
 
@@ -422,29 +206,6 @@ pub(super) fn looks_like_runtime_traceback(text: &str) -> bool {
         || t.contains("Runtime error:")
         || t.contains("NameError:")
         || t.contains("File \"repl_")
-}
-
-pub(super) fn build_assistant_chunks(
-    draft: &AssistantDraft,
-    final_text: &str,
-) -> Vec<ShepherdMessageChunk> {
-    let mut chunks = Vec::new();
-
-    if !draft.thinking.trim().is_empty() {
-        chunks.push(ShepherdMessageChunk::Thinking {
-            content: draft.thinking.clone(),
-        });
-    }
-
-    let sanitized_text = ShepherdLashSink::sanitize_assistant_text(final_text);
-    if !sanitized_text.trim().is_empty() {
-        chunks.push(ShepherdMessageChunk::Text {
-            content: sanitized_text,
-        });
-    }
-
-    chunks.extend(draft.tools.clone());
-    chunks
 }
 
 pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i64> {

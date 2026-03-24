@@ -37,12 +37,30 @@ pub struct UnreadNotificationsResponse {
     pub total_runs_with_unread: u32,
 }
 
+/// Agent model overrides for update requests
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentModelOverridesUpdate {
+    #[serde(default)]
+    pub low: Option<String>,
+    #[serde(default)]
+    pub medium: Option<String>,
+    #[serde(default)]
+    pub high: Option<String>,
+}
+
 /// LLM config update request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmConfigUpdate {
     pub provider: Option<LlmProviderResponse>,
     pub openrouter_base_url: Option<Option<String>>,
+    #[serde(default)]
+    pub model: Option<Option<String>>,
+    #[serde(default)]
+    pub model_variant: Option<Option<String>>,
+    #[serde(default)]
+    pub agent_models: Option<Option<AgentModelOverridesUpdate>>,
 }
 
 impl LlmConfigUpdate {
@@ -57,6 +75,45 @@ impl LlmConfigUpdate {
                     None
                 } else {
                     Some(trimmed.to_string())
+                }
+            });
+        }
+        if let Some(model) = self.model {
+            target.model = model.and_then(|v| {
+                let trimmed = v.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+        }
+        if let Some(variant) = self.model_variant {
+            target.model_variant = variant.and_then(|v| {
+                let trimmed = v.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            });
+        }
+        if let Some(agent_models) = self.agent_models {
+            target.agent_models = agent_models.map(|am| {
+                let clean = |v: Option<String>| {
+                    v.and_then(|s| {
+                        let t = s.trim();
+                        if t.is_empty() {
+                            None
+                        } else {
+                            Some(t.to_string())
+                        }
+                    })
+                };
+                config::AgentModelOverrides {
+                    low: clean(am.low),
+                    medium: clean(am.medium),
+                    high: clean(am.high),
                 }
             });
         }

@@ -12,6 +12,7 @@ mod auth;
 pub mod eval_routes;
 pub mod routes;
 pub mod shared_routes;
+pub mod web_routes;
 pub mod worker_routes;
 
 use std::sync::Arc;
@@ -25,6 +26,7 @@ use crate::core::orchestrator::LocalOrchestrator;
 /// Application state shared across routes
 pub struct AppState {
     pub orchestrator: LocalOrchestrator,
+    pub api_key: String,
     /// Mutable config for API updates
     pub config: Arc<RwLock<Config>>,
 }
@@ -46,11 +48,13 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     let config = Arc::new(RwLock::new(config));
     let state = Arc::new(AppState {
         orchestrator,
+        api_key: api_key.clone(),
         config,
     });
     // Build the router using shared route builders.
     // Remote server gets the shared runtime routes plus backend config/auth routes.
-    let app = shared_routes::build_shared_routes()
+    let app = shared_routes::build_web_routes()
+        .merge(shared_routes::build_shared_routes())
         .merge(shared_routes::build_config_routes())
         .with_state(state)
         // Apply auth middleware

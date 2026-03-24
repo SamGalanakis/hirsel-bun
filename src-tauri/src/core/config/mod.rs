@@ -41,7 +41,7 @@ fn block_on<F: Future>(f: F) -> F::Output {
 // Re-export all public types
 pub use agent::AgentConfig;
 pub use lash::McpServerConfig;
-pub use llm::{LlmConfig, LlmProvider};
+pub use llm::{AgentModelOverrides, LlmConfig, LlmProvider};
 pub use orchestrator::BackendConfig;
 pub use paths::{
     global_db_path, hirsel_dir, project_assets_dir, runtime_dir, runtime_exists, runtimes_dir,
@@ -258,6 +258,9 @@ impl Config {
         }
         if let Some(coordinator_port) = partial.coordinator_port {
             self.coordinator_port = coordinator_port;
+        }
+        if let Some(scribe_batch_window_seconds) = partial.scribe_batch_window_seconds {
+            self.scribe_batch_window_seconds = scribe_batch_window_seconds;
         }
         if let Some(llm) = partial.llm {
             self.llm = llm;

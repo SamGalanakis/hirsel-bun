@@ -3,1791 +3,341 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hirsel Interaction Architecture</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <title>Hirsel Architecture</title>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "dark" });
+  </script>
   <style>
-    @font-face {
-      font-family: 'ET Book';
-      src: url('../public/fonts/et-book-roman-line-figures.woff') format('woff');
-      font-weight: 400;
-      font-style: normal;
-      font-display: swap;
-    }
-
-    @font-face {
-      font-family: 'ET Book';
-      src: url('../public/fonts/et-book-bold-line-figures.woff') format('woff');
-      font-weight: 700;
-      font-style: normal;
-      font-display: swap;
-    }
-
-    @font-face {
-      font-family: 'ET Book';
-      src: url('../public/fonts/et-book-display-italic-old-style-figures.woff') format('woff');
-      font-weight: 400;
-      font-style: italic;
-      font-display: swap;
-    }
-
     :root {
-      --font-body: 'ET Book', Georgia, serif;
-      --font-mono: 'JetBrains Mono', 'SF Mono', Consolas, monospace;
-
-      --bg: #181715;
-      --bg-deep: #12110f;
-      --surface: rgba(36, 33, 29, 0.94);
-      --surface-elevated: rgba(44, 40, 36, 0.96);
-      --surface-soft: rgba(58, 52, 47, 0.7);
-      --border: rgba(232, 228, 223, 0.10);
-      --border-bright: rgba(232, 228, 223, 0.18);
-      --text: #ece6df;
-      --text-dim: #b8aea2;
-
-      --amber: #d4a574;
-      --amber-dim: rgba(212, 165, 116, 0.15);
-      --sage: #8daa7d;
-      --sage-dim: rgba(141, 170, 125, 0.14);
-      --terra: #c9826c;
-      --terra-dim: rgba(201, 130, 108, 0.14);
-      --sky: #8fb5c7;
-      --sky-dim: rgba(143, 181, 199, 0.14);
-      --wool: #f6efe7;
+      --bg: #111111;
+      --panel: #1a1a1a;
+      --panel-2: #202020;
+      --border: #303030;
+      --text: #ece7dc;
+      --muted: #aaa397;
+      --accent: #d6b05d;
+      --green: #95b67c;
+      --blue: #8eb2c7;
+      --red: #c9826c;
     }
-
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg: #f6f0e9;
-        --bg-deep: #efe7df;
-        --surface: rgba(255, 252, 248, 0.92);
-        --surface-elevated: rgba(255, 255, 255, 0.96);
-        --surface-soft: rgba(240, 231, 223, 0.86);
-        --border: rgba(49, 40, 32, 0.10);
-        --border-bright: rgba(49, 40, 32, 0.18);
-        --text: #2f241d;
-        --text-dim: #74675d;
-
-        --amber: #b6763f;
-        --amber-dim: rgba(182, 118, 63, 0.12);
-        --sage: #5f7d50;
-        --sage-dim: rgba(95, 125, 80, 0.12);
-        --terra: #a85f4a;
-        --terra-dim: rgba(168, 95, 74, 0.12);
-        --sky: #547f98;
-        --sky-dim: rgba(84, 127, 152, 0.12);
-        --wool: #fffaf5;
-      }
-    }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    html { scroll-behavior: smooth; }
-
+    * { box-sizing: border-box; }
     body {
-      min-height: 100vh;
-      font-family: var(--font-body);
-      color: var(--text);
+      margin: 0;
+      font-family: "Inter", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at 14% 14%, var(--amber-dim), transparent 24%),
-        radial-gradient(circle at 84% 18%, var(--sage-dim), transparent 24%),
-        radial-gradient(circle at 72% 88%, var(--sky-dim), transparent 28%),
-        linear-gradient(180deg, var(--bg), var(--bg-deep));
-      padding: 30px 34px 54px;
-      overflow-wrap: break-word;
+        radial-gradient(circle at top, rgba(214, 176, 93, 0.08), transparent 28%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.55;
     }
-
-    a {
-      color: var(--amber);
-      text-decoration-color: color-mix(in srgb, var(--amber) 56%, transparent);
-      text-underline-offset: 2px;
-    }
-
-    code {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 999px;
-      background: var(--amber-dim);
-      color: var(--amber);
-    }
-
     .wrap {
-      max-width: 1440px;
+      max-width: 1180px;
       margin: 0 auto;
-      display: grid;
-      grid-template-columns: 190px minmax(0, 1fr);
-      gap: 0 34px;
+      padding: 32px 20px 72px;
     }
-
-    .main { min-width: 0; }
-
-    .toc {
-      position: sticky;
-      top: 18px;
-      align-self: start;
-      padding-top: 10px;
-      max-height: calc(100dvh - 36px);
-      overflow-y: auto;
-    }
-
-    .toc-title {
-      margin-bottom: 12px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid var(--border);
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-    }
-
-    .toc a {
-      display: block;
-      margin-bottom: 4px;
-      padding: 7px 9px;
-      border-left: 2px solid transparent;
-      border-radius: 7px;
-      color: var(--text-dim);
-      text-decoration: none;
-      font-size: 11px;
-      transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
-    }
-
-    .toc a:hover {
-      color: var(--text);
-      background: var(--surface-soft);
-    }
-
-    .toc a.active {
-      color: var(--text);
-      border-left-color: var(--amber);
-      background: color-mix(in srgb, var(--surface-soft) 85%, transparent);
-    }
-
-    .hero {
-      margin-bottom: 24px;
-      padding: 28px 30px;
+    .hero, section, .card {
+      background: rgba(26, 26, 26, 0.92);
+      border: 1px solid var(--border);
       border-radius: 18px;
-      border: 1px solid color-mix(in srgb, var(--border) 55%, var(--amber) 45%);
-      background:
-        linear-gradient(160deg, color-mix(in srgb, var(--surface-elevated) 88%, var(--amber-dim) 12%), var(--surface)),
-        var(--surface);
-      box-shadow: 0 20px 46px rgba(0, 0, 0, 0.18);
-      animation: fade-up 420ms ease both;
     }
-
+    .hero {
+      padding: 28px;
+      margin-bottom: 20px;
+    }
     .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-      color: var(--amber);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 0.14em;
+      color: var(--accent);
       text-transform: uppercase;
-    }
-
-    .eyebrow::before {
-      content: '';
-      width: 9px;
-      height: 9px;
-      border-radius: 999px;
-      background: currentColor;
-      box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 22%, transparent);
-    }
-
-    h1 {
-      max-width: 980px;
+      letter-spacing: 0.18em;
+      font-size: 12px;
       margin-bottom: 10px;
-      font-size: clamp(34px, 5vw, 60px);
-      line-height: 0.95;
-      letter-spacing: -0.05em;
-      text-wrap: balance;
     }
-
-    .subtitle {
-      max-width: 940px;
-      color: var(--text-dim);
-      font-size: 17px;
-      line-height: 1.65;
-    }
-
-    .hero-meta {
-      margin-top: 18px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-
-    .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      background: rgba(255, 255, 255, 0.02);
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .badge::before {
-      content: '';
-      width: 7px;
-      height: 7px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .badge.target { color: var(--amber); background: var(--amber-dim); }
-    .badge.current { color: var(--sage); background: var(--sage-dim); }
-    .badge.hybrid { color: var(--sky); background: var(--sky-dim); }
-
-    .kpis {
-      margin-top: 18px;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .kpi {
-      min-width: 0;
-      padding: 14px 16px;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface) 82%, transparent);
-      backdrop-filter: blur(8px);
-    }
-
-    .kpi .n {
-      margin-bottom: 4px;
-      color: var(--wool);
-      font-family: var(--font-mono);
-      font-size: 21px;
-      font-weight: 700;
-    }
-
-    .kpi .t {
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-
-    .section {
-      margin-top: 26px;
-      scroll-margin-top: 58px;
-      animation: fade-up 420ms ease both;
-    }
-
-    .section-label {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 12px;
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      letter-spacing: 0.14em;
-      text-transform: uppercase;
-    }
-
-    .section-label::before {
-      content: '';
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .section h2 {
-      margin-bottom: 10px;
-      font-size: clamp(28px, 3.5vw, 40px);
-      letter-spacing: -0.04em;
-      line-height: 1;
-    }
-
-    .section-intro {
-      max-width: 980px;
-      margin-bottom: 16px;
-      color: var(--text-dim);
-      font-size: 16px;
-      line-height: 1.72;
-    }
-
-    .ve-card {
-      min-width: 0;
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      background: var(--surface);
-      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.12);
-    }
-
-    .ve-card--hero {
-      background:
-        linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 88%, var(--amber-dim) 12%), var(--surface));
-      border-color: color-mix(in srgb, var(--border) 60%, var(--amber) 40%);
-    }
-
-    .ve-card--soft {
-      background: color-mix(in srgb, var(--surface) 88%, var(--surface-soft) 12%);
-    }
-
-    .ve-card--recessed {
-      background: color-mix(in srgb, var(--surface) 76%, var(--bg-deep) 24%);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-    }
-
-    .ve-card__head {
-      padding: 16px 18px 0;
-    }
-
-    .ve-card__label {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      color: var(--amber);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-
-    .ve-card__label::before {
-      content: '';
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .ve-card__body {
-      padding: 14px 18px 18px;
-    }
-
-    .ve-card h3 {
-      margin-bottom: 8px;
-      font-size: 18px;
-      letter-spacing: -0.02em;
-    }
-
-    .ve-card p {
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.66;
-    }
-
+    h1, h2, h3 { margin: 0 0 10px; }
+    h1 { font-size: 44px; line-height: 1; }
+    h2 { font-size: 24px; }
+    p, li { color: var(--muted); }
     .grid {
       display: grid;
-      gap: 14px;
-    }
-
-    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-
-    .blueprint {
-      padding: 18px;
-      border-radius: 20px;
-      border: 1px solid color-mix(in srgb, var(--border) 65%, var(--sky) 35%);
-      background:
-        linear-gradient(180deg, color-mix(in srgb, var(--surface-elevated) 86%, var(--sky-dim) 14%), var(--surface));
-    }
-
-    .app-frame {
-      border: 1px solid var(--border-bright);
-      border-radius: 20px;
-      overflow: hidden;
-      background: color-mix(in srgb, var(--surface) 86%, transparent);
-      box-shadow: 0 18px 44px rgba(0, 0, 0, 0.22);
-    }
-
-    .frame-top {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      padding: 12px 16px;
-      border-bottom: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
-      font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--text-dim);
-    }
-
-    .window-dots {
-      display: flex;
-      gap: 7px;
-    }
-
-    .window-dots span {
-      width: 10px;
-      height: 10px;
-      border-radius: 999px;
-      background: color-mix(in srgb, var(--text-dim) 30%, transparent);
-    }
-
-    .workspace {
-      display: grid;
-      grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.6fr);
-      min-height: 620px;
-    }
-
-    .pane {
-      min-width: 0;
-    }
-
-    .shepherd-pane {
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-      padding: 18px;
-      border-right: 1px solid var(--border);
-      background:
-        linear-gradient(180deg, color-mix(in srgb, var(--surface) 90%, var(--amber-dim) 10%), color-mix(in srgb, var(--surface) 84%, var(--bg-deep) 16%));
-    }
-
-    .pane-heading {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--text-dim);
-    }
-
-    .pane-title {
-      margin-bottom: 8px;
-      font-size: 24px;
-      letter-spacing: -0.03em;
-    }
-
-    .chat-stack,
-    .route-stack,
-    .mini-grid,
-    .chips {
-      display: grid;
-      gap: 10px;
-    }
-
-    .msg,
-    .mini-card,
-    .route-card,
-    .toggle-card {
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface-soft) 72%, transparent);
-    }
-
-    .msg {
-      padding: 12px 13px;
-    }
-
-    .msg .who,
-    .mini-card .tag,
-    .route-card .tag,
-    .toggle-card .tag {
-      margin-bottom: 6px;
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--amber);
-    }
-
-    .msg p,
-    .mini-card p,
-    .route-card p,
-    .toggle-card p {
-      font-size: 14px;
-      line-height: 1.6;
-      color: var(--text-dim);
-    }
-
-    .msg.user .who { color: var(--sky); }
-    .msg.assistant .who { color: var(--amber); }
-
-    .composer {
-      margin-top: auto;
-      padding: 12px 13px;
-      border-radius: 16px;
-      border: 1px solid color-mix(in srgb, var(--border) 55%, var(--amber) 45%);
-      background: color-mix(in srgb, var(--surface) 88%, transparent);
-    }
-
-    .composer .row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      font-family: var(--font-mono);
-      font-size: 10px;
-      color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-    }
-
-    .composer .input {
-      margin-top: 10px;
-      padding: 11px 12px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: color-mix(in srgb, var(--bg-deep) 36%, var(--surface) 64%);
-      color: var(--text-dim);
-      font-size: 14px;
-    }
-
-    .route-pane {
-      display: grid;
-      grid-template-rows: auto auto minmax(0, 1fr);
-      gap: 12px;
-      padding: 18px;
-      background:
-        linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, var(--sage-dim) 8%), color-mix(in srgb, var(--surface) 86%, var(--bg-deep) 14%));
-    }
-
-    .route-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 12px 14px;
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      background: color-mix(in srgb, var(--surface-soft) 78%, transparent);
-    }
-
-    .route-toolbar .title {
-      font-family: var(--font-mono);
-      font-size: 11px;
-      color: var(--text-dim);
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-
-    .toggle {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 10px;
-      border-radius: 999px;
-      border: 1px solid color-mix(in srgb, var(--border) 60%, var(--terra) 40%);
-      background: var(--terra-dim);
-      color: var(--terra);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .toggle::before {
-      content: '';
-      width: 8px;
-      height: 8px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .route-header {
-      display: grid;
-      grid-template-columns: 1.3fr 0.7fr;
-      gap: 12px;
-    }
-
-    .route-header .ve-card {
-      height: 100%;
-    }
-
-    .route-stack {
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      align-content: start;
+      gap: 16px;
+      margin-top: 16px;
     }
-
-    .route-card,
-    .mini-card,
-    .toggle-card {
-      padding: 12px 13px;
+    .card, section {
+      padding: 22px;
+      margin-bottom: 16px;
     }
-
-    .route-card ul,
-    .toggle-card ul {
-      margin-top: 8px;
-      list-style: none;
-      color: var(--text-dim);
-      font-size: 13px;
-      line-height: 1.7;
-    }
-
-    .route-card li,
-    .toggle-card li {
-      position: relative;
-      padding-left: 14px;
-    }
-
-    .route-card li::before,
-    .toggle-card li::before {
-      content: '›';
-      position: absolute;
-      left: 0;
-      color: var(--text-dim);
-    }
-
-    .mini-grid {
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-    }
-
-    .mini-card .tag { color: var(--sage); }
-    .toggle-card .tag { color: var(--terra); }
-
-    .blueprint-notes {
-      margin-top: 14px;
+    .three {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
+      gap: 16px;
     }
-
-    .note {
-      padding: 12px 13px;
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface-soft) 74%, transparent);
+    code {
+      background: #262626;
+      border: 1px solid #343434;
+      padding: 2px 6px;
+      border-radius: 999px;
+      color: var(--accent);
+      font-size: 0.95em;
     }
-
-    .note h4 {
-      margin-bottom: 6px;
-      font-size: 15px;
-    }
-
-    .note p {
-      color: var(--text-dim);
-      font-size: 13px;
-      line-height: 1.65;
-    }
-
-    .flow {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 10px;
-      align-items: stretch;
-    }
-
-    .step {
-      padding: 14px 15px;
-      border-radius: 16px;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.12);
-      min-height: 170px;
-    }
-
-    .step .idx {
-      margin-bottom: 8px;
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-    }
-
-    .step h3 {
-      margin-bottom: 7px;
-      font-size: 17px;
-    }
-
-    .step p {
-      color: var(--text-dim);
-      font-size: 13px;
-      line-height: 1.62;
-    }
-
-    .flow-arrow {
+    ul { margin: 0; padding-left: 18px; }
+    .pillrow {
       display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 170px;
-      color: color-mix(in srgb, var(--amber) 65%, var(--text-dim) 35%);
-      font-family: var(--font-mono);
-      font-size: 20px;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
     }
-
-    .legend {
-      display: grid;
-      grid-template-columns: repeat(5, minmax(0, 1fr));
-      gap: 12px;
-    }
-
-    .legend .ve-card__label { color: var(--sage); }
-    .legend .ve-card:nth-child(2) .ve-card__label { color: var(--amber); }
-    .legend .ve-card:nth-child(3) .ve-card__label { color: var(--sky); }
-    .legend .ve-card:nth-child(4) .ve-card__label { color: var(--terra); }
-    .legend .ve-card:nth-child(5) .ve-card__label { color: var(--amber); }
-
-    .matrix {
-      overflow: auto;
-      border-radius: 18px;
+    .pill {
       border: 1px solid var(--border);
-      background: var(--surface);
-      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.12);
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: var(--muted);
+      font-size: 12px;
     }
-
+    .callout {
+      border-left: 3px solid var(--accent);
+      padding-left: 14px;
+      margin-top: 14px;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 13px;
+      margin-top: 10px;
     }
-
-    thead th {
-      position: sticky;
-      top: 0;
-      padding: 12px 14px;
-      border-bottom: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface-soft) 88%, transparent);
-      color: var(--text-dim);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.1em;
-      text-align: left;
-      text-transform: uppercase;
-      vertical-align: top;
-    }
-
-    tbody td {
-      padding: 14px;
+    th, td {
       border-top: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
       vertical-align: top;
-      color: var(--text-dim);
-      line-height: 1.64;
     }
-
-    tbody tr:nth-child(even) {
-      background: color-mix(in srgb, var(--surface) 88%, var(--surface-soft) 12%);
-    }
-
-    .status {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 8px;
-      border-radius: 999px;
-      border: 1px solid transparent;
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      white-space: nowrap;
-    }
-
-    .status::before {
-      content: '';
-      width: 7px;
-      height: 7px;
-      border-radius: 999px;
-      background: currentColor;
-    }
-
-    .status.current {
-      color: var(--sage);
-      background: var(--sage-dim);
-      border-color: color-mix(in srgb, var(--sage) 30%, transparent);
-    }
-
-    .status.target {
-      color: var(--amber);
-      background: var(--amber-dim);
-      border-color: color-mix(in srgb, var(--amber) 30%, transparent);
-    }
-
-    .status.bridge {
-      color: var(--sky);
-      background: var(--sky-dim);
-      border-color: color-mix(in srgb, var(--sky) 30%, transparent);
-    }
-
-    .callout {
-      margin-top: 14px;
-      padding: 14px 16px;
-      border: 1px solid color-mix(in srgb, var(--border) 58%, var(--amber) 42%);
-      border-left: 3px solid var(--amber);
-      border-radius: 0 16px 16px 0;
-      background: color-mix(in srgb, var(--surface-soft) 84%, transparent);
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-
-    .details-stack {
-      display: grid;
-      gap: 14px;
-      margin-top: 18px;
-    }
-
-    .reference-details {
+    th { color: var(--text); }
+    .ok { color: var(--green); }
+    .warn { color: var(--accent); }
+    .danger { color: var(--red); }
+    .mermaid {
+      background: var(--panel-2);
       border: 1px solid var(--border);
-      border-radius: 18px;
-      background: var(--surface);
-      box-shadow: 0 14px 30px rgba(0, 0, 0, 0.12);
-      overflow: hidden;
-    }
-
-    .reference-details summary {
-      cursor: pointer;
-      list-style: none;
-      padding: 16px 18px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      font-family: var(--font-mono);
-      font-size: 11px;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--text-dim);
-      background: color-mix(in srgb, var(--surface-soft) 82%, transparent);
-    }
-
-    .reference-details summary::-webkit-details-marker { display: none; }
-
-    .reference-details summary::after {
-      content: '+';
-      color: var(--amber);
-      font-size: 16px;
-      line-height: 1;
-    }
-
-    .reference-details[open] summary::after {
-      content: '−';
-    }
-
-    .reference-details .details-body {
-      padding: 18px;
-      display: grid;
-      gap: 16px;
-    }
-
-    .details-lead {
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-
-    .subhead {
-      margin-bottom: 10px;
-      color: var(--amber);
-      font-family: var(--font-mono);
-      font-size: 10px;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }
-
-    .compact-card {
-      padding: 14px 15px;
       border-radius: 14px;
-      border: 1px solid var(--border);
-      background: color-mix(in srgb, var(--surface-soft) 76%, transparent);
+      padding: 12px;
+      overflow: auto;
     }
-
-    .compact-card h4 {
-      margin-bottom: 8px;
-      font-size: 16px;
-    }
-
-    .compact-card p {
-      color: var(--text-dim);
-      font-size: 13px;
-      line-height: 1.65;
-    }
-
-    ul.clean {
-      list-style: none;
-      color: var(--text-dim);
-      font-size: 14px;
-      line-height: 1.7;
-    }
-
-    ul.clean li {
-      position: relative;
-      padding-left: 14px;
-    }
-
-    ul.clean li::before {
-      content: '›';
-      position: absolute;
-      left: 0;
-      color: var(--text-dim);
-    }
-
-    @keyframes fade-up {
-      from { opacity: 0; transform: translateY(12px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
-        animation-duration: 0.01ms !important;
-        animation-delay: 0ms !important;
-        transition-duration: 0.01ms !important;
-      }
-
-      html { scroll-behavior: auto; }
-    }
-
-    @media (max-width: 1220px) {
-      .flow { grid-template-columns: 1fr; }
-      .flow-arrow { min-height: 28px; transform: rotate(90deg); }
-      .legend,
-      .blueprint-notes,
-      .grid.four,
-      .grid.three,
-      .mini-grid,
-      .kpis {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-      .route-stack { grid-template-columns: 1fr; }
-    }
-
-    @media (max-width: 1040px) {
-      .wrap {
-        grid-template-columns: 1fr;
-      }
-
-      .toc {
-        position: sticky;
-        top: 0;
-        z-index: 100;
-        display: flex;
-        gap: 4px;
-        align-items: center;
-        overflow-x: auto;
-        max-height: none;
-        margin: 0 -34px 18px;
-        padding: 12px 34px;
-        background: color-mix(in srgb, var(--bg) 88%, transparent);
-        backdrop-filter: blur(12px);
-        border-bottom: 1px solid var(--border);
-      }
-
-      .toc-title { display: none; }
-
-      .toc a {
-        flex-shrink: 0;
-        white-space: nowrap;
-        border-left: none;
-        border-bottom: 2px solid transparent;
-        border-radius: 7px 7px 0 0;
-      }
-
-      .toc a.active {
-        border-left-color: transparent;
-        border-bottom-color: var(--amber);
-      }
-
-      .workspace,
-      .route-header,
-      .grid.two {
-        grid-template-columns: 1fr;
-      }
-    }
-
-    @media (max-width: 760px) {
-      body { padding: 18px; }
-      .toc {
-        margin: 0 -18px 18px;
-        padding-left: 18px;
-        padding-right: 18px;
-      }
-      .kpis,
-      .legend,
-      .blueprint-notes,
-      .grid.three,
-      .grid.four,
-      .mini-grid {
-        grid-template-columns: 1fr;
-      }
-      .hero,
-      .blueprint {
-        padding: 18px;
-      }
-      .workspace {
-        min-height: auto;
-      }
+    @media (max-width: 900px) {
+      .grid, .three { grid-template-columns: 1fr; }
+      h1 { font-size: 34px; }
     }
   </style>
 </head>
 <body>
   <div class="wrap">
-    <nav class="toc" id="toc">
-      <div class="toc-title">Contents</div>
-      <a href="#snapshot">1. Snapshot</a>
-      <a href="#screen">2. Screen Blueprint</a>
-      <a href="#loop">3. Interaction Loop</a>
-      <a href="#artifacts">4. Artifact Model</a>
-      <a href="#mapping">5. Current vs Target</a>
-      <a href="#runtime">6. Runtime Appendix</a>
-    </nav>
+    <div class="hero">
+      <div class="eyebrow">Current End State</div>
+      <h1>Hirsel is now backend-first.</h1>
+      <p>The backend is the product. The desktop app is only a thin shell that stores the backend URL and API key, then loads the backend-served Datastar UI. Durable chat, orchestration, workers, routes, and artifacts all live on the backend.</p>
+      <div class="pillrow">
+        <div class="pill">Datastar web UI</div>
+        <div class="pill">Thin Tauri wrapper</div>
+        <div class="pill">Durable backend queueing</div>
+        <div class="pill">Routes + work tree</div>
+      </div>
+    </div>
 
-    <main class="main">
-      <section id="snapshot" class="hero">
-        <div class="eyebrow">Interaction Architecture</div>
-        <h1>Hirsel should feel like a conversation that keeps condensing itself into a visible project focus.</h1>
-        <p class="subtitle">
-          This page reframes Hirsel from a worker dashboard into a project-level architecture: Shepherd is the primary
-          control surface, the user stays focused on the project rather than individual routes, and the right-hand
-          surface becomes a dynamic HTML focus view while routes and task machinery continue underneath.
-        </p>
-        <div class="hero-meta">
-          <span class="badge target">Target State First</span>
-          <span class="badge current">Grounded In Current Layout</span>
-          <span class="badge hybrid">Product + Runtime</span>
+    <section>
+      <h2>System Shape</h2>
+      <div class="mermaid">
+flowchart LR
+    User[User]
+    Shell[Desktop shell / browser]
+    Connect[Backend connect bootstrap]
+    WebUI[Datastar UI routes]
+    Core[Project / route / work tree / chat state]
+    Orch[Channel + branches]
+    Workers[Sandbox workers]
+    Artifacts[Virtual artifacts / focus / retained context]
+
+    User --> Shell
+    Shell --> Connect
+    Connect --> WebUI
+    WebUI --> Core
+    Core --> Orch
+    Orch --> Workers
+    Orch --> Artifacts
+    Workers --> Artifacts
+      </div>
+      <div class="callout">
+        <p><span class="ok">Important:</span> closing the UI no longer stops backend-owned work. User messages and project sync are queued durably on the backend.</p>
+      </div>
+    </section>
+
+    <div class="three">
+      <div class="card">
+        <h3>Desktop shell</h3>
+        <p>Minimal Tauri wrapper.</p>
+        <ul>
+          <li>Stores backend URL + API key locally</li>
+          <li>Checks backend health</li>
+          <li>Loads backend UI in a webview</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Backend UI</h3>
+        <p>Server-rendered HTML with Datastar.</p>
+        <ul>
+          <li>Explicit pages and actions</li>
+          <li>SSE for live updates</li>
+          <li>No generic client RPC bridge</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Execution layer</h3>
+        <p>Backend-owned orchestration and workers.</p>
+        <ul>
+          <li>Durable Shepherd queue</li>
+          <li>Background sync / orchestration tasks</li>
+          <li>Workers spawned from the backend</li>
+        </ul>
+      </div>
+    </div>
+
+    <section>
+      <h2>Agent Model</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Kind</th>
+            <th>Where it runs</th>
+            <th>What it does</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>channel</code></td>
+            <td>Backend process</td>
+            <td>User-facing orchestrator, durable message queue, state mutations, delegation</td>
+          </tr>
+          <tr>
+            <td><code>branch</code></td>
+            <td>Backend process</td>
+            <td>Private reasoning fork used during a channel turn</td>
+          </tr>
+          <tr>
+            <td><code>code_worker</code></td>
+            <td>Backend-side worker runtime</td>
+            <td>Repo / shell / git / code execution</td>
+          </tr>
+          <tr>
+            <td><code>ops_worker</code></td>
+            <td>Backend-side worker runtime</td>
+            <td>Operational shell tasks, CI/log/deploy inspection</td>
+          </tr>
+          <tr>
+            <td><code>scribe</code></td>
+            <td>Backend process</td>
+            <td>Condenses retained context and project artifacts</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>UI Routing</h2>
+      <p>The live product path is now page/action/SSE based.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Path type</th>
+            <th>Examples</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Pages</td>
+            <td><code>/connect</code>, <code>/app</code>, <code>/app/projects/:id</code></td>
+            <td>Initial HTML and navigation targets</td>
+          </tr>
+          <tr>
+            <td>Actions</td>
+            <td><code>/connect/session</code>, <code>/app/projects/:id/chat/send</code>, <code>/app/projects/:id/sync</code></td>
+            <td>State-changing POST flows</td>
+          </tr>
+          <tr>
+            <td>Streams</td>
+            <td><code>/app/projects/:id/stream</code>, worker detail stream</td>
+            <td>Incremental Datastar patches over SSE</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>State Model</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Project / route / work tree</h3>
+          <p>Projects contain routes. Routes carry the durable line of work. Each route has a hierarchical work tree instead of the old board/node canvas model.</p>
         </div>
-        <div class="kpis">
-          <div class="kpi">
-            <div class="n">2</div>
-            <div class="t">Primary Panes</div>
-          </div>
-          <div class="kpi">
-            <div class="n">1</div>
-            <div class="t">Dynamic Focus View</div>
-          </div>
-          <div class="kpi">
-            <div class="n">1</div>
-            <div class="t">Machinery Reveal</div>
-          </div>
-          <div class="kpi">
-            <div class="n">2</div>
-            <div class="t">Truth Layers: Project + Runtime</div>
-          </div>
+        <div class="card">
+          <h3>Artifacts</h3>
+          <p>Focus view and retained context are backend-owned artifacts. The focus view is served as a dedicated document and embedded in the main project page.</p>
         </div>
-      </section>
-
-      <section id="screen" class="section">
-        <div class="section-label">2 — Screen Blueprint</div>
-        <h2>The main product is a project surface, not a route switcher attached to a board.</h2>
-        <p class="section-intro">
-          Shepherd stays present on the left as the user’s continuous conversational partner. The right side becomes a
-          dynamic focus view: the HTML artifact Shepherd updates to show what the user should currently pay attention to.
-          Routes can fork and run in parallel underneath, but they are visualized jointly at the project level rather
-          than as separate workspaces the user has to enter.
-        </p>
-
-        <div class="blueprint ve-card ve-card--hero">
-          <div class="app-frame">
-            <div class="frame-top">
-              <div class="window-dots" aria-hidden="true">
-                <span></span><span></span><span></span>
-              </div>
-              <div>hirsel / project interaction architecture</div>
-              <div>target-state blueprint</div>
-            </div>
-
-            <div class="workspace">
-              <aside class="pane shepherd-pane">
-                <div class="pane-heading">
-                  <span>Primary input</span>
-                  <span class="status current">Always visible</span>
-                </div>
-                <div>
-                  <h3 class="pane-title">Shepherd</h3>
-                  <p class="section-intro" style="margin:0">
-                    Free text stays the default. The user speaks naturally, Shepherd keeps state, asks questions,
-                    makes sense of the project, spins up or forks routes when needed, and decides what the focus view
-                    should actually show.
-                  </p>
-                </div>
-
-                <div class="chat-stack">
-                  <div class="msg user">
-                    <div class="who">User intent</div>
-                    <p>Add team billing, keep single-user flow intact, and first map what our org model already does.</p>
-                  </div>
-                  <div class="msg assistant">
-                    <div class="who">Shepherd response</div>
-                    <p>I’ll inspect the current org and billing seams first, then try the safest implementation and a cleaner structural option in parallel.</p>
-                  </div>
-                  <div class="msg assistant">
-                    <div class="who">Shepherd judgment</div>
-                    <p>No major focus-view update yet. I have enough to fork two routes, but not enough evidence to ask you to choose.</p>
-                  </div>
-                </div>
-
-                <div class="composer">
-                  <div class="row">
-                    <span>Compose</span>
-                    <span>free text first</span>
-                  </div>
-                  <div class="input">Type naturally. Shepherd extracts structure; the user does not author forms.</div>
-                </div>
-              </aside>
-
-              <section class="pane route-pane">
-                <div class="route-toolbar">
-                  <div class="title">Project focus view / dynamic HTML artifact</div>
-                  <div class="toggle">Show machinery</div>
-                </div>
-
-                <div class="route-header">
-                  <article class="ve-card ve-card--soft">
-                    <div class="ve-card__head">
-                      <div class="ve-card__label">Current focus</div>
-                    </div>
-                    <div class="ve-card__body">
-                      <h3>Team billing exploration across two active routes</h3>
-                      <p>
-                        The focus view is not a task board and not a route picker. It is Shepherd’s current reading of
-                        what you should care about: what is being tried, what differs, what evidence is in, and what may
-                        need your decision.
-                      </p>
-                    </div>
-                  </article>
-
-                  <div class="route-stack">
-                    <div class="route-card">
-                      <div class="tag">Routes</div>
-                      <ul>
-                        <li>2 active routes</li>
-                        <li>Seat model cleanup — working</li>
-                        <li>Minimal billing patch — validating</li>
-                      </ul>
-                    </div>
-                    <div class="route-card">
-                      <div class="tag">Current ask</div>
-                      <ul>
-                        <li>No user choice needed yet</li>
-                        <li>Waiting on preview and downgrade evidence</li>
-                      </ul>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="mini-grid">
-                  <div class="mini-card">
-                    <div class="tag">Evidence</div>
-                    <p>Current comparison is grounded in code tracing, test runs, and route-level diffs.</p>
-                  </div>
-                  <div class="mini-card">
-                    <div class="tag">Preview</div>
-                    <p>Relevant localhost or preview links can be attached directly when a route exposes something worth opening.</p>
-                  </div>
-                  <div class="mini-card">
-                    <div class="tag">Docs</div>
-                    <p>Async docs continue to accumulate the broader state of the project for later human or agent reference.</p>
-                  </div>
-                </div>
-
-                <div class="toggle-card">
-                  <div class="tag">Machinery reveal</div>
-                  <p>
-                    Tasks, workers, routes, eval runs, logs, and repair loops still exist, but they are subordinate. The
-                    main view exposes route count, short labels, and status while keeping lifecycle management with
-                    Shepherd rather than making the user operate separate route UIs.
-                  </p>
-                </div>
-              </section>
-            </div>
-          </div>
-
-          <div class="blueprint-notes">
-            <div class="note">
-              <h4>Static chrome</h4>
-              <p>The pane split, toolbar, and reveal affordances are fixed UI. They should not churn as Shepherd thinks.</p>
-            </div>
-            <div class="note">
-              <h4>AI-maintained region</h4>
-              <p>The focus view content is editable by Shepherd through a constrained tool that updates the existing HTML artifact.</p>
-            </div>
-            <div class="note">
-              <h4>Hidden execution layer</h4>
-              <p>Routes and task graphs become implementation layers under the project rather than separate user workspaces.</p>
-            </div>
-          </div>
+        <div class="card">
+          <h3>Shepherd chat</h3>
+          <p>User messages are queued on the backend. The UI reads transcript and queue state from the server instead of owning turns locally.</p>
         </div>
-      </section>
-
-      <section id="loop" class="section">
-        <div class="section-label">3 — Interaction Loop</div>
-        <h2>Shepherd should update the project focus view only when the user’s attention should actually move.</h2>
-        <p class="section-intro">
-          The goal is not “generate a new explainer every turn.” The goal is to maintain a durable representation with
-          stable structure and selective updates. That creates continuity, trust, and a tactile sense that the project is
-          being actively worked rather than theatrically reimagined from scratch.
-        </p>
-
-        <div class="flow">
-          <article class="step">
-            <div class="idx">Step 01</div>
-            <h3>Free-text input</h3>
-            <p>The user talks to Shepherd naturally. No mandatory fields, templates, or route forms are required up front.</p>
-          </article>
-          <div class="flow-arrow">→</div>
-          <article class="step">
-            <div class="idx">Step 02</div>
-            <h3>Project-state update</h3>
-            <p>Shepherd interprets the message as changes to intent, constraints, questions, decisions, or work progression at the project level.</p>
-          </article>
-          <div class="flow-arrow">→</div>
-          <article class="step">
-            <div class="idx">Step 03</div>
-            <h3>Route orchestration decision</h3>
-            <p>Shepherd decides whether to continue within the current route, fork additional routes, compare active routes, or keep gathering evidence.</p>
-          </article>
-          <div class="flow-arrow">→</div>
-          <article class="step">
-            <div class="idx">Step 04</div>
-            <h3>Focus-view edit</h3>
-            <p>A constrained tool updates the existing self-contained HTML focus view. It can become a comparison, diagram, code excerpt, preview surface, or brief depending on what the user should see now.</p>
-          </article>
-          <div class="flow-arrow">→</div>
-          <article class="step">
-            <div class="idx">Step 05</div>
-            <h3>Joint route visualization</h3>
-            <p>The UI renders the latest project focus by default and only surfaces minimal route metadata—count, short labels, and status—unless deeper machinery is explicitly requested.</p>
-          </article>
+        <div class="card">
+          <h3>Worker state</h3>
+          <p>Workers and their events are backend state. The Datastar app subscribes to streamed updates rather than polling a client-side store.</p>
         </div>
+      </div>
+    </section>
 
-        <div class="callout">
-          The key product constraint is calmness. The focus view should feel maintained, not regenerated. Stable objects,
-          stable placement, and selective edits matter more than maximum visual cleverness.
-        </div>
-      </section>
+    <section>
+      <h2>Code Map</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>Main files</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Thin wrapper</td>
+            <td><code>src/main.ts</code>, <code>src/wrapper.css</code></td>
+          </tr>
+          <tr>
+            <td>Datastar pages</td>
+            <td><code>src-tauri/src/core/webui.rs</code>, <code>src-tauri/src/core/server/webui.css</code></td>
+          </tr>
+          <tr>
+            <td>Backend UI routes</td>
+            <td><code>src-tauri/src/core/server/web_routes.rs</code>, <code>src-tauri/src/core/server/auth.rs</code></td>
+          </tr>
+          <tr>
+            <td>Chat durability</td>
+            <td><code>src-tauri/src/core/shepherd_chat.rs</code>, <code>src-tauri/src/gui/commands/shepherd/commands.rs</code></td>
+          </tr>
+          <tr>
+            <td>Project/route/work tree</td>
+            <td><code>src-tauri/src/core/project/</code>, <code>src-tauri/src/core/route/</code>, <code>src-tauri/src/core/worktree.rs</code></td>
+          </tr>
+          <tr>
+            <td>Workers</td>
+            <td><code>src-tauri/src/core/workers.rs</code>, <code>src-tauri/src/worker/</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
 
-      <section id="artifacts" class="section">
-        <div class="section-label">4 — Artifact Model</div>
-        <h2>The product has to distinguish between project focus, route execution, machinery, and retained understanding.</h2>
-        <p class="section-intro">
-          Hirsel already has routes, board state, docs, delivery, and Shepherd chat. The new architecture clarifies their
-          roles instead of inventing a separate authoring model.
-        </p>
-
-        <div class="legend">
-          <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Project</div></div>
-            <div class="ve-card__body">
-              <h3>User-facing unit</h3>
-              <p>The user works at the project level: what we are trying to do, what matters now, and what may need a decision.</p>
-            </div>
-          </article>
-          <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Focus view</div></div>
-            <div class="ve-card__body">
-              <h3>Dynamic HTML artifact</h3>
-              <p>The user-facing condensation of what Shepherd thinks matters now. Stable, inspectable, and incrementally editable.</p>
-            </div>
-          </article>
-          <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Retained context</div></div>
-            <div class="ve-card__body">
-              <h3>Retained understanding</h3>
-              <p>The broader project state promoted into durable references: conventions, architecture notes, usage guidance, and lessons.</p>
-            </div>
-          </article>
-          <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Routes</div></div>
-            <div class="ve-card__body">
-              <h3>Parallel execution branches</h3>
-              <p>Routes remain real and may fork freely, but Shepherd manages their lifecycle and the UI summarizes them jointly rather than as separate user workspaces.</p>
-            </div>
-          </article>
-          <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Machinery</div></div>
-            <div class="ve-card__body">
-              <h3>Execution substrate</h3>
-              <p>Tasks, workers, evals, repair loops, and logs remain necessary, but they serve the project rather than define the whole product.</p>
-            </div>
-          </article>
-          <article class="ve-card">
-            <div class="ve-card__head"><div class="ve-card__label">Delivery</div></div>
-            <div class="ve-card__body">
-              <h3>Publication boundary</h3>
-              <p>Delivery becomes the act of crystallizing project outcomes into code, PRs, docs, and retained context, not merely pushing a branch.</p>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section id="mapping" class="section">
-        <div class="section-label">5 — Current vs Target</div>
-        <h2>The target architecture is new in emphasis, not completely new in ingredients.</h2>
-        <p class="section-intro">
-          The current product already contains most of the substrate: Shepherd chat, projects, routes, route work trees,
-          worker concerns, retained context, and delivery. The change is that these are now organized around a
-          project-level focus surface with machinery below it rather than around a route-first canvas.
-        </p>
-
-        <div class="matrix">
-          <table>
-            <thead>
-              <tr>
-                <th>Current seam</th>
-                <th>What exists today</th>
-                <th>Target role</th>
-                <th>Position in the new architecture</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><code>ShepherdConsole</code></td>
-                <td>
-                  Floating, collapsible chat surface with scoped conversation and streaming responses.
-                  <div style="margin-top:8px"><span class="status current">Current</span></div>
-                </td>
-                <td>Permanent left-hand conversational control surface.</td>
-                <td>Promote it from overlay utility to the product’s primary input pane.</td>
-              </tr>
-              <tr>
-                <td><code>WorkTreePane</code></td>
-                <td>
-                  Route-scoped machinery pane showing the selected route's work tree and run rollup.
-                  <div style="margin-top:8px"><span class="status current">Current</span></div>
-                </td>
-                <td>Machinery view and lower-level reveal.</td>
-                <td>Keep route-scoped execution state, but place it behind the machinery reveal instead of making it the primary authoring surface.</td>
-              </tr>
-              <tr>
-                <td>Project focus + retained context artifacts</td>
-                <td>
-                  The backend stores a project focus HTML artifact plus project retained context in the global DB.
-                  <div style="margin-top:8px"><span class="status bridge">Bridge</span></div>
-                </td>
-                <td>Foundation for dynamic focus views, async docs, and durable project memory.</td>
-                <td>Keep routes as execution branches, but keep user-facing synthesis and durable context at the project level.</td>
-              </tr>
-              <tr>
-                <td><code>WorkersPane</code> + worker concerns</td>
-                <td>
-                  Route-scoped worker views and structured escalations.
-                  <div style="margin-top:8px"><span class="status bridge">Bridge</span></div>
-                </td>
-                <td>Supporting machinery for execution rather than a parallel user chat surface.</td>
-                <td>Workers report blockers, risks, and decisions upward; the user stays in the single Shepherd conversation.</td>
-              </tr>
-              <tr>
-                <td>Task / worker / eval runtime</td>
-                <td>
-                  Already implemented and essential to execution.
-                  <div style="margin-top:8px"><span class="status current">Current</span></div>
-                </td>
-                <td>Hidden machinery layer with an explicit reveal affordance.</td>
-                <td>Do not remove it. Reframe it as substrate underneath the project surface and route summaries instead of the whole UX.</td>
-              </tr>
-              <tr>
-                <td><code>update_project_focus_view</code> tool</td>
-                <td>
-                  Implemented as the constrained Shepherd edit path for the project focus artifact.
-                  <div style="margin-top:8px"><span class="status current">Current</span></div>
-                </td>
-                <td>Constrained Shepherd tool for editing the project-level dynamic HTML focus artifact.</td>
-                <td>Key new mechanism for making the right-hand view stable, inspectable, and AI-maintained without turning routes into separate UIs.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-
-        <div class="callout">
-          The target is not “replace tasks with prose.” It is “keep tasks and routes real, but make them subordinate to a
-          more legible project-level artifact.” Humans steer the project. Agents manage routes and execute the machinery.
-        </div>
-      </section>
-
-      <section id="runtime" class="section">
-        <div class="section-label">6 — Runtime Appendix</div>
-        <h2>The runtime still matters. It just no longer deserves to be the first thing this page says.</h2>
-        <p class="section-intro">
-          The current implementation already has substantial technical infrastructure beneath the interaction model. This
-          appendix keeps the runtime story visible without letting it dominate the product architecture.
-        </p>
-
-        <div class="grid three">
-          <article class="ve-card ve-card--recessed">
-            <div class="ve-card__head"><div class="ve-card__label">Current layout composition</div></div>
-            <div class="ve-card__body">
-              <h3>Project surface + machinery reveal</h3>
-              <ul class="clean">
-                <li><code>Layout.tsx</code> now renders a persistent <code>ShepherdConsole</code> plus a project-level focus surface</li>
-                <li><code>ProjectSurface.tsx</code> owns the right-hand HTML artifact and the machinery reveal</li>
-                <li><code>ProjectSurface.tsx</code> now reveals machinery as a route-scoped <code>Work</code>/<code>Workers</code> split</li>
-              </ul>
-            </div>
-          </article>
-
-          <article class="ve-card ve-card--recessed">
-            <div class="ve-card__head"><div class="ve-card__label">State and route substrate</div></div>
-            <div class="ve-card__body">
-              <h3>Routes already provide the right persistence boundary</h3>
-              <ul class="clean">
-                <li>Global DB stores projects, routes, project focus views, retained context, work items, and Shepherd history</li>
-                <li>Routes carry their own work tree state, concerns, and per-route project-run linkage</li>
-                <li>Delivery already operates at the route/version level</li>
-              </ul>
-            </div>
-          </article>
-
-          <article class="ve-card ve-card--recessed">
-            <div class="ve-card__head"><div class="ve-card__label">Execution runtime</div></div>
-            <div class="ve-card__body">
-              <h3>Shepherd and workers remain runtime-backed</h3>
-              <ul class="clean">
-                <li>Shepherd messages execute real turns and stream events to the UI</li>
-                <li>Workers remain isolated execution contexts operating on assigned route work items</li>
-                <li>The project focus view now sits above this runtime instead of replacing it</li>
-              </ul>
-            </div>
-          </article>
-        </div>
-
-        <div class="callout">
-          This is the hybrid position: product architecture first, runtime architecture second. The page should help a
-          reader understand what Hirsel is becoming while staying honest about the infrastructure it already has.
-        </div>
-
-        <div class="details-stack">
-          <details class="reference-details" open>
-            <summary>Validated reference appendix from the former Markdown architecture reference</summary>
-            <div class="details-body">
-              <p class="details-lead">
-                The previous <code>architecture.md</code> contained a large amount of useful reference material that was
-                not yet present in this HTML page. The sections below fold that material into the HTML document and update
-                the high-risk stale parts to match the current codebase.
-              </p>
-            </div>
-          </details>
-
-          <details class="reference-details" open>
-            <summary>Quick reference and feature flags</summary>
-            <div class="details-body">
-              <div class="grid two">
-                <div class="compact-card">
-                  <div class="subhead">Common modification points</div>
-                  <div class="matrix">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Task</th>
-                          <th>Primary edit points</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr><td>Add backend/admin command</td><td><code>src-tauri/src/cli/mod.rs</code></td></tr>
-                        <tr><td>Add GUI command</td><td><code>src-tauri/src/gui/commands/mod.rs</code> plus a new handler module</td></tr>
-                        <tr><td>Add REST endpoint</td><td><code>src-tauri/src/core/server/mod.rs</code>, <code>routes.rs</code>, and the appropriate route builder</td></tr>
-                        <tr><td>Modify run state</td><td><code>src-tauri/src/core/state/mod.rs</code> and <code>src-tauri/src/core/state/types.rs</code></td></tr>
-                        <tr><td>Add runner type</td><td><code>src-tauri/src/core/runner/mod.rs</code> and a new runner implementation</td></tr>
-                        <tr><td>Modify lifecycle</td><td><code>src-tauri/src/core/lifecycle/mod.rs</code> and <code>local.rs</code></td></tr>
-                        <tr><td>Add route work-item behavior</td><td><code>src-tauri/src/core/delta/state/nodes.rs</code>, <code>src-tauri/src/core/worktree.rs</code>, and <code>src-tauri/src/gui/commands/worktree.rs</code></td></tr>
-                        <tr><td>Modify route machinery UI</td><td><code>src/components/project/ProjectSurface.tsx</code>, <code>src/components/worktree/WorkTreePane.tsx</code>, and <code>src/components/workers/WorkersPane.tsx</code></td></tr>
-                        <tr><td>Add backend config command</td><td><code>src-tauri/src/gui/commands/config_cmd.rs</code> and <code>src/components/modals/settings/</code></td></tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Cargo feature flags</div>
-                  <div class="matrix">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Feature</th>
-                          <th>Description</th>
-                          <th>Default</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr><td><code>gui</code></td><td>Tauri desktop app; includes the embedded backend runtime</td><td>Yes</td></tr>
-                        <tr><td><code>server</code></td><td>Headless backend / HTTP server mode</td><td>No, implied by <code>gui</code></td></tr>
-                        <tr><td><code>worker</code></td><td>Minimal sandbox worker binary</td><td>No</td></tr>
-                        <tr><td><code>s3-storage</code></td><td>S3-compatible workspace and archive support</td><td>No</td></tr>
-                        <tr><td><code>dev</code></td><td>Tracing subscriber and debug support</td><td>No</td></tr>
-                        <tr><td><code>profiling</code></td><td>Tracing-chrome / Perfetto profiling output</td><td>No</td></tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </details>
-
-          <details class="reference-details">
-            <summary>Module map and command surfaces</summary>
-            <div class="details-body">
-              <div class="compact-card">
-                <div class="subhead">Core backend modules</div>
-                <div class="matrix">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Submodule</th>
-                        <th>Purpose</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr><td><code>state/</code></td><td>Per-run SQLite state: runs, workers, worker events, evals, history, and scribe submissions</td></tr>
-                      <tr><td><code>project/</code></td><td>Project registry and per-project metadata</td></tr>
-                      <tr><td><code>delta/</code></td><td>Route-scoped work-item persistence, project runs, delivery versions, and legacy compatibility paths</td></tr>
-                      <tr><td><code>route/</code></td><td>Parallel route management, forking, selection, archiving, and route file layout</td></tr>
-                      <tr><td><code>delivery/</code></td><td>Board delivery orchestration, git operations, workspace resolution</td></tr>
-                      <tr><td><code>orchestrator/</code></td><td>Local and remote orchestration backends for run and worker control</td></tr>
-                      <tr><td><code>lifecycle/</code></td><td>Event-driven lifecycle transitions and worker supervision behavior</td></tr>
-                      <tr><td><code>runner/</code></td><td>Single-host worker execution with optional containerized runners</td></tr>
-                      <tr><td><code>run_manager/</code></td><td>Unified run management over orchestration plus lifecycle</td></tr>
-                      <tr><td><code>server/</code></td><td>Shared HTTP API, auth, config, worker, and eval routes</td></tr>
-                      <tr><td><code>shepherd_chat.rs</code> / <code>worker_concerns.rs</code></td><td>Project-level Shepherd history plus route-scoped worker concern/report storage</td></tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-              <div class="grid two">
-                <div class="compact-card">
-                  <div class="subhead">Worker subprocess layer</div>
-                  <ul class="clean">
-                    <li><code>worker/lash_runner.rs</code> bootstraps the embedded lash runtime</li>
-                    <li><code>worker/runner.rs</code> exposes worker execution operations, concern reporting, and progress signaling</li>
-                    <li><code>worker/mcp.rs</code> hosts the optional worker MCP compatibility surface including eval pass/fail signaling</li>
-                    <li><code>worker/eval_mcp.rs</code> provides the eval-task MCP surface</li>
-                    <li>Worker state is local to the backend host; there is no separate remote worker transport layer in the current design</li>
-                  </ul>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Frontend structure</div>
-                  <ul class="clean">
-                    <li><code>components/layout/</code> for the shell and notifications</li>
-                    <li><code>components/project/</code> owns the project focus surface and route machinery controls</li>
-                    <li><code>components/worktree/</code> and <code>components/workers/</code> render the route work tree and route-scoped worker escalations</li>
-                    <li><code>components/chat/</code> covers Shepherd, and <code>components/workers/</code> covers worker state plus orchestrator-facing concerns</li>
-                    <li><code>components/runs/</code> is now legacy naming only and holds reusable worker cards/modals; the product no longer has a standalone runtime workspace</li>
-                    <li><code>projects/</code>, <code>modals/</code>, and <code>shared/</code> support the rest of the UI shell</li>
-                    <li><code>stores/</code> and <code>hooks/</code> coordinate app, project, route, and work-tree state</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div class="grid two">
-                <div class="compact-card">
-                  <div class="subhead">Tauri GUI command families</div>
-                  <ul class="clean">
-                    <li><code>workers</code>, <code>events</code>, <code>concerns</code>, <code>worktree</code></li>
-                    <li><code>delivery</code>, <code>routes</code>, <code>projects</code></li>
-                    <li><code>shepherd</code> for session lifecycle and message streaming</li>
-                    <li><code>config_cmd</code>, <code>credentials</code>, <code>filesystem</code>, <code>debug</code>, <code>files</code></li>
-                  </ul>
-                  <p style="margin-top:10px">The handler set centers on project/route state, worker inspection, delivery, backend configuration, Codex auth helpers, and profiling/debug utilities.</p>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Backend surfaces</div>
-                  <ul class="clean">
-                    <li><code>src-tauri/src/cli/</code> holds the minimal self-hosting surface for <code>hirsel serve</code> plus hidden worker/eval/scribe subprocess entrypoints</li>
-                    <li><code>src-tauri/src/daemon/</code> still exists as an internal local supervisor path, but it is no longer a product-facing concept in the UI</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </details>
-
-          <details class="reference-details">
-            <summary>States, routes, databases, and file layout</summary>
-            <div class="details-body">
-              <div class="grid two">
-                <div class="compact-card">
-                  <div class="subhead">Runtime and worker state</div>
-                  <div class="matrix">
-                    <table>
-                      <thead>
-                        <tr><th>Type</th><th>Values</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr><td>Runtime status</td><td><code>draft</code>, <code>working</code>, <code>paused</code>, <code>failed</code>, <code>eval</code>, <code>done</code>, <code>delivered</code></td></tr>
-                        <tr><td>Failure reason</td><td><code>iteration_limit</code>, <code>time_limit</code>, <code>eval_failed</code>, <code>manual</code></td></tr>
-                        <tr><td>Worker status</td><td><code>working</code>, <code>awaiting</code>, <code>paused</code>, <code>error</code></td></tr>
-                        <tr><td>Delivery status</td><td><code>pending</code>, <code>pushed</code>, <code>pr_open</code>, <code>merged</code>, <code>abandoned</code></td></tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Work-item model</div>
-                  <div class="matrix">
-                    <table>
-                      <thead>
-                        <tr><th>Type</th><th>Values</th></tr>
-                      </thead>
-                      <tbody>
-                        <tr><td>Work item kind</td><td>Stored in the delta tables as unified work-tree nodes</td></tr>
-                        <tr><td>Work item status</td><td><code>draft</code>, <code>pending</code>, <code>working</code>, <code>done</code>, <code>awaiting_check</code>, <code>validated</code>, <code>needs_repair</code>, <code>failed</code></td></tr>
-                        <tr><td>Assignee</td><td>Optional <code>agent_kind</code> + <code>agent_id</code> stored on each work item</td></tr>
-                        <tr><td>Route runtime status</td><td><code>paused</code>, <code>working</code>, <code>failed</code></td></tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-
-              <div class="grid two">
-                <div class="compact-card">
-                  <div class="subhead">Routes system</div>
-                  <ul class="clean">
-                    <li>A main route is created automatically for each project</li>
-                    <li>Forked routes inherit route-owned state and can be archived out of the normal route list</li>
-                    <li>Route scope applies to work items, validation/blocking edges, worker concerns, delivery state, and route repo metadata</li>
-                    <li>The frontend route selector and machinery context key off <code>route_id</code></li>
-                  </ul>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">File layout</div>
-                  <ul class="clean">
-                    <li><code>~/.hirsel/hirsel.db</code> stores global config, credentials, projects, routes, work-item state, retained project artifacts, and Shepherd history</li>
-                    <li><code>project_focus_views</code> in the global DB stores the project-level HTML focus artifact</li>
-                    <li><code>project_retained_contexts</code> in the global DB stores durable project markdown context</li>
-                    <li><code>~/.hirsel/projects/{project_id}/routes/{route_name}/</code> stores route-scoped repo/workspace material</li>
-                    <li><code>~/.hirsel/runtimes/{runtime_name}/hirsel.db</code> stores per-runtime lifecycle state, workers, events, evals, and history</li>
-                    <li>Runtime workspaces live under <code>~/.hirsel/runtimes/{runtime_name}/work/</code> with staging and worker-specific worktrees</li>
-                  </ul>
-                </div>
-              </div>
-
-              <div class="grid two">
-                <div class="compact-card">
-                  <div class="subhead">Global database tables</div>
-                  <ul class="clean">
-                    <li><code>config</code>, <code>credentials</code>, <code>projects</code>, <code>routes</code></li>
-                    <li><code>shepherd_chat_messages</code>, <code>worker_concerns</code>, <code>worker_concern_reads</code></li>
-                    <li><code>board_nodes</code>, <code>board_node_checked_by</code>, <code>board_node_blocked_by</code>, <code>work_item_events</code></li>
-                    <li><code>route_runtimes</code>, <code>board_versions</code>, <code>deliveries</code>, <code>delivery_attempts</code></li>
-                  </ul>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Runtime database tables</div>
-                  <ul class="clean">
-                    <li><code>state</code>, <code>workers</code>, <code>worker_events</code>, <code>scribe_submissions</code></li>
-                    <li><code>worker_events</code>, <code>evals</code>, <code>history</code>, <code>amendments</code></li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </details>
-
-          <details class="reference-details">
-            <summary>Configuration, orchestration traits, and runtime patterns</summary>
-            <div class="details-body">
-              <div class="grid three">
-                <div class="compact-card">
-                  <div class="subhead">Core traits</div>
-                  <ul class="clean">
-                    <li><code>Orchestrator</code> has local and remote implementations</li>
-                    <li><code>LifecycleManager</code> is local to the backend runtime</li>
-                    <li><code>Runner</code> covers host execution plus optional containerized execution on that host</li>
-                    <li>Workspace and archive behavior are abstracted behind provider / strategy traits</li>
-                  </ul>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Configuration model</div>
-                  <ul class="clean">
-                    <li>Config is loaded DB-first from the global store with file-based defaults and persistence helpers</li>
-                    <li>Key fields include agent config, eval timeout, HITL default, one backend connection target, named runners, and storage</li>
-                    <li>The client stores the backend URL/API key it should connect to; there is no multi-profile orchestrator model in the current code</li>
-                  </ul>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Cross-cutting patterns</div>
-                  <ul class="clean">
-                    <li>Error handling is centralized under <code>core/error.rs</code> with categorized error kinds</li>
-                    <li>Process management utilities live in <code>core/process.rs</code></li>
-                    <li><code>state_access.rs</code> abstracts worker access over SQLite or HTTP</li>
-                    <li>The project focus view is a DB-backed HTML artifact updated through constrained Shepherd tools</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </details>
-
-          <details class="reference-details">
-            <summary>HTTP API and IPC reference surfaces</summary>
-            <div class="details-body">
-              <div class="grid two">
-                <div class="compact-card">
-                  <div class="subhead">Runtime and worker HTTP families</div>
-                  <ul class="clean">
-                    <li><code>/api/runtimes</code> for runtime CRUD, workspace initialization, spawn, pause, resume, and delivery</li>
-                    <li><code>/api/runtimes/{name}/workers/*</code> for worker listing, restart, spawn, resume, and event access</li>
-                    <li><code>/api/runtimes/{name}/evals</code>, <code>/history</code>, and worker event endpoints support runtime-specific inspection</li>
-                  </ul>
-                </div>
-
-                <div class="compact-card">
-                  <div class="subhead">Board, config, and IPC families</div>
-                  <ul class="clean">
-                    <li><code>/api/config</code> and <code>/api/credentials/*</code> cover config and credential CRUD</li>
-                    <li>Tauri IPC is the primary frontend surface for projects, routes, worker inspection, route work-tree operations, Shepherd chat, worker concerns, focus/retained-context artifacts, delivery, and backend configuration</li>
-                    <li>Shared route builders split between <code>build_shared_routes()</code>, config-only routes, and the internal local-supervisor endpoints</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </details>
-        </div>
-      </section>
-    </main>
+    <section>
+      <h2>What Was Removed</h2>
+      <ul>
+        <li>The Solid SPA and its client stores/hooks</li>
+        <li>The active <code>/api/ui/invoke</code> bridge</li>
+        <li>The old profile-based local/remote client split</li>
+        <li>The old run-centric user model</li>
+        <li>The board/specflow canvas as the active planning surface</li>
+      </ul>
+    </section>
   </div>
-
-  <script>
-    (function () {
-      const toc = document.getElementById('toc');
-      if (!toc) return;
-      const links = Array.from(toc.querySelectorAll('a'));
-      const sections = links
-        .map((link) => {
-          const id = link.getAttribute('href');
-          if (!id) return null;
-          const el = document.querySelector(id);
-          if (!el) return null;
-          return { link, el };
-        })
-        .filter(Boolean);
-
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) return;
-          links.forEach((link) => link.classList.remove('active'));
-          const match = sections.find((section) => section.el === entry.target);
-          if (!match) return;
-          match.link.classList.add('active');
-          if (window.innerWidth <= 1040) {
-            match.link.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-          }
-        });
-      }, { rootMargin: '-10% 0px -72% 0px' });
-
-      sections.forEach((section) => observer.observe(section.el));
-
-      links.forEach((link) => {
-        link.addEventListener('click', (event) => {
-          event.preventDefault();
-          const target = document.querySelector(link.getAttribute('href'));
-          if (!target) return;
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          history.replaceState(null, '', link.getAttribute('href'));
-        });
-      });
-    })();
-  </script>
 </body>
 </html>
