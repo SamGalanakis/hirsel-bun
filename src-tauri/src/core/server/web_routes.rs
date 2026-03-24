@@ -42,6 +42,11 @@ pub struct ConnectQuery {
 #[derive(Deserialize)]
 pub struct AppHomeQuery {
     pub create_error: Option<String>,
+    pub name: Option<String>,
+    pub repo_url: Option<String>,
+    pub branch: Option<String>,
+    pub confirm_create_branch: Option<String>,
+    pub confirm_base_branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +66,14 @@ pub struct CreateProjectForm {
     pub name: String,
     pub repo_url: String,
     pub branch: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmCreateProjectForm {
+    pub name: String,
+    pub repo_url: String,
+    pub branch: String,
+    pub base_branch: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -169,30 +182,112 @@ fn settings_redirect(return_to: &str, error: Option<&str>) -> Response {
     Redirect::to(&location).into_response()
 }
 
-fn project_create_redirect(error: &str) -> Response {
-    Redirect::to(&format!("/app?create_error={}", urlencoding::encode(error))).into_response()
+fn project_create_redirect(
+    error: &str,
+    name: Option<&str>,
+    repo_url: Option<&str>,
+    branch: Option<&str>,
+) -> Response {
+    let mut location = format!("/app?create_error={}", urlencoding::encode(error));
+    if let Some(value) = name.filter(|value| !value.trim().is_empty()) {
+        location.push_str("&name=");
+        location.push_str(&urlencoding::encode(value));
+    }
+    if let Some(value) = repo_url.filter(|value| !value.trim().is_empty()) {
+        location.push_str("&repo_url=");
+        location.push_str(&urlencoding::encode(value));
+    }
+    if let Some(value) = branch.filter(|value| !value.trim().is_empty()) {
+        location.push_str("&branch=");
+        location.push_str(&urlencoding::encode(value));
+    }
+    Redirect::to(&location).into_response()
+}
+
+fn project_confirm_redirect(
+    error: &str,
+    name: &str,
+    repo_url: &str,
+    branch: &str,
+    base_branch: Option<&str>,
+) -> Response {
+    let mut location = format!(
+        "/app?create_error={}&name={}&repo_url={}&branch={}&confirm_create_branch=1",
+        urlencoding::encode(error),
+        urlencoding::encode(name),
+        urlencoding::encode(repo_url),
+        urlencoding::encode(branch),
+    );
+    if let Some(value) = base_branch.filter(|value| !value.trim().is_empty()) {
+        location.push_str("&confirm_base_branch=");
+        location.push_str(&urlencoding::encode(value));
+    }
+    Redirect::to(&location).into_response()
+}
+
+enum RemoteProjectValidation {
+    Ready,
+    ConfirmCreateBranch { base_branch: Option<String> },
 }
 
 fn validate_remote_project_source(
     repo_url: &str,
     branch: Option<&str>,
-) -> std::result::Result<(), String> {
+) -> std::result::Result<RemoteProjectValidation, String> {
     let parsed = crate::core::git::parse_github_url(repo_url);
-    let branches = crate::core::git::list_remote_branches(&parsed.repo_url)
-        .map_err(|error| format!("Could not reach the repository: {}", error))?;
-
-    // Don't block on empty repos or missing branches — just check reachability
-    if let Some(branch_name) = branch.filter(|value| !value.trim().is_empty()) {
-        if !branches.is_empty() && !branches.iter().any(|candidate| candidate == branch_name) {
-            return Err(format!(
-                "Branch '{}' was not found. Available: {}",
-                branch_name,
-                branches.join(", ")
-            ));
+    if let Some(branch_name) = branch.map(str::trim).filter(|value| !value.is_empty()) {
+        let exists = crate::core::git::remote_branch_exists(&parsed.repo_url, branch_name)
+            .map_err(|error| format!("Could not reach the repository: {}", error))?;
+        if !exists {
+            let visible_branches = crate::core::git::list_remote_branches(&parsed.repo_url)
+                .map_err(|error| format!("Could not reach the repository: {}", error))?;
+            let base_branch = crate::core::git::remote_default_branch(&parsed.repo_url)
+                .map_err(|error| format!("Could not reach the repository: {}", error))?
+                .or_else(|| visible_branches.first().cloned());
+            return Ok(RemoteProjectValidation::ConfirmCreateBranch { base_branch });
         }
+        return Ok(RemoteProjectValidation::Ready);
     }
 
-    Ok(())
+    let branches = crate::core::git::list_remote_branches(&parsed.repo_url)
+        .map_err(|error| format!("Could not reach the repository: {}", error))?;
+    if branches.is_empty() {
+        return Err(
+            "This repository has no visible branches yet. Push a branch before creating a project."
+                .to_string(),
+        );
+    }
+
+    Ok(RemoteProjectValidation::Ready)
+}
+
+async fn persist_project_and_start_sync(
+    name: String,
+    repo_url: String,
+    branch: Option<String>,
+) -> Result<Project, (StatusCode, String)> {
+    let project = app::create_project(
+        name,
+        vec![CreateRouteRepoRequest {
+            name: None,
+            starting_point: StartingPoint::GitRepo {
+                url: repo_url,
+                branch,
+            },
+            target_branch: None,
+        }],
+        Some(0),
+        None,
+        None,
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    if let Err(e) = efforts_runtime::start_project_sync(project.id, None, true).await {
+        tracing::warn!(project_id = project.id, error = %e, "auto-sync failed after project creation");
+    }
+
+    Ok(project)
 }
 
 async fn ensure_llm_ready(
@@ -302,6 +397,7 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route("/static/datastar.js", get(datastar_bundle))
         .route("/app", get(app_home))
         .route("/app/projects", post(create_project))
+        .route("/app/projects/confirm-create", post(confirm_create_project))
         .route("/app/settings", get(settings_page))
         .route("/app/settings/llm", post(save_llm_settings))
         .route("/app/settings/openrouter", post(save_openrouter_key))
@@ -428,7 +524,16 @@ pub async fn app_home(
     if let Some(project) = projects.first() {
         Ok(Redirect::to(&format!("/app/projects/{}", project.id)).into_response())
     } else {
-        Ok(render_empty_projects_page(&projects, query.create_error.as_deref()).into_response())
+        Ok(render_empty_projects_page(
+            &projects,
+            query.create_error.as_deref(),
+            query.name.as_deref(),
+            query.repo_url.as_deref(),
+            query.branch.as_deref(),
+            query.confirm_create_branch.as_deref().is_some(),
+            query.confirm_base_branch.as_deref(),
+        )
+        .into_response())
     }
 }
 
@@ -448,33 +553,85 @@ pub async fn create_project(
         .map(str::to_string)
         .or(parsed.branch.clone());
 
+    match validate_remote_project_source(&parsed.repo_url, requested_branch.as_deref()) {
+        Ok(RemoteProjectValidation::Ready) => {}
+        Ok(RemoteProjectValidation::ConfirmCreateBranch { base_branch }) => {
+            let requested = requested_branch.as_deref().unwrap_or("main");
+            let error = match base_branch.as_deref() {
+                Some(base) => format!(
+                    "Branch '{}' does not exist yet. Create it from '{}'?",
+                    requested, base
+                ),
+                None => format!(
+                    "Repository has no visible branches yet. Initialize it with branch '{}'?",
+                    requested
+                ),
+            };
+            return Ok(project_confirm_redirect(
+                &error,
+                &form.name,
+                &parsed.repo_url,
+                requested,
+                base_branch.as_deref(),
+            ));
+        }
+        Err(error) => {
+            return Ok(project_create_redirect(
+                &error,
+                Some(&form.name),
+                Some(&parsed.repo_url),
+                requested_branch.as_deref(),
+            ));
+        }
+    }
+
+    let project =
+        persist_project_and_start_sync(form.name, parsed.repo_url, requested_branch).await?;
+
+    Ok(Redirect::to(&format!("/app/projects/{}", project.id)).into_response())
+}
+
+pub async fn confirm_create_project(
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<ConfirmCreateProjectForm>,
+) -> Result<Response, (StatusCode, String)> {
+    if let Err(response) = ensure_llm_ready(&state, "/app").await {
+        return Ok(response);
+    }
+
+    let parsed = crate::core::git::parse_github_url(&form.repo_url);
+    let branch = form.branch.trim().to_string();
+    let base_branch = form
+        .base_branch
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
     if let Err(error) =
-        validate_remote_project_source(&parsed.repo_url, requested_branch.as_deref())
+        crate::core::git::create_remote_branch(&parsed.repo_url, &branch, base_branch.as_deref())
     {
-        return Ok(project_create_redirect(&error));
+        let message = if let Some(base) = base_branch.as_deref() {
+            format!(
+                "Could not create branch '{}' from '{}': {}",
+                branch, base, error
+            )
+        } else {
+            format!(
+                "Could not initialize the repository with branch '{}': {}",
+                branch, error
+            )
+        };
+        return Ok(project_confirm_redirect(
+            &message,
+            &form.name,
+            &parsed.repo_url,
+            &branch,
+            base_branch.as_deref(),
+        ));
     }
 
-    let project = app::create_project(
-        form.name,
-        vec![CreateRouteRepoRequest {
-            name: None,
-            starting_point: StartingPoint::GitRepo {
-                url: parsed.repo_url,
-                branch: requested_branch,
-            },
-            target_branch: None,
-        }],
-        Some(0),
-        None,
-        None,
-    )
-    .await
-    .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-
-    // Auto-sync immediately after creation
-    if let Err(e) = efforts_runtime::start_project_sync(project.id, None, true).await {
-        tracing::warn!(project_id = project.id, error = %e, "auto-sync failed after project creation");
-    }
+    let project = persist_project_and_start_sync(form.name, parsed.repo_url, Some(branch)).await?;
 
     Ok(Redirect::to(&format!("/app/projects/{}", project.id)).into_response())
 }

@@ -319,8 +319,19 @@ pub fn render_connect_page(error: Option<&str>, return_to: Option<&str>) -> Mark
 
 // ── Empty Projects / Sidebar ──
 
-pub fn render_empty_projects_page(projects: &[Project], create_error: Option<&str>) -> Markup {
+pub fn render_empty_projects_page(
+    projects: &[Project],
+    create_error: Option<&str>,
+    draft_name: Option<&str>,
+    draft_repo_url: Option<&str>,
+    draft_branch: Option<&str>,
+    confirm_create_branch: bool,
+    confirm_base_branch: Option<&str>,
+) -> Markup {
     let has_projects = !projects.is_empty();
+    let name_value = draft_name.unwrap_or_default();
+    let repo_value = draft_repo_url.unwrap_or_default();
+    let branch_value = draft_branch.unwrap_or("main");
     app_document(
         "Projects",
         "Hirsel project workspace",
@@ -354,25 +365,58 @@ pub fn render_empty_projects_page(projects: &[Project], create_error: Option<&st
                         hr {}
                     }
 
-                    // Create project form
+                    // Create project form OR branch confirmation
                     div class="welcome-create" {
-                        @if !has_projects {
-                            h1 class="welcome-headline" { "Point Hirsel at a repository" }
+                        @if confirm_create_branch {
+                            // ── Branch confirmation (replaces the form) ──
+                            h1 class="welcome-headline" { "Initialize repository?" }
                             p class="muted" {
-                                "Create a project to start orchestrating work."
-                            }
-                        } @else {
-                            p class="eyebrow" { "New project" }
-                        }
-
-                        @if let Some(error) = create_error {
-                            @if !error.trim().is_empty() {
-                                div class="settings-inline-alert" {
-                                    p class="text-destructive" { (error) }
+                                @if let Some(base_branch) = confirm_base_branch.filter(|value| !value.trim().is_empty()) {
+                                    "Branch "
+                                    code { (branch_value) }
+                                    " doesn't exist yet. It will be created from "
+                                    code { (base_branch) }
+                                    "."
+                                } @else {
+                                    "This repository is empty. Branch "
+                                    code { (branch_value) }
+                                    " will be created with an initial commit."
                                 }
                             }
-                        }
-
+                            div class="confirm-actions" {
+                                form action="/app/projects/confirm-create" method="post" {
+                                    input type="hidden" name="name" value=(name_value);
+                                    input type="hidden" name="repo_url" value=(repo_value);
+                                    input type="hidden" name="branch" value=(branch_value);
+                                    @if let Some(base_branch) = confirm_base_branch.filter(|value| !value.trim().is_empty()) {
+                                        input type="hidden" name="base_branch" value=(base_branch);
+                                    }
+                                    button type="submit" class="btn btn-primary btn-full" {
+                                        (icon("plus"))
+                                        "Create " (name_value) " on " (branch_value)
+                                    }
+                                }
+                                a href="/app" class="btn btn-ghost btn-full" {
+                                    "Cancel"
+                                }
+                            }
+                        } @else {
+                            // ── Normal create form ──
+                            @if !has_projects {
+                                h1 class="welcome-headline" { "Point Hirsel at a repository" }
+                                p class="muted" {
+                                    "Create a project to start orchestrating work."
+                                }
+                            } @else {
+                                p class="eyebrow" { "New project" }
+                            }
+                            @if let Some(error) = create_error {
+                                @if !error.trim().is_empty() {
+                                    div class="settings-inline-alert" {
+                                        p class="text-destructive" { (error) }
+                                    }
+                                }
+                            }
                         form
                             action="/app/projects"
                             method="post"
@@ -388,6 +432,7 @@ pub fn render_empty_projects_page(projects: &[Project], create_error: Option<&st
                                     type="text"
                                     name="name"
                                     placeholder="my-project"
+                                    value=(name_value)
                                     required
                                     data-bind:project-name;
                             }
@@ -398,18 +443,20 @@ pub fn render_empty_projects_page(projects: &[Project], create_error: Option<&st
                                     type="url"
                                     name="repo_url"
                                     placeholder="https://github.com/owner/repo"
+                                    value=(repo_value)
                                     required
                                     data-bind:repo-url;
                             }
                             div class="field" {
                                 label for="branch" { "Branch" }
-                                input id="branch" type="text" name="branch" value="main";
+                                input id="branch" type="text" name="branch" value=(branch_value);
                             }
                             button type="submit" class="btn btn-primary btn-full" {
                                 (icon("plus"))
                                 "Create project"
                             }
                         }
+                        } // end @else (non-confirm)
                     }
 
                     // Footer link
@@ -520,8 +567,10 @@ pub fn render_project_page(
                                 span class="pill route-pill" {
                                     (icon("git-branch"))
                                     (&route.name)
-                                    " · "
-                                    (route_status)
+                                    @if route_status != "idle" {
+                                        " · "
+                                        (route_status)
+                                    }
                                 }
                             }
                             button type="button" class="btn btn-sm btn-ghost toolbar-toggle" data-on:click="$machineryOpen = !$machineryOpen" {

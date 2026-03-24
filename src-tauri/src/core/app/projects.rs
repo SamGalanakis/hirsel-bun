@@ -51,6 +51,15 @@ impl ProjectLifecycleService {
     }
 }
 
+fn public_route_status(raw: Option<&str>) -> String {
+    match raw.unwrap_or("idle") {
+        "working" => "active".to_string(),
+        "paused" | "idle" => "idle".to_string(),
+        "failed" => "failed".to_string(),
+        _ => "idle".to_string(),
+    }
+}
+
 #[tracing::instrument]
 pub async fn list_projects() -> Result<Vec<Project>, String> {
     let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
@@ -82,10 +91,7 @@ pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapsh
             route_id: route.id,
             name: route.name,
             selected: project.active_route_id == Some(route.id),
-            status: project_run
-                .as_ref()
-                .map(|run| run.status.as_str().to_string())
-                .unwrap_or_else(|| "idle".to_string()),
+            status: public_route_status(project_run.as_ref().map(|run| run.status.as_str())),
             updated_at: route.updated_at,
         });
     }

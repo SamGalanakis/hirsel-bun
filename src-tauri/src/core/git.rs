@@ -9,6 +9,7 @@ use git2::{
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile::TempDir;
 use thiserror::Error;
 use tracing::info;
 
@@ -167,6 +168,142 @@ pub fn list_remote_branches(url: &str) -> Result<Vec<String>> {
 
     branches.sort();
     Ok(branches)
+}
+
+/// Check whether a specific branch exists on a remote repository.
+pub fn remote_branch_exists(url: &str, branch: &str) -> Result<bool> {
+    let ref_name = format!("refs/heads/{}", branch);
+    let output = Command::new("git")
+        .args(["ls-remote", "--exit-code", "--heads", url, &ref_name])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        )
+        .output()
+        .map_err(|e| GitError::Other(format!("Failed to run git ls-remote: {}", e)))?;
+
+    if output.status.success() {
+        return Ok(true);
+    }
+
+    match output.status.code() {
+        Some(2) => Ok(false),
+        _ => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(GitError::Other(format!("git ls-remote failed: {}", stderr)))
+        }
+    }
+}
+
+/// Best-effort detection of the remote's default branch via HEAD symref.
+pub fn remote_default_branch(url: &str) -> Result<Option<String>> {
+    let output = Command::new("git")
+        .args(["ls-remote", "--symref", url, "HEAD"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        )
+        .output()
+        .map_err(|e| GitError::Other(format!("Failed to run git ls-remote: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GitError::Other(format!("git ls-remote failed: {}", stderr)));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("ref: refs/heads/") {
+            if let Some(branch) = rest.strip_suffix("\tHEAD") {
+                return Ok(Some(branch.to_string()));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
+fn run_git_command(current_dir: &Path, args: &[&str]) -> Result<()> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(current_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        )
+        .output()
+        .map_err(|e| GitError::Other(format!("Failed to run git {:?}: {}", args, e)))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "unknown git error".to_string()
+    };
+    Err(GitError::Other(format!(
+        "git {:?} failed: {}",
+        args, detail
+    )))
+}
+
+/// Create a missing remote branch, either from an existing visible branch or by
+/// initializing an empty remote repository with an empty initial commit.
+pub fn create_remote_branch(url: &str, branch: &str, from_branch: Option<&str>) -> Result<()> {
+    if remote_branch_exists(url, branch)? {
+        return Ok(());
+    }
+
+    let auth_url = get_authenticated_url(url);
+
+    if let Some(base_branch) = from_branch {
+        let temp = TempDir::new()
+            .map_err(|e| GitError::Other(format!("Failed to create temp dir: {}", e)))?;
+        run_git_command(
+            temp.path(),
+            &[
+                "clone",
+                "--branch",
+                base_branch,
+                "--single-branch",
+                &auth_url,
+                ".",
+            ],
+        )?;
+        run_git_command(temp.path(), &["checkout", "-b", branch])?;
+        run_git_command(temp.path(), &["push", "-u", "origin", branch])?;
+        return Ok(());
+    }
+
+    let temp =
+        TempDir::new().map_err(|e| GitError::Other(format!("Failed to create temp dir: {}", e)))?;
+    run_git_command(temp.path(), &["init", "--initial-branch", branch])?;
+    run_git_command(temp.path(), &["config", "user.name", "Hirsel"])?;
+    run_git_command(
+        temp.path(),
+        &["config", "user.email", "hirsel@localhost.localdomain"],
+    )?;
+    run_git_command(
+        temp.path(),
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initialize repository for Hirsel",
+        ],
+    )?;
+    run_git_command(temp.path(), &["remote", "add", "origin", &auth_url])?;
+    run_git_command(temp.path(), &["push", "-u", "origin", branch])?;
+    Ok(())
 }
 
 /// Get the authenticated URL for a git remote
