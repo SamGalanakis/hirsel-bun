@@ -30,30 +30,26 @@ impl SQLiteState {
     /// Check if a status transition is valid
     fn can_transition_to(&self, from: Status, to: Status) -> bool {
         use Status::*;
+        if from == to {
+            return true;
+        }
+
         matches!(
             (from, to),
-            // From Draft
-            (Draft, Working) |
-            // From Working
-            (Working, Paused)
-            | (Working, Failed)
-            | (Working, Eval)
-            | (Working, Done) | // No eval configured
-            // From Paused
-            (Paused, Working)
-            | (Paused, Failed) |
-            // From Failed (allow resume/retry)
-            (Failed, Working)
-            | (Failed, Paused) |
-            // From Eval
-            (Eval, Done)
-            | (Eval, Failed)
-            | (Eval, Working)
-            | (Eval, Paused) | // Pausing during eval
-            // From Done
-            (Done, Delivered) |
-            // Setting same status is always allowed
-            (_, _) if from == to
+            (Draft, Working)
+                | (Working, Paused)
+                | (Working, Failed)
+                | (Working, Eval)
+                | (Working, Done)
+                | (Paused, Working)
+                | (Paused, Failed)
+                | (Failed, Working)
+                | (Failed, Paused)
+                | (Eval, Done)
+                | (Eval, Failed)
+                | (Eval, Working)
+                | (Eval, Paused)
+                | (Done, Delivered)
         )
     }
 

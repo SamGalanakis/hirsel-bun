@@ -109,7 +109,9 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
         starting_point: &StartingPoint,
     ) -> HirselResult<WorkspaceInfo> {
         let workspace_dir = self.workspace_path(runtime_name);
-        fs::create_dir_all(&workspace_dir)?;
+        if let Some(parent) = workspace_dir.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         info!(
             "Initializing workspace for run '{}' at {:?}",
@@ -142,6 +144,15 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
             }
             StartingPoint::GitRepo { url, branch } => {
                 info!("Cloning git repo {} to workspace", url);
+                if workspace_dir.exists() {
+                    if workspace_dir.read_dir()?.next().is_some() {
+                        return Err(HirselError::GitOp(format!(
+                            "Workspace already exists and is not empty: {}",
+                            workspace_dir.display()
+                        )));
+                    }
+                    fs::remove_dir_all(&workspace_dir)?;
+                }
                 clone_remote_with_branch(url, &workspace_dir, branch.as_deref())
                     .map_err(|e| HirselError::GitOp(e.to_string()))?;
             }

@@ -40,6 +40,7 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
         config_cmd::get_config,
         config_cmd::save_config,
         config_cmd::check_backend_health,
+        config_cmd::open_backend_window,
         // Stateful product operations intentionally stay on the backend over HTTP/SSE.
     ]
 }

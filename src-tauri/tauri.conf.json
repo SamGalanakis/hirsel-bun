@@ -5,13 +5,12 @@
   "identifier": "app.hirsel",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "bun run vite:dev",
     "beforeBuildCommand": "bun run vite:build"
   },
   "app": {
     "windows": [
       {
+        "create": false,
         "title": "Hirsel",
         "width": 1200,
         "height": 800,

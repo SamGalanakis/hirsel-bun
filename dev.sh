@@ -164,11 +164,13 @@ EOF
         exit 1
     fi
 
-    echo "Running tauri dev against local hirsel serve..."
-
-    if [[ -n "$CARGO_FEATURES" ]]; then
-        GDK_BACKEND=x11 bunx tauri dev $CARGO_FEATURES 2>&1 | tee -a "$LOG_FILE"
-    else
-        GDK_BACKEND=x11 bun run dev 2>&1 | tee -a "$LOG_FILE"
+    echo "Building local shell assets..."
+    bun run vite:build 2>&1 | tee -a "$LOG_FILE"
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        echo "Frontend build failed!"
+        exit 1
     fi
+
+    echo "Running desktop shell against local hirsel serve..."
+    GDK_BACKEND=x11 "$BINARY" 2>&1 | tee -a "$LOG_FILE"
 fi

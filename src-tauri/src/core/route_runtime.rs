@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::core::config;
+use crate::core::db::close_runtime_pool;
 use crate::core::db::utc_now;
 use crate::core::delta::DeltaState;
 use crate::core::draft::create_workspace_provider;
@@ -38,22 +39,38 @@ pub async fn ensure_route_runtime(
     route_id: i64,
 ) -> Result<RouteRuntimeHandle, String> {
     let delta = DeltaState::with_route(project_id, route_id);
-    let runtime_name = if let Some(runtime) = delta
+    let (runtime_name, created_new) = if let Some(runtime) = delta
         .get_route_runtime()
         .await
         .map_err(|error| error.to_string())?
     {
-        runtime.runtime_name
+        (runtime.runtime_name, false)
     } else {
         let runtime_name = runtime_name_for_route(project_id, route_id);
         delta
             .create_route_runtime(&runtime_name)
             .await
             .map_err(|error| error.to_string())?;
-        runtime_name
+        (runtime_name, true)
     };
 
     let runtime_dir = config::runtime_dir(&runtime_name);
+    if created_new && runtime_dir.exists() {
+        tracing::warn!(
+            runtime_name = %runtime_name,
+            runtime_dir = %runtime_dir.display(),
+            "fresh route runtime collided with existing runtime directory; removing stale runtime dir"
+        );
+        close_runtime_pool(&runtime_name).await;
+        std::fs::remove_dir_all(&runtime_dir).map_err(|error| {
+            format!(
+                "failed to remove stale runtime dir '{}': {}",
+                runtime_dir.display(),
+                error
+            )
+        })?;
+    }
+
     let route_store = RouteStore::new(project_id)
         .await
         .map_err(|error| error.to_string())?;

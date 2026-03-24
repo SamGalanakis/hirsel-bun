@@ -4,7 +4,7 @@ use lash::{PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 
 use super::history::{chunk_image_count, chunk_text};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
-use crate::core::{RouteFiles, RouteStore};
+use crate::core::ensure_route_runtime;
 
 pub(super) struct ShepherdLashSink;
 
@@ -239,9 +239,36 @@ pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i6
     }
 }
 
-pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<PathBuf> {
+async fn resolve_route_runtime_workspace(
+    project_id: i64,
+    route_id: i64,
+) -> Result<PathBuf, String> {
+    let handle = ensure_route_runtime(project_id, route_id).await?;
+    let project_path = handle
+        .state
+        .get_project_path()
+        .await
+        .map_err(|error| format!("failed to read runtime workspace path: {}", error))?
+        .ok_or_else(|| {
+            format!(
+                "Route runtime '{}' has no project path recorded",
+                handle.runtime_name
+            )
+        })?;
+    let path = PathBuf::from(project_path);
+    if !path.exists() || !path.is_dir() {
+        return Err(format!(
+            "Route runtime '{}' points at missing workspace '{}'",
+            handle.runtime_name,
+            path.display()
+        ));
+    }
+    Ok(path)
+}
+
+pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Result<PathBuf, String> {
     match scope {
-        ShepherdScope::General => None,
+        ShepherdScope::General => Err("general scope has no workspace".to_string()),
         ShepherdScope::Project {
             project_id,
             route_id,
@@ -249,16 +276,16 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<Pat
             ..
         } => {
             if let Some(path) = workspace_path.as_ref().filter(|p| !p.trim().is_empty()) {
-                return Some(PathBuf::from(path));
+                let path = PathBuf::from(path);
+                if path.exists() && path.is_dir() {
+                    return Ok(path);
+                }
+                return Err(format!(
+                    "project scope workspace path '{}' does not exist",
+                    path.display()
+                ));
             }
-
-            let route_store = RouteStore::new(*project_id).await.ok()?;
-            let route = match route_store.get_route(*route_id).await {
-                Ok(route) => route,
-                Err(_) => route_store.create_main_route().await.ok()?,
-            };
-
-            Some(RouteFiles::new(*project_id, &route.name).route_dir())
+            resolve_route_runtime_workspace(*project_id, *route_id).await
         }
         ShepherdScope::Effort {
             project_id,
@@ -273,24 +300,16 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<Pat
             ..
         } => {
             if let Some(path) = workspace_path.as_ref().filter(|p| !p.trim().is_empty()) {
-                return Some(PathBuf::from(path));
+                let path = PathBuf::from(path);
+                if path.exists() && path.is_dir() {
+                    return Ok(path);
+                }
+                return Err(format!(
+                    "route scope workspace path '{}' does not exist",
+                    path.display()
+                ));
             }
-
-            let route_store = RouteStore::new(*project_id).await.ok()?;
-            let route = match route_store.get_route(*route_id).await {
-                Ok(route) => route,
-                Err(_) => route_store.create_main_route().await.ok()?,
-            };
-
-            Some(RouteFiles::new(*project_id, &route.name).route_dir())
+            resolve_route_runtime_workspace(*project_id, *route_id).await
         }
-    }
-}
-
-pub(super) fn resolve_runtime_cwd(path: Option<PathBuf>) -> PathBuf {
-    if let Some(path) = path.filter(|p| p.exists() && p.is_dir()) {
-        path
-    } else {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
     }
 }

@@ -16,8 +16,8 @@ use super::history::{
 };
 use super::router::{focus_effort, focused_or_latest_effort, route_message_to_effort};
 use super::runtime::{
-    build_user_turn_text, looks_like_runtime_traceback, resolve_runtime_cwd,
-    resolve_scope_project_id, resolve_scope_workspace, shepherd_prompt_overrides, ShepherdLashSink,
+    build_user_turn_text, looks_like_runtime_traceback, resolve_scope_project_id,
+    resolve_scope_workspace, shepherd_prompt_overrides, ShepherdLashSink,
 };
 use super::tools::ShepherdToolProvider;
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
@@ -293,7 +293,7 @@ async fn run_private_branch_turn(
         workspace_path,
         focus: parent_focus,
     };
-    let cwd = resolve_runtime_cwd(resolve_scope_workspace(&branch_scope).await);
+    let cwd = resolve_scope_workspace(&branch_scope).await?;
     let scope_project_id = resolve_scope_project_id(&branch_scope).await;
     tracing::info!("starting private shepherd branch turn");
 
@@ -362,7 +362,7 @@ async fn run_project_sync_branch(
             task_name: item_title.clone(),
         }),
     };
-    let cwd = resolve_runtime_cwd(resolve_scope_workspace(&scope).await);
+    let cwd = resolve_scope_workspace(&scope).await?;
     let history = load_scope_messages(&scope, RUNTIME_HISTORY_LIMIT).await?;
     let runtime = create_runtime_from_history(
         None,
@@ -428,7 +428,13 @@ async fn finish_project_sync(
 }
 
 #[tracing::instrument(fields(project_id, route_id = route.id, item_id = %item.id))]
-fn spawn_project_sync_task(project_id: i64, route: Route, item: WorkItem, prompt: String) {
+fn spawn_project_sync_task(
+    project_id: i64,
+    route: Route,
+    item: WorkItem,
+    prompt: String,
+    effort_id: Option<String>,
+) {
     tokio::spawn(async move {
         tracing::info!("starting detached project sync task");
         match run_project_sync_branch(
@@ -441,6 +447,18 @@ fn spawn_project_sync_task(project_id: i64, route: Route, item: WorkItem, prompt
         .await
         {
             Ok(conclusion) => {
+                if let Some(effort_id) = effort_id.as_deref() {
+                    if let Ok(store) = ShepherdChatStore::open().await {
+                        let summary = conclusion
+                            .as_deref()
+                            .map(|text| truncate_internal_note(text, 240))
+                            .map(|text| text.to_string())
+                            .unwrap_or_else(|| "Project sync completed.".to_string());
+                        let _ = store
+                            .update_effort(effort_id, Some(&summary), Some("done"))
+                            .await;
+                    }
+                }
                 let details = conclusion.as_deref();
                 finish_project_sync(
                     project_id,
@@ -454,6 +472,13 @@ fn spawn_project_sync_task(project_id: i64, route: Route, item: WorkItem, prompt
                 tracing::info!("detached project sync task completed");
             }
             Err(error) => {
+                if let Some(effort_id) = effort_id.as_deref() {
+                    if let Ok(store) = ShepherdChatStore::open().await {
+                        let _ = store
+                            .update_effort(effort_id, Some(&error), Some("failed"))
+                            .await;
+                    }
+                }
                 let details = error.clone();
                 finish_project_sync(
                     project_id,
@@ -619,7 +644,7 @@ async fn run_shepherd_turn_for_scope(
     let user_images_png = decode_png_images(&user_chunks)?;
     let user_turn_text = build_user_turn_text(&user_chunks);
     let history = load_scope_messages(scope, RUNTIME_HISTORY_LIMIT).await?;
-    let cwd = resolve_runtime_cwd(resolve_scope_workspace(scope).await);
+    let cwd = resolve_scope_workspace(scope).await?;
     let scope_project_id = resolve_scope_project_id(scope).await;
     tracing::info!("starting shepherd turn");
 
@@ -789,9 +814,11 @@ pub async fn start_project_sync(
         tracing::warn!(%error, item_id = %item.id, "failed to record sync start event");
     }
 
+    let mut sync_effort_id = None;
+
     // Create a focused effort so sync appears in the normal effort UI
     if let Ok(chat_store) = ShepherdChatStore::open().await {
-        if let Err(e) = chat_store
+        match chat_store
             .create_effort(
                 project_id,
                 route.id,
@@ -802,11 +829,20 @@ pub async fn start_project_sync(
             )
             .await
         {
-            tracing::warn!(%e, "failed to create sync effort");
+            Ok(effort) => sync_effort_id = Some(effort.id),
+            Err(e) => {
+                tracing::warn!(%e, "failed to create sync effort");
+            }
         }
     }
 
-    spawn_project_sync_task(project_id, route, item.clone(), result.prompt);
+    spawn_project_sync_task(
+        project_id,
+        route,
+        item.clone(),
+        result.prompt,
+        sync_effort_id,
+    );
 
     Ok(StartProjectSyncResponse {
         route_id: result.route_id,

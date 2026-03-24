@@ -30,36 +30,6 @@ async function loadConfig() {
   }
 }
 
-function backendBootstrapUrl(): string {
-  const base = state.url.replace(/\/+$/, '');
-  const url = new URL(`${base}/connect/bootstrap`);
-  url.searchParams.set('api_key', state.apiKey);
-  url.searchParams.set('return_to', '/app');
-  return url.toString();
-}
-
-async function openBackend() {
-  state.error = '';
-
-  if (!state.url || !state.apiKey) {
-    state.error = 'Backend URL and API key are required.';
-    render();
-    return;
-  }
-
-  state.connecting = true;
-  render();
-
-  try {
-    await invoke('check_backend_health', { url: state.url, apiKey: state.apiKey });
-    window.location.replace(backendBootstrapUrl());
-  } catch (error) {
-    state.connecting = false;
-    state.error = `Failed to reach backend: ${String(error)}`;
-    render();
-  }
-}
-
 async function saveConnection(event: Event) {
   event.preventDefault();
   const form = event.currentTarget as HTMLFormElement;
@@ -83,28 +53,12 @@ async function saveConnection(event: Event) {
         },
       },
     });
-    await openBackend();
+    await invoke('open_backend_window');
   } catch (error) {
     state.connecting = false;
-    state.error = `Failed to save backend config: ${String(error)}`;
+    state.error = `Failed to open backend: ${String(error)}`;
     render();
   }
-}
-
-async function disconnect() {
-  await invoke('save_config', {
-    updates: {
-      backend: {
-        url: null,
-        apiKey: null,
-      },
-    },
-  });
-  state.url = '';
-  state.apiKey = '';
-  state.connecting = false;
-  state.error = '';
-  render();
 }
 
 function connectMarkup() {
@@ -130,7 +84,7 @@ function connectMarkup() {
             <span>API key</span>
             <input class="toolbar-input" type="password" name="apiKey" value="${state.apiKey}" required />
           </label>
-          <button class="primary-btn" type="submit">Open backend</button>
+          <button class="primary-btn" type="submit">Save and open</button>
         </form>
       </div>
     </section>
@@ -153,11 +107,5 @@ function render() {
 
 void (async () => {
   await loadConfig();
-  if (state.url && state.apiKey) {
-    state.connecting = true;
-  }
   render();
-  if (state.url && state.apiKey) {
-    void openBackend();
-  }
 })();

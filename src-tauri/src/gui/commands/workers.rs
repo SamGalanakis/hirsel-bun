@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use crate::cli::config::get_agent_command;
 use crate::core::api_types::{SheepConfig, Worker, WorkerLocation};
+use crate::core::config;
 use crate::core::credentials::load_forwarded_credentials;
 use crate::core::delta::DeltaState;
 use crate::core::git::create_worker_clone;
@@ -214,6 +215,18 @@ pub async fn get_route_workers(project_id: i64, route_id: i64) -> Result<Vec<Wor
     let Some(runtime_name) = resolve_route_runtime_name(project_id, route_id).await? else {
         return Ok(Vec::new());
     };
+
+    let runtime_db = config::runtime_dir(&runtime_name).join("hirsel.db");
+    if !runtime_db.exists() {
+        tracing::info!(
+            project_id,
+            route_id,
+            runtime_name = %runtime_name,
+            runtime_db = %runtime_db.display(),
+            "route runtime exists in metadata but runtime database is not initialized yet; returning empty worker list"
+        );
+        return Ok(Vec::new());
+    }
 
     let orch = create_orchestrator().str_err()?;
     orch.list_workers(&runtime_name).await.str_err()

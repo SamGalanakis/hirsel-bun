@@ -3,7 +3,9 @@
 //! Provides git repository management, worktree operations, branch management,
 //! and merge/diff utilities. Uses git2 crate for native git operations.
 
-use git2::{BranchType, Error as Git2Error, Oid, Repository, Signature};
+use git2::{
+    BranchType, Error as Git2Error, FetchOptions, Oid, RemoteCallbacks, Repository, Signature,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -169,27 +171,18 @@ pub fn list_remote_branches(url: &str) -> Result<Vec<String>> {
 
 /// Get the authenticated URL for a git remote
 ///
-/// If a GitHub token is configured in CredentialStore, embeds it in HTTPS URLs.
+/// If a GitHub token is configured in environment, embeds it in HTTPS URLs.
 /// SSH URLs are returned unchanged.
 fn get_authenticated_url(url: &str) -> String {
-    use crate::core::credentials::CredentialStore;
-
     // Only modify HTTPS GitHub URLs
     if !url.starts_with("https://github.com/") {
         return url.to_string();
     }
 
-    // Try to load GitHub token from credential store
-    // Use a runtime since this function is sync but CredentialStore is now async
-    let rt = match tokio::runtime::Runtime::new() {
-        Ok(rt) => rt,
-        Err(_) => return url.to_string(),
-    };
-
-    let token = rt.block_on(async {
-        let store = CredentialStore::open().await.ok()?;
-        store.load("git_github_token").await.ok()
-    });
+    let token = std::env::var("GITHUB_TOKEN")
+        .or_else(|_| std::env::var("GH_TOKEN"))
+        .ok()
+        .filter(|value| !value.trim().is_empty());
 
     if let Some(token) = token {
         // Embed token in URL: https://TOKEN@github.com/user/repo.git
@@ -203,6 +196,73 @@ fn get_authenticated_url(url: &str) -> String {
     url.to_string()
 }
 
+fn build_git_remote_callbacks() -> RemoteCallbacks<'static> {
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(|url, username_from_url, allowed_types| {
+        tracing::debug!(
+            "Git credentials requested for URL: {:?}, username: {:?}, allowed_types: {:?}",
+            url,
+            username_from_url,
+            allowed_types
+        );
+
+        if allowed_types.contains(git2::CredentialType::USERNAME) {
+            if let Some(username) = username_from_url {
+                tracing::debug!("Trying username credential '{}'", username);
+                match git2::Cred::username(username) {
+                    Ok(cred) => return Ok(cred),
+                    Err(e) => tracing::debug!("Username credential failed: {}", e),
+                }
+            }
+        }
+
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            if let Some(username) = username_from_url {
+                tracing::debug!("Trying SSH agent for user '{}'", username);
+                match git2::Cred::ssh_key_from_agent(username) {
+                    Ok(cred) => return Ok(cred),
+                    Err(e) => tracing::debug!("SSH agent failed: {}", e),
+                }
+            }
+        }
+
+        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            let ssh_key = std::path::PathBuf::from(&home).join(".ssh/id_rsa");
+            let ssh_key_ed = std::path::PathBuf::from(&home).join(".ssh/id_ed25519");
+            let key_path = if ssh_key_ed.exists() {
+                ssh_key_ed
+            } else {
+                ssh_key
+            };
+
+            if key_path.exists() {
+                let username = username_from_url.unwrap_or("git");
+                tracing::debug!("Trying SSH key at {:?} for user '{}'", key_path, username);
+                match git2::Cred::ssh_key(username, None, &key_path, None) {
+                    Ok(cred) => return Ok(cred),
+                    Err(e) => tracing::debug!("SSH key failed: {}", e),
+                }
+            }
+        }
+
+        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+            tracing::debug!("Trying git credential helper");
+            let config = git2::Config::open_default()?;
+            match git2::Cred::credential_helper(&config, url, username_from_url) {
+                Ok(cred) => return Ok(cred),
+                Err(e) => tracing::debug!("Credential helper failed: {}", e),
+            }
+        }
+
+        tracing::warn!("No git credentials available for clone/fetch");
+        Err(git2::Error::from_str(
+            "no credentials available - check SSH keys, git credential helper, or GitHub token",
+        ))
+    });
+    callbacks
+}
+
 /// Clone a remote repository to a local directory with optional branch checkout
 ///
 /// If branch is specified, checks out that branch after cloning.
@@ -214,8 +274,10 @@ pub fn clone_remote_with_branch(
     branch: Option<&str>,
 ) -> Result<PathBuf> {
     if target_dir.exists() {
-        info!("Clone target already exists: {:?}", target_dir);
-        return Ok(target_dir.to_path_buf());
+        return Err(GitError::Other(format!(
+            "Clone target already exists: {}",
+            target_dir.display()
+        )));
     }
 
     fs::create_dir_all(target_dir)?;
@@ -224,13 +286,16 @@ pub fn clone_remote_with_branch(
 
     // Use authenticated URL if token is available
     let auth_url = get_authenticated_url(url);
-    let repo = Repository::clone(&auth_url, target_dir)?;
+    let mut fetch_options = FetchOptions::new();
+    fetch_options.remote_callbacks(build_git_remote_callbacks());
 
-    // Checkout specific branch if requested
+    let mut builder = git2::build::RepoBuilder::new();
+    builder.fetch_options(fetch_options);
     if let Some(branch_name) = branch {
-        info!("Checking out branch: {}", branch_name);
-        checkout_branch(&repo, branch_name)?;
+        info!("Selecting branch during clone: {}", branch_name);
+        builder.branch(branch_name);
     }
+    let repo = builder.clone(&auth_url, target_dir)?;
 
     // Ensure we have a working directory
     let work_dir = repo

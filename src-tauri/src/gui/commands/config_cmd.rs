@@ -7,6 +7,7 @@ use super::ResultExt;
 use crate::core::api_types::ConfigResponse;
 use crate::core::config;
 use crate::core::orchestrator::{LocalOrchestrator, Orchestrator, RemoteOrchestrator};
+use tauri::Manager;
 
 /// Get application configuration stored on this client.
 #[tracing::instrument]
@@ -51,5 +52,44 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
 pub async fn check_backend_health(url: String, api_key: Option<String>) -> Result<(), String> {
     let orchestrator = RemoteOrchestrator::new(url, api_key.unwrap_or_default());
     orchestrator.health().await.str_err()?;
+    Ok(())
+}
+
+/// Navigate the main desktop window directly to the configured backend UI.
+#[tracing::instrument(skip(app))]
+#[tauri::command]
+pub async fn open_backend_window(app: tauri::AppHandle) -> Result<(), String> {
+    let (config, _) =
+        config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
+    let backend = config.backend.clone();
+    let base_url = backend
+        .url
+        .clone()
+        .filter(|value: &String| !value.trim().is_empty())
+        .ok_or_else(|| "Backend URL is not configured".to_string())?;
+    let api_key = backend
+        .api_key
+        .clone()
+        .filter(|value: &String| !value.trim().is_empty())
+        .ok_or_else(|| "Backend API key is not configured".to_string())?;
+
+    let orchestrator = RemoteOrchestrator::new(base_url.clone(), api_key.clone());
+    orchestrator.health().await.str_err()?;
+
+    let mut url = base_url.trim_end_matches('/').to_string();
+    url.push_str("/connect/bootstrap");
+    let mut url = url
+        .parse::<tauri::Url>()
+        .map_err(|error| format!("Invalid backend URL: {}", error))?;
+    url.query_pairs_mut()
+        .append_pair("api_key", &api_key)
+        .append_pair("return_to", "/app");
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+    window
+        .navigate(url)
+        .map_err(|error| format!("Failed to navigate to backend: {}", error))?;
     Ok(())
 }

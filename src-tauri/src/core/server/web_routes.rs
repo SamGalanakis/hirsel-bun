@@ -19,6 +19,7 @@ use super::AppState;
 use crate::core::config::LlmProvider;
 use crate::core::credentials::CredentialStore;
 use crate::core::draft::StartingPoint;
+use crate::core::llm_provider::resolve_provider;
 use crate::core::project::Project;
 use crate::core::route::CreateRouteRepoRequest;
 use crate::core::server::routes::{CodexDeviceExchangeRequest, CodexDevicePollRequest};
@@ -41,6 +42,11 @@ use crate::gui::commands::worktree as gui_worktree;
 pub struct ConnectQuery {
     pub return_to: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct AppHomeQuery {
+    pub create_error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -98,6 +104,12 @@ pub struct StoreApiKeyForm {
 }
 
 #[derive(Deserialize)]
+pub struct SaveOpenrouterForm {
+    pub api_key: String,
+    pub openrouter_base_url: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct CodexStreamQuery {
     pub device_auth_id: String,
     pub user_code: String,
@@ -138,6 +150,77 @@ fn sanitize_return_to(value: Option<&str>) -> String {
         Some(path) if path.starts_with("/app") => path.to_string(),
         _ => "/app".to_string(),
     }
+}
+
+fn humanize_llm_setup_error(error: &str) -> String {
+    if error.contains("Codex OAuth not configured") {
+        "Connect Codex before using projects.".to_string()
+    } else if error.contains("OpenRouter API key not configured") {
+        "Add an OpenRouter API key before using projects.".to_string()
+    } else {
+        error.to_string()
+    }
+}
+
+fn settings_redirect(return_to: &str, error: Option<&str>) -> Response {
+    let mut location = format!(
+        "/app/settings?required=llm&return_to={}",
+        urlencoding::encode(return_to)
+    );
+    if let Some(error) = error.filter(|value| !value.trim().is_empty()) {
+        location.push_str("&error=");
+        location.push_str(&urlencoding::encode(error));
+    }
+    Redirect::to(&location).into_response()
+}
+
+fn project_create_redirect(error: &str) -> Response {
+    Redirect::to(&format!("/app?create_error={}", urlencoding::encode(error))).into_response()
+}
+
+fn validate_remote_project_source(
+    repo_url: &str,
+    branch: Option<&str>,
+) -> std::result::Result<(), String> {
+    let parsed = crate::core::git::parse_github_url(repo_url);
+    let branches = crate::core::git::list_remote_branches(&parsed.repo_url)
+        .map_err(|error| format!("Could not inspect remote repository: {}", error))?;
+
+    if branches.is_empty() {
+        return Err(
+            "This repository has no visible branches yet. Push a branch before creating a project."
+                .to_string(),
+        );
+    }
+
+    if let Some(branch_name) = branch.filter(|value| !value.trim().is_empty()) {
+        if !branches.iter().any(|candidate| candidate == branch_name) {
+            return Err(format!(
+                "Branch '{}' was not found on the remote repository.",
+                branch_name
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+async fn ensure_llm_ready(
+    state: &Arc<AppState>,
+    return_to: &str,
+) -> std::result::Result<(), Response> {
+    match current_llm_setup_error(state).await {
+        Some(error) => Err(settings_redirect(return_to, Some(&error))),
+        None => Ok(()),
+    }
+}
+
+async fn current_llm_setup_error(state: &Arc<AppState>) -> Option<String> {
+    let config = state.config.read().await.clone();
+    resolve_provider(&config)
+        .await
+        .err()
+        .map(|error| humanize_llm_setup_error(&error))
 }
 
 fn provider_name(provider: LlmProvider) -> &'static str {
@@ -343,27 +426,53 @@ pub async fn datastar_bundle() -> impl IntoResponse {
     )
 }
 
-pub async fn app_home() -> Result<Response, (StatusCode, String)> {
+pub async fn app_home(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<AppHomeQuery>,
+) -> Result<Response, (StatusCode, String)> {
+    if let Err(response) = ensure_llm_ready(&state, "/app").await {
+        return Ok(response);
+    }
+
     let projects = gui_projects::list_projects()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     if let Some(project) = projects.first() {
         Ok(Redirect::to(&format!("/app/projects/{}", project.id)).into_response())
     } else {
-        Ok(render_empty_projects_page(&projects).into_response())
+        Ok(render_empty_projects_page(&projects, query.create_error.as_deref()).into_response())
     }
 }
 
 pub async fn create_project(
+    State(state): State<Arc<AppState>>,
     Form(form): Form<CreateProjectForm>,
-) -> Result<Redirect, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
+    if let Err(response) = ensure_llm_ready(&state, "/app").await {
+        return Ok(response);
+    }
+
+    let parsed = crate::core::git::parse_github_url(&form.repo_url);
+    let requested_branch = form
+        .branch
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or(parsed.branch.clone());
+
+    if let Err(error) =
+        validate_remote_project_source(&parsed.repo_url, requested_branch.as_deref())
+    {
+        return Ok(project_create_redirect(&error));
+    }
+
     let project = gui_projects::create_project(
         form.name,
         vec![CreateRouteRepoRequest {
             name: None,
             starting_point: StartingPoint::GitRepo {
-                url: form.repo_url,
-                branch: form.branch.filter(|value| !value.trim().is_empty()),
+                url: parsed.repo_url,
+                branch: requested_branch,
             },
             target_branch: None,
         }],
@@ -379,12 +488,18 @@ pub async fn create_project(
         tracing::warn!(project_id = project.id, error = %e, "auto-sync failed after project creation");
     }
 
-    Ok(Redirect::to(&format!("/app/projects/{}", project.id)))
+    Ok(Redirect::to(&format!("/app/projects/{}", project.id)).into_response())
 }
 
 pub async fn project_page(
+    State(state): State<Arc<AppState>>,
     Path(project_id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
+    let return_to = format!("/app/projects/{}", project_id);
+    if let Err(response) = ensure_llm_ready(&state, &return_to).await {
+        return Ok(response);
+    }
+
     let (
         projects,
         project,
@@ -412,30 +527,55 @@ pub async fn project_page(
         &history,
         &queue,
         &notifications,
-    ))
+    )
+    .into_response())
 }
 
 pub async fn project_focus_page(
+    State(state): State<Arc<AppState>>,
     Path(project_id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
+    let return_to = format!("/app/projects/{}", project_id);
+    if let Err(response) = ensure_llm_ready(&state, &return_to).await {
+        return Ok(response);
+    }
+
     let surface = gui_projects::get_project_surface(project_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(axum::response::Html(
-        render_focus_document(&surface.focus_view.html).into_string(),
-    ))
+    Ok(
+        axum::response::Html(render_focus_document(&surface.focus_view.html).into_string())
+            .into_response(),
+    )
 }
 
 pub async fn send_chat_message(
     Path(project_id): Path<i64>,
     Form(form): Form<ChatSendForm>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    gui_shepherd::enqueue_project_message(project_id, Some(form.content), None)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
     let stream = stream! {
-        yield Ok::<Event, Infallible>(patch_signals("{chatDraft: ''}"));
+        match gui_shepherd::enqueue_project_message(project_id, Some(form.content.clone()), None).await {
+            Ok(_) => {
+                yield Ok::<Event, Infallible>(patch_signals("{chatDraft: '', chatError: ''}"));
+            }
+            Err(error) => {
+                let message = if error.contains("Codex OAuth not configured") {
+                    "Codex is not connected. Open Settings and connect Codex first.".to_string()
+                } else if error.contains("OpenRouter API key not configured") {
+                    "OpenRouter is not configured. Open Settings and add an API key first.".to_string()
+                } else {
+                    error
+                };
+                let escaped_message = serde_json::to_string(&message)
+                    .unwrap_or_else(|_| "\"Failed to send message.\"".to_string());
+                let escaped_draft = serde_json::to_string(&form.content)
+                    .unwrap_or_else(|_| "\"\"".to_string());
+                yield Ok::<Event, Infallible>(patch_signals(format!(
+                    "{{chatDraft: {}, chatError: {}}}",
+                    escaped_draft, escaped_message
+                )));
+            }
+        }
     };
     Ok(Sse::new(stream))
 }
@@ -539,6 +679,14 @@ pub async fn settings_page(
                 verify_url.as_str(),
             )
         });
+    let query_requires_setup = query
+        .get("required")
+        .map(|value| value == "llm")
+        .unwrap_or(false);
+    let llm_setup_error = current_llm_setup_error(&state).await;
+    let setup_required = query_requires_setup || llm_setup_error.is_some();
+    let setup_error_owned = query.get("error").cloned().or(llm_setup_error);
+    let setup_error = setup_error_owned.as_deref();
 
     Ok(render_settings_page(
         provider_name(config.llm.provider),
@@ -547,6 +695,8 @@ pub async fn settings_page(
         codex_connected,
         tavily.as_deref(),
         codex_state,
+        setup_required,
+        setup_error,
     ))
 }
 
@@ -570,12 +720,29 @@ pub async fn save_llm_settings(
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
 
-    Ok(Redirect::to("/app/settings"))
+    let config = state.config.read().await.clone();
+    if resolve_provider(&config).await.is_ok() {
+        Ok(Redirect::to("/app"))
+    } else {
+        Ok(Redirect::to("/app/settings?required=llm"))
+    }
 }
 
 pub async fn save_openrouter_key(
-    Form(form): Form<StoreApiKeyForm>,
+    State(state): State<Arc<AppState>>,
+    Form(form): Form<SaveOpenrouterForm>,
 ) -> Result<Redirect, (StatusCode, String)> {
+    {
+        let mut config = state.config.write().await;
+        config.llm.provider = LlmProvider::Openrouter;
+        config.llm.openrouter_base_url = form
+            .openrouter_base_url
+            .filter(|value| !value.trim().is_empty());
+        config
+            .save()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
     let store = CredentialStore::open()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -585,7 +752,12 @@ pub async fn save_openrouter_key(
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     }
-    Ok(Redirect::to("/app/settings"))
+    let config = state.config.read().await.clone();
+    if resolve_provider(&config).await.is_ok() {
+        Ok(Redirect::to("/app"))
+    } else {
+        Ok(Redirect::to("/app/settings?required=llm"))
+    }
 }
 
 pub async fn save_tavily_key(
@@ -603,13 +775,23 @@ pub async fn save_tavily_key(
     Ok(Redirect::to("/app/settings"))
 }
 
-pub async fn start_codex_device() -> Result<Redirect, (StatusCode, String)> {
+pub async fn start_codex_device(
+    State(state): State<Arc<AppState>>,
+) -> Result<Redirect, (StatusCode, String)> {
+    {
+        let mut config = state.config.write().await;
+        config.llm.provider = LlmProvider::Codex;
+        config
+            .save()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
     let response = crate::core::server::routes::codex_device_start()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
         .0;
     Ok(Redirect::to(&format!(
-        "/app/settings?device_auth_id={}&user_code={}&verify_url={}",
+        "/app/settings?required=llm&device_auth_id={}&user_code={}&verify_url={}",
         urlencoding::encode(&response.device_auth_id),
         urlencoding::encode(&response.user_code),
         urlencoding::encode(&response.verify_url),
@@ -638,7 +820,7 @@ pub async fn stream_codex_device(Query(query): Query<CodexStreamQuery>) -> impl 
                             ))
                             .await;
                             let html = maud::html! {
-                                article class="panel" id="codex-status" {
+                                article class="card" id="codex-status" {
                                     header {
                                         h3 { (crate::core::icons::icon("key")) "Codex" }
                                         span class="pill status-working" { "Connected" }
@@ -649,6 +831,17 @@ pub async fn stream_codex_device(Query(query): Query<CodexStreamQuery>) -> impl 
                                 }
                             };
                             yield Ok::<Event, Infallible>(patch_elements("#codex-status", html.into_string()));
+                            let header = maud::html! {
+                                a href="/app" class="btn ghost" {
+                                    (crate::core::icons::icon("arrow-left"))
+                                    "Open app"
+                                }
+                            };
+                            yield Ok::<Event, Infallible>(patch_elements("#settings-header-action", header.into_string()));
+                            yield Ok::<Event, Infallible>(patch_elements(
+                                "#settings-setup-alert",
+                                r#"<div id="settings-setup-alert"></div>"#.to_string(),
+                            ));
                             break;
                         }
                     }
@@ -663,8 +856,14 @@ pub async fn stream_codex_device(Query(query): Query<CodexStreamQuery>) -> impl 
 }
 
 pub async fn project_settings_page(
+    State(state): State<Arc<AppState>>,
     Path(project_id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
+    let return_to = format!("/app/projects/{}/settings", project_id);
+    if let Err(response) = ensure_llm_ready(&state, &return_to).await {
+        return Ok(response);
+    }
+
     let store = crate::core::project::ProjectStore::open()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -675,29 +874,38 @@ pub async fn project_settings_page(
     let route = gui_routes::get_active_route(project_id)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(render_project_settings_page(&project, &route))
+    Ok(render_project_settings_page(&project, &route).into_response())
 }
 
 pub async fn save_project_settings(
+    State(state): State<Arc<AppState>>,
     Path(project_id): Path<i64>,
     Form(form): Form<UpdateProjectForm>,
-) -> Result<Redirect, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
+    let return_to = format!("/app/projects/{}/settings", project_id);
+    if let Err(response) = ensure_llm_ready(&state, &return_to).await {
+        return Ok(response);
+    }
+
     gui_projects::update_project_name(project_id, form.name)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
     gui_projects::update_project_description(project_id, form.description)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    Ok(Redirect::to(&format!(
-        "/app/projects/{}/settings",
-        project_id
-    )))
+    Ok(Redirect::to(&format!("/app/projects/{}/settings", project_id)).into_response())
 }
 
 pub async fn save_route_settings(
+    State(state): State<Arc<AppState>>,
     Path(project_id): Path<i64>,
     Form(form): Form<UpdateRouteForm>,
-) -> Result<Redirect, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
+    let return_to = format!("/app/projects/{}/settings", project_id);
+    if let Err(response) = ensure_llm_ready(&state, &return_to).await {
+        return Ok(response);
+    }
+
     gui_routes::update_route_settings(
         project_id,
         form.route_id,
@@ -707,10 +915,7 @@ pub async fn save_route_settings(
     )
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
-    Ok(Redirect::to(&format!(
-        "/app/projects/{}/settings",
-        project_id
-    )))
+    Ok(Redirect::to(&format!("/app/projects/{}/settings", project_id)).into_response())
 }
 
 pub async fn delete_project(Path(project_id): Path<i64>) -> Result<Redirect, (StatusCode, String)> {
@@ -725,8 +930,17 @@ pub async fn delete_project(Path(project_id): Path<i64>) -> Result<Redirect, (St
 }
 
 pub async fn worker_detail_page(
+    State(state): State<Arc<AppState>>,
     Path((project_id, route_id, worker_name)): Path<(i64, i64, String)>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
+    let return_to = format!(
+        "/app/projects/{}/routes/{}/workers/{}",
+        project_id, route_id, worker_name
+    );
+    if let Err(response) = ensure_llm_ready(&state, &return_to).await {
+        return Ok(response);
+    }
+
     let store = crate::core::project::ProjectStore::open()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -759,9 +973,7 @@ pub async fn worker_detail_page(
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
     .events;
-    Ok(render_worker_detail_page(
-        &project, &route, &worker, &events,
-    ))
+    Ok(render_worker_detail_page(&project, &route, &worker, &events).into_response())
 }
 
 pub async fn worker_detail_stream(

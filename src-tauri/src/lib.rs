@@ -19,6 +19,11 @@ mod lash_tools;
 pub mod version;
 pub mod worker;
 
+#[cfg(feature = "gui")]
+use crate::core::orchestrator::Orchestrator;
+#[cfg(feature = "gui")]
+use tauri::{WebviewUrl, WebviewWindowBuilder};
+
 /// Initialize tracing subscriber with profiling support.
 /// When built with `--features profiling` AND HIRSEL_PROFILING=1, outputs Chrome Trace Format
 /// JSON to `~/.hirsel/profiling/trace-{timestamp}.json` for viewing in Perfetto UI.
@@ -352,8 +357,6 @@ pub fn run() {
     builder
         .invoke_handler(gui::get_handlers())
         .setup(|app| {
-            use tauri::Manager;
-
             // In dev mode, clean up orphaned processes from previous hot-reload sessions
             #[cfg(debug_assertions)]
             {
@@ -372,11 +375,7 @@ pub fn run() {
                 );
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                // Set window background color to match app theme (prevents white flash on resize)
-                // Dark background color #1a1a1a = rgb(26, 26, 26)
-                let _ = window.set_background_color(Some(tauri::window::Color(26, 26, 26, 255)));
-            }
+            create_main_window(app.handle())?;
             Ok(())
         })
         .on_window_event(move |window, event| {
@@ -390,6 +389,49 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(feature = "gui")]
+fn create_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let (config, _) =
+        core::config::Config::load().unwrap_or_else(|_| (core::config::Config::default(), vec![]));
+    let mut window_config = app
+        .config()
+        .app
+        .windows
+        .first()
+        .cloned()
+        .ok_or("missing main window config")?;
+
+    let mut initial_url = WebviewUrl::App("index.html".into());
+    let backend = config.backend.clone();
+    if let (Some(url), Some(api_key)) = (backend.url, backend.api_key) {
+        if !url.trim().is_empty() && !api_key.trim().is_empty() {
+            let rt = tokio::runtime::Runtime::new()
+                .expect("Failed to create tokio runtime for backend bootstrap");
+            let should_open = rt.block_on(async {
+                let orchestrator =
+                    core::orchestrator::RemoteOrchestrator::new(url.clone(), api_key.clone());
+                orchestrator.health().await.is_ok()
+            });
+
+            if should_open {
+                let mut bootstrap = format!("{}/connect/bootstrap", url.trim_end_matches('/'))
+                    .parse::<tauri::Url>()?;
+                bootstrap
+                    .query_pairs_mut()
+                    .append_pair("api_key", &api_key)
+                    .append_pair("return_to", "/app");
+                initial_url = WebviewUrl::External(bootstrap);
+            }
+        }
+    }
+
+    window_config.create = true;
+    window_config.url = initial_url;
+    let window = WebviewWindowBuilder::from_config(app, &window_config)?.build()?;
+    let _ = window.set_background_color(Some(tauri::window::Color(26, 26, 26, 255)));
+    Ok(())
 }
 
 /// Clean up GUI-specific processes on exit.

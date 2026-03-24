@@ -404,20 +404,13 @@ pub trait Orchestrator: Send + Sync {
 
 /// Create an orchestrator for the configured backend connection.
 pub fn create_orchestrator() -> OrchestratorResult<Box<dyn Orchestrator>> {
-    use crate::core::credentials::CredentialStore;
-
     let (config, _) = Config::load().map_err(|e| OrchestratorError::Config(e.to_string()))?;
 
     if let Some(url) = config.backend.url.clone() {
-        let key = tokio::runtime::Handle::try_current()
-            .ok()
-            .and_then(|handle| {
-                handle.block_on(async {
-                    let store = CredentialStore::open().await.ok()?;
-                    store.load("backend_api_key").await.ok()
-                })
-            })
-            .or_else(|| config.backend.api_key.clone())
+        let key = config
+            .backend
+            .api_key
+            .clone()
             .ok_or_else(|| OrchestratorError::Config("Missing API key for backend".into()))?;
 
         Ok(Box::new(RemoteOrchestrator::new(url, key)))
