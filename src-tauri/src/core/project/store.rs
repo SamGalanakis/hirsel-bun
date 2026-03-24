@@ -231,7 +231,7 @@ impl ProjectStore {
 
         let retained_markdown = default_project_retained_context_markdown(&req.name);
         sqlx::query(
-            "INSERT INTO project_retained_contexts (project_id, markdown, source, updated_at)
+            "INSERT OR REPLACE INTO project_retained_contexts (project_id, markdown, source, updated_at)
              VALUES (?, ?, ?, ?)",
         )
         .bind(project_id)
@@ -418,6 +418,10 @@ impl ProjectStore {
             .execute(pool)
             .await;
         let _ = sqlx::query("DELETE FROM project_focus_views WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM project_retained_contexts WHERE project_id = ?")
             .bind(id)
             .execute(pool)
             .await;
