@@ -180,28 +180,13 @@ fn project_create_redirect(error: &str) -> Response {
 
 fn validate_remote_project_source(
     repo_url: &str,
-    branch: Option<&str>,
+    _branch: Option<&str>,
 ) -> std::result::Result<(), String> {
     let parsed = crate::core::git::parse_github_url(repo_url);
-    let branches = crate::core::git::list_remote_branches(&parsed.repo_url)
-        .map_err(|error| format!("Could not inspect remote repository: {}", error))?;
-
-    if branches.is_empty() {
-        return Err(
-            "This repository has no visible branches yet. Push a branch before creating a project."
-                .to_string(),
-        );
-    }
-
-    if let Some(branch_name) = branch.filter(|value| !value.trim().is_empty()) {
-        if !branches.iter().any(|candidate| candidate == branch_name) {
-            return Err(format!(
-                "Branch '{}' was not found on the remote repository.",
-                branch_name
-            ));
-        }
-    }
-
+    // Just check that the remote is reachable. Don't block on missing branches —
+    // the workspace setup will create the branch if needed.
+    let _branches = crate::core::git::list_remote_branches(&parsed.repo_url)
+        .map_err(|error| format!("Could not reach the repository: {}", error))?;
     Ok(())
 }
 
