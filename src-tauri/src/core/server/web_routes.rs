@@ -641,9 +641,14 @@ pub async fn stream_codex_device(Query(query): Query<CodexStreamQuery>) -> impl 
                             ))
                             .await;
                             let html = maud::html! {
-                                article class="form-card" id="codex-status" {
-                                    h2 { "Codex" }
-                                    p { "Codex is connected." }
+                                article class="panel" id="codex-status" {
+                                    header {
+                                        h3 { (crate::core::icons::icon("key")) "Codex" }
+                                        span class="pill status-working" { "Connected" }
+                                    }
+                                    section {
+                                        p class="muted" { "Codex OAuth is connected." }
+                                    }
                                 }
                             };
                             yield Ok::<Event, Infallible>(patch_elements("#codex-status", html.into_string()));
