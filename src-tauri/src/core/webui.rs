@@ -770,10 +770,10 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                 section class="main-panel main-panel-narrow" {
 
                     // ── Header ──
-                    div class="panel-header" style="margin-bottom: 12px;" {
+                    div class="panel-header" style="margin-bottom: 16px;" {
                         div {
-                            p class="eyebrow" { "Project" }
-                            h1 { "Project settings" }
+                            p class="eyebrow" { (&project.name) }
+                            h1 { "Settings" }
                         }
                         a href=(format!("/app/projects/{}", project.id)) class="action-btn ghost" {
                             (icon("arrow-left"))
@@ -781,7 +781,7 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                         }
                     }
 
-                    // ── Project Card ──
+                    // ── Project ──
                     article class="panel" {
                         header {
                             h3 { (icon("folder")) "Project" }
@@ -789,47 +789,74 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                         section {
                             form action={ "/app/projects/" (project.id) "/settings/project" } method="post" {
                                 div class="form-field" {
-                                    label for="proj-name" { "Project name" }
+                                    label for="proj-name" { "Name" }
                                     input id="proj-name" type="text" name="name" value=(&project.name);
                                 }
                                 div class="form-field" {
                                     label for="proj-desc" { "Description" }
-                                    textarea id="proj-desc" name="description" rows="4" { (project.description.as_deref().unwrap_or("")) }
+                                    textarea id="proj-desc" name="description" rows="3" placeholder="What is this project about?" { (project.description.as_deref().unwrap_or("")) }
                                 }
                                 button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
-                                    "Save project"
+                                    "Save"
                                 }
                             }
                         }
                     }
 
-                    // ── Route Card ──
+                    // ── Route ──
                     article class="panel" {
                         header {
                             h3 { (icon("git-branch")) "Route" }
-                            span data-slot="card-action" {
-                                span class="pill" { (&route.name) }
-                            }
+                            span class="pill" { (&route.name) }
                         }
                         section {
                             form action={ "/app/projects/" (project.id) "/settings/route" } method="post" {
                                 input type="hidden" name="route_id" value=(route.id);
-                                div class="form-field" {
-                                    label for="time-limit" { "Time limit (minutes)" }
-                                    input id="time-limit" type="number" min="0" name="time_limit_minutes" value=(route.time_limit_minutes.unwrap_or_default());
+                                div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;" {
+                                    div class="form-field" {
+                                        label for="time-limit" { "Time limit (min)" }
+                                        input id="time-limit" type="number" min="0" name="time_limit_minutes" value=(route.time_limit_minutes.unwrap_or_default());
+                                    }
+                                    div class="form-field" {
+                                        label for="target-branch" { "Target branch" }
+                                        input id="target-branch" type="text" name="target_branch" placeholder="main" value=(route.target_branch.as_deref().unwrap_or(""));
+                                    }
                                 }
                                 div class="form-field" style="flex-direction:row; align-items:center; gap:10px;" {
-                                    input id="hitl" type="checkbox" name="human_in_the_loop" role="switch" checked[route.human_in_the_loop];
-                                    label for="hitl" { "Require human in the loop" }
-                                }
-                                div class="form-field" {
-                                    label for="target-branch" { "Target branch" }
-                                    input id="target-branch" type="text" name="target_branch" value=(route.target_branch.as_deref().unwrap_or(""));
+                                    input id="hitl" type="checkbox" name="human_in_the_loop" checked[route.human_in_the_loop];
+                                    label for="hitl" style="text-transform:none; font-size:13px; color:var(--text-2);" { "Require human in the loop" }
                                 }
                                 button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
-                                    "Save route"
+                                    "Save"
+                                }
+                            }
+                        }
+                    }
+
+                    // ── Danger Zone ──
+                    article class="panel danger-zone" {
+                        header {
+                            h3 { (icon("trash-2")) "Danger zone" }
+                        }
+                        section {
+                            p class="muted" style="margin-bottom: 12px;" {
+                                "Permanently delete this project and all its routes, work items, efforts, and history."
+                            }
+                            form
+                                action={ "/app/projects/" (project.id) "/delete" }
+                                method="post"
+                                data-signals:confirm-delete="false"
+                                data-on:submit__prevent="if (!$confirmDelete) { $confirmDelete = true; return; } this.submit();" {
+                                button
+                                    type="submit"
+                                    class="action-btn danger"
+                                    style="width:100%;"
+                                    data-class:confirmed="$confirmDelete" {
+                                    (icon("trash-2"))
+                                    span data-show="!$confirmDelete" { "Delete project" }
+                                    span data-show="$confirmDelete" { "Click again to confirm" }
                                 }
                             }
                         }

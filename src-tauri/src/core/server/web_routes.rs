@@ -274,6 +274,7 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/app/projects/{project_id}/settings/route",
             post(save_route_settings),
         )
+        .route("/app/projects/{project_id}/delete", post(delete_project))
         .route(
             "/app/projects/{project_id}/routes/{route_id}/workers/{worker_name}",
             get(worker_detail_page),
@@ -708,6 +709,17 @@ pub async fn save_route_settings(
         "/app/projects/{}/settings",
         project_id
     )))
+}
+
+pub async fn delete_project(Path(project_id): Path<i64>) -> Result<Redirect, (StatusCode, String)> {
+    let store = crate::core::project::ProjectStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    store
+        .delete_project(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    Ok(Redirect::to("/app"))
 }
 
 pub async fn worker_detail_page(
