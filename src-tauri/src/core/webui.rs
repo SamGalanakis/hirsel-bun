@@ -4,7 +4,7 @@ use crate::core::api_types::{Worker, WorkerEventResponse};
 use crate::core::icons::icon;
 use crate::core::project::{Project, ProjectSurfaceSnapshot};
 use crate::core::route::Route;
-use crate::core::worktree::{WorkItemTree, SYNC_PROJECT_TASK_MARKER, SYNC_PROJECT_TASK_TITLE};
+use crate::core::worktree::WorkItemTree;
 use crate::core::{ShepherdChatMessage, ShepherdEffort};
 use crate::gui::commands::shepherd::commands::ShepherdQueueState;
 use crate::gui::commands::types::UnreadNotificationsResponse;
@@ -69,36 +69,12 @@ fn render_chat_text(chunks_json: &str) -> String {
         .join("")
 }
 
-fn sync_task<'a>(tree: &'a [WorkItemTree]) -> Option<&'a WorkItemTree> {
-    for node in tree {
-        if node
-            .title
-            .trim()
-            .eq_ignore_ascii_case(SYNC_PROJECT_TASK_TITLE)
-            || node.description.contains(SYNC_PROJECT_TASK_MARKER)
-        {
-            return Some(node);
-        }
-        if let Some(child) = sync_task(&node.children) {
-            return Some(child);
-        }
-    }
-    None
-}
-
 fn split_visible_efforts(efforts: &[ShepherdEffort]) -> (&[ShepherdEffort], &[ShepherdEffort]) {
     if efforts.len() <= MAX_VISIBLE_EFFORTS {
         (efforts, &[])
     } else {
         efforts.split_at(MAX_VISIBLE_EFFORTS)
     }
-}
-
-/// Get the sync task status from the work tree.
-pub fn get_sync_state(work_tree: &[WorkItemTree]) -> &str {
-    sync_task(work_tree)
-        .map(|item| item.status.as_str())
-        .unwrap_or("idle")
 }
 
 // ── Work Tree ──
@@ -383,14 +359,33 @@ pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
                             p class="eyebrow" style="margin-bottom: 10px;" { "New project" }
                         }
 
-                        form action="/app/projects" method="post" class="welcome-form" {
+                        form
+                            action="/app/projects"
+                            method="post"
+                            class="welcome-form"
+                            data-signals:repo-url="''"
+                            data-signals:project-name="''"
+                            data-computed:repo-base="$repoUrl.trim().replace(/\\/+$/, '').split('/').pop()?.replace(/\\.git$/, '') || ''"
+                            data-effect="if (!$projectName.trim() && $repoBase) { $projectName = $repoBase }" {
                             div class="form-field" {
                                 label for="proj-name" { "Name" }
-                                input id="proj-name" type="text" name="name" placeholder="my-project" required;
+                                input
+                                    id="proj-name"
+                                    type="text"
+                                    name="name"
+                                    placeholder="my-project"
+                                    required
+                                    data-bind:project-name;
                             }
                             div class="form-field" {
                                 label for="repo-url" { "Repository" }
-                                input id="repo-url" type="url" name="repo_url" placeholder="https://github.com/owner/repo" required;
+                                input
+                                    id="repo-url"
+                                    type="url"
+                                    name="repo_url"
+                                    placeholder="https://github.com/owner/repo"
+                                    required
+                                    data-bind:repo-url;
                             }
                             div class="form-field" {
                                 label for="branch" { "Branch" }
@@ -431,9 +426,6 @@ pub fn render_project_page(
     queue: &ShepherdQueueState,
     notifications: &UnreadNotificationsResponse,
 ) -> Markup {
-    let sync_state = sync_task(work_tree)
-        .map(|item| item.status.as_str())
-        .unwrap_or("idle");
     let route_status = surface
         .routes
         .iter()
@@ -576,7 +568,7 @@ pub fn render_project_page(
                                         src={ "/app/projects/" (project.id) "/focus" }
                                         class="focus-frame" {}
                                 } @else {
-                                    // No focus yet
+                                    // No focus yet — efforts (including sync) show in the tab bar
                                     div class="empty-focus-state" {
                                         svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
                                             rect x="4" y="4" width="32" height="32" {}
@@ -584,17 +576,8 @@ pub fn render_project_page(
                                             line x1="20" y1="4" x2="20" y2="36" {}
                                             rect x="12" y="12" width="16" height="16" opacity="0.35" {}
                                         }
-                                        @if sync_state == "working" {
-                                            p class="eyebrow" { "Getting to know your project" }
-                                            p class="muted" { "Hirsel is surveying the codebase. This view will update automatically." }
-                                            span class="pill status-working" { "Syncing" }
-                                        } @else if sync_state == "failed" {
-                                            p class="eyebrow" { "Sync failed" }
-                                            p class="muted" { "Tell Shepherd to retry in the chat." }
-                                        } @else {
-                                            p class="eyebrow" { "Ready" }
-                                            p class="muted" { "Send a message to start working." }
-                                        }
+                                        p class="eyebrow" { "Project overview" }
+                                        p class="muted" { "Select an effort above or send a message to get started." }
                                     }
                                 }
                             }

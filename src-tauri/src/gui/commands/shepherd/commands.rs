@@ -789,6 +789,23 @@ pub async fn start_project_sync(
         tracing::warn!(%error, item_id = %item.id, "failed to record sync start event");
     }
 
+    // Create a focused effort so sync appears in the normal effort UI
+    if let Ok(chat_store) = ShepherdChatStore::open().await {
+        if let Err(e) = chat_store
+            .create_effort(
+                project_id,
+                route.id,
+                &item.id,
+                "Project sync",
+                "Surveying the codebase and building the project picture.",
+                true, // focused
+            )
+            .await
+        {
+            tracing::warn!(%e, "failed to create sync effort");
+        }
+    }
+
     spawn_project_sync_task(project_id, route, item.clone(), result.prompt);
 
     Ok(StartProjectSyncResponse {
