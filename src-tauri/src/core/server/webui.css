@@ -695,15 +695,30 @@ h3 {
   border-style: dashed;
 }
 
-.message-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 3px;
+/* Timestamp: hidden by default, revealed on hover */
+.message-time {
+  display: block;
   font-size: 10px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.08em;
+  color: var(--dim);
+  margin-top: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.shepherd-message-user:hover .message-time,
+.shepherd-message-assistant:hover .message-time {
+  opacity: 1;
+}
+
+/* Queue status label */
+.message-status {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--muted);
+  margin-top: 4px;
 }
 
 .message-body {
@@ -841,6 +856,17 @@ h3 {
 .inline-form input { max-width: 150px; }
 
 /* ── Events ── */
+
+.message-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
 
 .worker-events { display: grid; gap: 8px; }
 .event-row { border-left: 1px solid rgba(255,255,255,0.06); padding-left: 10px; }

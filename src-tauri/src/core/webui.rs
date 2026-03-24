@@ -252,11 +252,8 @@ pub fn render_chat_panel(
                         @let is_user = message.role == "user";
                         div class=(if is_user { "chat-row user" } else { "chat-row assistant" }) {
                             article class=(if is_user { "shepherd-message-user" } else { "shepherd-message-assistant" }) {
-                                div class="message-meta" {
-                                    span { (&message.role) }
-                                    span { (format_time(&message.timestamp)) }
-                                }
                                 pre class="message-body" { (render_chat_text(&message.chunks_json)) }
+                                span class="message-time" { (format_time(&message.timestamp)) }
                             }
                         }
                     }
@@ -264,15 +261,9 @@ pub fn render_chat_panel(
                     @for item in queue.items.iter().filter(|q| q.status != "working") {
                         div class="chat-row user" {
                             article class="shepherd-message-user pending" {
-                                div class="message-meta" {
-                                    span { "queued" }
-                                    span { (format_time(&item.created_at)) }
-                                }
                                 pre class="message-body" { (render_chat_text(&item.chunks_json)) }
-                                @if item.status == "failed" {
-                                    p class="eyebrow status-failed" { "Failed" }
-                                } @else {
-                                    p class="eyebrow" { "Queued" }
+                                span class=(if item.status == "failed" { "message-status status-failed" } else { "message-status" }) {
+                                    @if item.status == "failed" { "failed" } @else { "queued" }
                                 }
                                 @if let Some(error) = &item.error {
                                     p class="text-destructive" { (error) }
