@@ -508,9 +508,64 @@ h3 {
   color: var(--text-2);
 }
 
+.chat-effort-title {
+  font-family: var(--body);
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
 .shepherd-header-divider {
   margin: 8px 14px 0;
   background: linear-gradient(90deg, transparent, var(--border) 20%, var(--border) 80%, transparent);
+}
+
+/* ── Effort Strip ── */
+
+.effort-strip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 10px 14px 0;
+  scrollbar-width: none;
+}
+
+.effort-strip::-webkit-scrollbar { display: none; }
+
+.effort-strip form { display: flex; }
+
+.effort-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-family: var(--body);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.effort-chip:hover {
+  color: var(--text);
+  border-color: var(--border-hover);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.effort-chip.active {
+  color: var(--text);
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 2px solid var(--text);
+}
+
+.effort-chip .pill {
+  font-size: 9px;
+  padding: 1px 5px;
 }
 
 .chat-thread {
@@ -531,6 +586,14 @@ h3 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 24px 14px;
+}
+
+.shepherd-empty-state .muted {
+  font-size: 12px;
+  max-width: 220px;
 }
 
 .chat-row { display: flex; }
@@ -698,6 +761,8 @@ h3 {
 .event-row { border-left: 1px solid rgba(255,255,255,0.06); padding-left: 10px; }
 
 /* ── Status text colors ── */
+
+.text-destructive { color: var(--terra); }
 
 .status-failed  { color: var(--terra); }
 .status-working { color: var(--sage); }

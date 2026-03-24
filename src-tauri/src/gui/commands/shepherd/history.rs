@@ -249,10 +249,26 @@ pub(super) async fn load_scope_messages(
             .get_project_messages(*project_id, limit)
             .await
             .str_err()?,
+        ShepherdScope::Effort {
+            project_id,
+            effort_id,
+            ..
+        } => store
+            .get_scope_messages(
+                Some(*project_id),
+                Some(&ShepherdChatStore::effort_runtime_name(effort_id)),
+                limit,
+            )
+            .await
+            .str_err()?,
         ShepherdScope::Branch { .. } => Vec::new(),
     };
 
-    if !matches!(scope, ShepherdScope::Project { .. }) && messages.len() > limit {
+    if !matches!(
+        scope,
+        ShepherdScope::Project { .. } | ShepherdScope::Effort { .. }
+    ) && messages.len() > limit
+    {
         let start = messages.len().saturating_sub(limit);
         messages = messages.split_off(start);
     }
@@ -272,6 +288,19 @@ pub(super) async fn save_message(
             .save_project_message(*project_id, role, chunks_json)
             .await
             .str_err(),
+        ShepherdScope::Effort {
+            project_id,
+            effort_id,
+            ..
+        } => store
+            .save_scope_message(
+                Some(*project_id),
+                Some(&ShepherdChatStore::effort_runtime_name(effort_id)),
+                role,
+                chunks_json,
+            )
+            .await
+            .str_err(),
         ShepherdScope::Branch { .. } => {
             Err("branch history is ephemeral and is not persisted".to_string())
         }
@@ -287,6 +316,17 @@ pub(super) async fn load_scope_queue(
         ShepherdScope::Project { project_id, .. } => {
             store.list_queue(Some(*project_id), None).await.str_err()
         }
+        ShepherdScope::Effort {
+            project_id,
+            effort_id,
+            ..
+        } => store
+            .list_queue(
+                Some(*project_id),
+                Some(&ShepherdChatStore::effort_runtime_name(effort_id)),
+            )
+            .await
+            .str_err(),
         ShepherdScope::Branch { .. } => Ok(Vec::new()),
     }
 }

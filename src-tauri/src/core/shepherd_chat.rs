@@ -1,7 +1,4 @@
-//! Shepherd Chat History Storage
-//!
-//! Stores Shepherd (AI assistant) chat history in the global hirsel database.
-//! Chat history is associated with runtime names to maintain separate scoped conversations.
+//! Shepherd chat and effort storage.
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -9,25 +6,18 @@ use tokio::sync::OnceCell;
 
 use super::db::{global_pool, utc_now};
 
-/// Schema for Shepherd chat tables
 const SCHEMA: &str = r#"
--- Shepherd chat messages for persistent runtime-scoped AI assistant history
--- Supports three scopes:
--- 1. project_id=NULL, runtime_name=NULL → general chat
--- 2. project_id=X, runtime_name=NULL → project-level chat
--- 3. project_id=X, runtime_name=Y → runtime-specific chat
 CREATE TABLE IF NOT EXISTS shepherd_chat_messages (
     id INTEGER PRIMARY KEY,
-    project_id INTEGER,       -- NULL for general conversations
-    runtime_name TEXT,            -- NULL for project-level or general conversations
-    role TEXT NOT NULL,       -- 'user', 'assistant', 'system'
+    project_id INTEGER,
+    runtime_name TEXT,
+    role TEXT NOT NULL,
     timestamp TEXT NOT NULL,
-    chunks_json TEXT NOT NULL -- JSON-encoded message chunks
+    chunks_json TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_shepherd_chat_run ON shepherd_chat_messages(runtime_name);
-CREATE INDEX IF NOT EXISTS idx_shepherd_chat_project ON shepherd_chat_messages(project_id);
-CREATE INDEX IF NOT EXISTS idx_shepherd_chat_timestamp ON shepherd_chat_messages(timestamp);
+CREATE INDEX IF NOT EXISTS idx_shepherd_chat_scope
+ON shepherd_chat_messages(project_id, runtime_name, timestamp);
 
 CREATE TABLE IF NOT EXISTS shepherd_chat_queue (
     id INTEGER PRIMARY KEY,
@@ -44,6 +34,24 @@ CREATE TABLE IF NOT EXISTS shepherd_chat_queue (
 
 CREATE INDEX IF NOT EXISTS idx_shepherd_chat_queue_scope
 ON shepherd_chat_queue(project_id, runtime_name, status, created_at);
+
+CREATE TABLE IF NOT EXISTS shepherd_efforts (
+    id TEXT PRIMARY KEY,
+    project_id INTEGER NOT NULL,
+    route_id INTEGER NOT NULL,
+    work_item_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL,
+    focused INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    last_activity_at TEXT NOT NULL,
+    archived_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_shepherd_efforts_project_route
+ON shepherd_efforts(project_id, route_id, archived_at, focused, last_activity_at);
 "#;
 
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
@@ -58,7 +66,6 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Shepherd chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShepherdChatMessage {
@@ -85,7 +92,23 @@ pub struct ShepherdQueuedTurn {
     pub finished_at: Option<String>,
 }
 
-/// Error type for Shepherd chat operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShepherdEffort {
+    pub id: String,
+    pub project_id: i64,
+    pub route_id: i64,
+    pub work_item_id: String,
+    pub title: String,
+    pub summary: String,
+    pub status: String,
+    pub focused: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_activity_at: String,
+    pub archived_at: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ShepherdChatError {
     #[error("Database error: {0}")]
@@ -96,25 +119,68 @@ pub enum ShepherdChatError {
 
 pub type ShepherdChatResult<T> = Result<T, ShepherdChatError>;
 
-/// Shepherd chat storage backed by SQLite
 pub struct ShepherdChatStore;
 
 impl ShepherdChatStore {
     pub const PROJECT_CHAT_RUN_NAME: &str = "__project__";
 
-    /// Open the global Shepherd chat store
+    pub fn effort_runtime_name(effort_id: &str) -> String {
+        format!("__effort__:{effort_id}")
+    }
+
     pub async fn open() -> ShepherdChatResult<Self> {
         let pool = global_pool().await;
         ensure_schema(pool).await?;
         Ok(Self)
     }
 
-    /// Get the pool
     async fn pool(&self) -> &'static SqlitePool {
         global_pool().await
     }
 
-    /// Save a chat message
+    fn row_to_message(row: sqlx::sqlite::SqliteRow) -> ShepherdChatMessage {
+        ShepherdChatMessage {
+            id: row.get("id"),
+            project_id: row.get("project_id"),
+            runtime_name: row.get("runtime_name"),
+            role: row.get("role"),
+            timestamp: row.get("timestamp"),
+            chunks_json: row.get("chunks_json"),
+        }
+    }
+
+    fn row_to_queue_item(row: sqlx::sqlite::SqliteRow) -> ShepherdQueuedTurn {
+        ShepherdQueuedTurn {
+            id: row.get("id"),
+            project_id: row.get("project_id"),
+            runtime_name: row.get("runtime_name"),
+            chunks_json: row.get("chunks_json"),
+            focus_json: row.get("focus_json"),
+            status: row.get("status"),
+            error: row.get("error"),
+            created_at: row.get("created_at"),
+            started_at: row.get("started_at"),
+            finished_at: row.get("finished_at"),
+        }
+    }
+
+    fn row_to_effort(row: sqlx::sqlite::SqliteRow) -> ShepherdEffort {
+        ShepherdEffort {
+            id: row.get("id"),
+            project_id: row.get("project_id"),
+            route_id: row.get("route_id"),
+            work_item_id: row.get("work_item_id"),
+            title: row.get("title"),
+            summary: row.get("summary"),
+            status: row.get("status"),
+            focused: row.get::<i64, _>("focused") != 0,
+            created_at: row.get("created_at"),
+            updated_at: row.get("updated_at"),
+            last_activity_at: row.get("last_activity_at"),
+            archived_at: row.get("archived_at"),
+        }
+    }
+
     pub async fn save_message(
         &self,
         runtime_name: Option<&str>,
@@ -125,7 +191,6 @@ impl ShepherdChatStore {
             .await
     }
 
-    /// Save a chat message with project context
     pub async fn save_message_with_project(
         &self,
         project_id: Option<i64>,
@@ -135,9 +200,9 @@ impl ShepherdChatStore {
     ) -> ShepherdChatResult<i64> {
         let pool = self.pool().await;
         let timestamp = utc_now();
-
         let result = sqlx::query(
-            "INSERT INTO shepherd_chat_messages (project_id, runtime_name, role, timestamp, chunks_json) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO shepherd_chat_messages (project_id, runtime_name, role, timestamp, chunks_json)
+             VALUES (?, ?, ?, ?, ?)",
         )
         .bind(project_id)
         .bind(runtime_name)
@@ -146,119 +211,125 @@ impl ShepherdChatStore {
         .bind(chunks_json)
         .execute(pool)
         .await?;
-
         Ok(result.last_insert_rowid())
     }
 
-    /// Get all messages for a runtime (or general chat if runtime_name is None).
+    pub async fn save_scope_message(
+        &self,
+        project_id: Option<i64>,
+        runtime_name: Option<&str>,
+        role: &str,
+        chunks_json: &str,
+    ) -> ShepherdChatResult<i64> {
+        self.save_message_with_project(project_id, runtime_name, role, chunks_json)
+            .await
+    }
+
+    pub async fn get_scope_messages(
+        &self,
+        project_id: Option<i64>,
+        runtime_name: Option<&str>,
+        limit: usize,
+    ) -> ShepherdChatResult<Vec<ShepherdChatMessage>> {
+        let pool = self.pool().await;
+        let rows = sqlx::query(
+            "SELECT id, project_id, runtime_name, role, timestamp, chunks_json
+             FROM shepherd_chat_messages
+             WHERE project_id IS ? AND runtime_name IS ?
+             ORDER BY timestamp DESC
+             LIMIT ?",
+        )
+        .bind(project_id)
+        .bind(runtime_name)
+        .bind(limit as i64)
+        .fetch_all(pool)
+        .await?;
+
+        let mut messages = rows
+            .into_iter()
+            .map(Self::row_to_message)
+            .collect::<Vec<_>>();
+        messages.reverse();
+        Ok(messages)
+    }
+
     pub async fn get_messages(
         &self,
         runtime_name: Option<&str>,
     ) -> ShepherdChatResult<Vec<ShepherdChatMessage>> {
-        let pool = self.pool().await;
-
-        let rows = if runtime_name.is_some() {
-            sqlx::query(
-                "SELECT id, project_id, runtime_name, role, timestamp, chunks_json
-                 FROM shepherd_chat_messages
-                 WHERE runtime_name = ?
-                 ORDER BY timestamp ASC",
-            )
-            .bind(runtime_name)
-            .fetch_all(pool)
-            .await?
-        } else {
-            sqlx::query(
-                "SELECT id, project_id, runtime_name, role, timestamp, chunks_json
-                 FROM shepherd_chat_messages
-                 WHERE runtime_name IS NULL AND project_id IS NULL
-                 ORDER BY timestamp ASC",
-            )
-            .fetch_all(pool)
-            .await?
-        };
-
-        let messages = rows
-            .into_iter()
-            .map(|row| ShepherdChatMessage {
-                id: row.get("id"),
-                project_id: row.get("project_id"),
-                runtime_name: row.get("runtime_name"),
-                role: row.get("role"),
-                timestamp: row.get("timestamp"),
-                chunks_json: row.get("chunks_json"),
-            })
-            .collect();
-
-        Ok(messages)
+        let limit = i64::MAX as usize;
+        self.get_scope_messages(None, runtime_name, limit).await
     }
 
-    /// Clear all messages for a runtime (or general chat if runtime_name is None).
     pub async fn clear_messages(&self, runtime_name: Option<&str>) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
-
-        if runtime_name.is_some() {
-            sqlx::query("DELETE FROM shepherd_chat_messages WHERE runtime_name = ?")
-                .bind(runtime_name)
-                .execute(pool)
-                .await?;
-        } else {
-            sqlx::query(
-                "DELETE FROM shepherd_chat_messages WHERE runtime_name IS NULL AND project_id IS NULL",
-            )
-            .execute(pool)
-            .await?;
-        }
+        sqlx::query(
+            "DELETE FROM shepherd_chat_messages WHERE project_id IS NULL AND runtime_name IS ?",
+        )
+        .bind(runtime_name)
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
-    /// Clear project-scoped Shepherd history without touching runtime-scoped history.
-    pub async fn clear_project_history(&self, project_id: i64) -> ShepherdChatResult<()> {
+    pub async fn clear_scope_messages(
+        &self,
+        project_id: Option<i64>,
+        runtime_name: Option<&str>,
+    ) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
-
-        sqlx::query("DELETE FROM shepherd_chat_messages WHERE project_id = ? AND runtime_name = ?")
-            .bind(project_id)
-            .bind(Self::PROJECT_CHAT_RUN_NAME)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "DELETE FROM shepherd_chat_messages WHERE project_id IS ? AND runtime_name IS ?",
+        )
+        .bind(project_id)
+        .bind(runtime_name)
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
-    /// Delete every Shepherd message associated with a project, including
-    /// project-scoped and runtime-scoped rows.
+    pub async fn clear_project_history(&self, project_id: i64) -> ShepherdChatResult<()> {
+        self.clear_scope_messages(Some(project_id), Some(Self::PROJECT_CHAT_RUN_NAME))
+            .await
+    }
+
     pub async fn delete_project_messages(&self, project_id: i64) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
-
         sqlx::query("DELETE FROM shepherd_chat_messages WHERE project_id = ?")
             .bind(project_id)
             .execute(pool)
             .await?;
+        sqlx::query("DELETE FROM shepherd_chat_queue WHERE project_id = ?")
+            .bind(project_id)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM shepherd_efforts WHERE project_id = ?")
+            .bind(project_id)
+            .execute(pool)
+            .await?;
         Ok(())
     }
 
-    /// Delete all messages for a specific runtime.
     pub async fn delete_run_messages(&self, runtime_name: &str) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
-
         sqlx::query("DELETE FROM shepherd_chat_messages WHERE runtime_name = ?")
+            .bind(runtime_name)
+            .execute(pool)
+            .await?;
+        sqlx::query("DELETE FROM shepherd_chat_queue WHERE runtime_name = ?")
             .bind(runtime_name)
             .execute(pool)
             .await?;
         Ok(())
     }
 
-    // ========== PROJECT CHAT METHODS ==========
-    // Project-scoped Shepherd chat uses a dedicated runtime_name sentinel so it stays
-    // separate from runtime-specific history.
-
-    /// Save a project-scoped Shepherd message for a project.
     pub async fn save_project_message(
         &self,
         project_id: i64,
         role: &str,
         chunks_json: &str,
     ) -> ShepherdChatResult<i64> {
-        self.save_message_with_project(
+        self.save_scope_message(
             Some(project_id),
             Some(Self::PROJECT_CHAT_RUN_NAME),
             role,
@@ -267,44 +338,15 @@ impl ShepherdChatStore {
         .await
     }
 
-    /// Get project-scoped Shepherd messages for a project (most recent first).
     pub async fn get_project_messages(
         &self,
         project_id: i64,
         limit: usize,
     ) -> ShepherdChatResult<Vec<ShepherdChatMessage>> {
-        let pool = self.pool().await;
-
-        let rows = sqlx::query(
-            "SELECT id, project_id, runtime_name, role, timestamp, chunks_json
-             FROM shepherd_chat_messages
-             WHERE project_id = ? AND runtime_name = ?
-             ORDER BY timestamp DESC
-             LIMIT ?",
-        )
-        .bind(project_id)
-        .bind(Self::PROJECT_CHAT_RUN_NAME)
-        .bind(limit as i64)
-        .fetch_all(pool)
-        .await?;
-
-        let messages: Vec<ShepherdChatMessage> = rows
-            .into_iter()
-            .map(|row| ShepherdChatMessage {
-                id: row.get("id"),
-                project_id: row.get("project_id"),
-                runtime_name: row.get("runtime_name"),
-                role: row.get("role"),
-                timestamp: row.get("timestamp"),
-                chunks_json: row.get("chunks_json"),
-            })
-            .collect();
-
-        // Reverse to get chronological order (oldest first)
-        Ok(messages.into_iter().rev().collect())
+        self.get_scope_messages(Some(project_id), Some(Self::PROJECT_CHAT_RUN_NAME), limit)
+            .await
     }
 
-    /// Clear all project-scoped Shepherd messages for a project.
     pub async fn clear_project_messages(&self, project_id: i64) -> ShepherdChatResult<()> {
         self.clear_project_history(project_id).await
     }
@@ -318,18 +360,13 @@ impl ShepherdChatStore {
     ) -> ShepherdChatResult<ShepherdQueuedTurn> {
         let pool = self.pool().await;
         let created_at = utc_now();
-        let scope_runtime = match (project_id, runtime_name) {
-            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
-            (_, value) => value,
-        };
-
         let result = sqlx::query(
             "INSERT INTO shepherd_chat_queue (
                 project_id, runtime_name, chunks_json, focus_json, status, error, created_at
              ) VALUES (?, ?, ?, ?, 'pending', NULL, ?)",
         )
         .bind(project_id)
-        .bind(scope_runtime)
+        .bind(runtime_name)
         .bind(chunks_json)
         .bind(focus_json)
         .bind(&created_at)
@@ -349,19 +386,7 @@ impl ShepherdChatStore {
         .bind(id)
         .fetch_one(pool)
         .await?;
-
-        Ok(ShepherdQueuedTurn {
-            id: row.get("id"),
-            project_id: row.get("project_id"),
-            runtime_name: row.get("runtime_name"),
-            chunks_json: row.get("chunks_json"),
-            focus_json: row.get("focus_json"),
-            status: row.get("status"),
-            error: row.get("error"),
-            created_at: row.get("created_at"),
-            started_at: row.get("started_at"),
-            finished_at: row.get("finished_at"),
-        })
+        Ok(Self::row_to_queue_item(row))
     }
 
     pub async fn list_queue(
@@ -370,50 +395,18 @@ impl ShepherdChatStore {
         runtime_name: Option<&str>,
     ) -> ShepherdChatResult<Vec<ShepherdQueuedTurn>> {
         let pool = self.pool().await;
-        let scope_runtime = match (project_id, runtime_name) {
-            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
-            (_, value) => value,
-        };
-
-        let rows = if project_id.is_some() || scope_runtime.is_some() {
-            sqlx::query(
-                "SELECT id, project_id, runtime_name, chunks_json, focus_json, status, error, created_at, started_at, finished_at
-                 FROM shepherd_chat_queue
-                 WHERE project_id IS ? AND runtime_name IS ?
-                   AND status IN ('pending', 'working', 'failed')
-                 ORDER BY created_at ASC, id ASC",
-            )
-            .bind(project_id)
-            .bind(scope_runtime)
-            .fetch_all(pool)
-            .await?
-        } else {
-            sqlx::query(
-                "SELECT id, project_id, runtime_name, chunks_json, focus_json, status, error, created_at, started_at, finished_at
-                 FROM shepherd_chat_queue
-                 WHERE project_id IS NULL AND runtime_name IS NULL
-                   AND status IN ('pending', 'working', 'failed')
-                 ORDER BY created_at ASC, id ASC",
-            )
-            .fetch_all(pool)
-            .await?
-        };
-
-        Ok(rows
-            .into_iter()
-            .map(|row| ShepherdQueuedTurn {
-                id: row.get("id"),
-                project_id: row.get("project_id"),
-                runtime_name: row.get("runtime_name"),
-                chunks_json: row.get("chunks_json"),
-                focus_json: row.get("focus_json"),
-                status: row.get("status"),
-                error: row.get("error"),
-                created_at: row.get("created_at"),
-                started_at: row.get("started_at"),
-                finished_at: row.get("finished_at"),
-            })
-            .collect())
+        let rows = sqlx::query(
+            "SELECT id, project_id, runtime_name, chunks_json, focus_json, status, error, created_at, started_at, finished_at
+             FROM shepherd_chat_queue
+             WHERE project_id IS ? AND runtime_name IS ?
+               AND status IN ('pending', 'working', 'failed')
+             ORDER BY created_at ASC, id ASC",
+        )
+        .bind(project_id)
+        .bind(runtime_name)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(Self::row_to_queue_item).collect())
     }
 
     pub async fn claim_next_turn(
@@ -422,34 +415,17 @@ impl ShepherdChatStore {
         runtime_name: Option<&str>,
     ) -> ShepherdChatResult<Option<ShepherdQueuedTurn>> {
         let pool = self.pool().await;
-        let scope_runtime = match (project_id, runtime_name) {
-            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
-            (_, value) => value,
-        };
-
-        let row = if project_id.is_some() || scope_runtime.is_some() {
-            sqlx::query(
-                "SELECT id
-                 FROM shepherd_chat_queue
-                 WHERE project_id IS ? AND runtime_name IS ? AND status = 'pending'
-                 ORDER BY created_at ASC, id ASC
-                 LIMIT 1",
-            )
-            .bind(project_id)
-            .bind(scope_runtime)
-            .fetch_optional(pool)
-            .await?
-        } else {
-            sqlx::query(
-                "SELECT id
-                 FROM shepherd_chat_queue
-                 WHERE project_id IS NULL AND runtime_name IS NULL AND status = 'pending'
-                 ORDER BY created_at ASC, id ASC
-                 LIMIT 1",
-            )
-            .fetch_optional(pool)
-            .await?
-        };
+        let row = sqlx::query(
+            "SELECT id
+             FROM shepherd_chat_queue
+             WHERE project_id IS ? AND runtime_name IS ? AND status = 'pending'
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1",
+        )
+        .bind(project_id)
+        .bind(runtime_name)
+        .fetch_optional(pool)
+        .await?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -507,33 +483,182 @@ impl ShepherdChatStore {
         runtime_name: Option<&str>,
     ) -> ShepherdChatResult<()> {
         let pool = self.pool().await;
-        let scope_runtime = match (project_id, runtime_name) {
-            (Some(_), None) => Some(Self::PROJECT_CHAT_RUN_NAME),
-            (_, value) => value,
-        };
-
-        if project_id.is_some() || scope_runtime.is_some() {
-            sqlx::query(
-                "DELETE FROM shepherd_chat_queue
-                 WHERE project_id IS ? AND runtime_name IS ?",
-            )
+        sqlx::query("DELETE FROM shepherd_chat_queue WHERE project_id IS ? AND runtime_name IS ?")
             .bind(project_id)
-            .bind(scope_runtime)
+            .bind(runtime_name)
             .execute(pool)
             .await?;
-        } else {
-            sqlx::query(
-                "DELETE FROM shepherd_chat_queue
-                 WHERE project_id IS NULL AND runtime_name IS NULL",
-            )
-            .execute(pool)
-            .await?;
+        Ok(())
+    }
+
+    pub async fn create_effort(
+        &self,
+        project_id: i64,
+        route_id: i64,
+        work_item_id: &str,
+        title: &str,
+        summary: &str,
+        focused: bool,
+    ) -> ShepherdChatResult<ShepherdEffort> {
+        let pool = self.pool().await;
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = utc_now();
+        let mut tx = pool.begin().await?;
+
+        if focused {
+            sqlx::query("UPDATE shepherd_efforts SET focused = 0 WHERE project_id = ?")
+                .bind(project_id)
+                .execute(&mut *tx)
+                .await?;
         }
+
+        sqlx::query(
+            "INSERT INTO shepherd_efforts (
+                id, project_id, route_id, work_item_id, title, summary, status, focused,
+                created_at, updated_at, last_activity_at, archived_at
+             ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, NULL)",
+        )
+        .bind(&id)
+        .bind(project_id)
+        .bind(route_id)
+        .bind(work_item_id)
+        .bind(title)
+        .bind(summary)
+        .bind(if focused { 1 } else { 0 })
+        .bind(&now)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+        self.get_effort(&id).await
+    }
+
+    pub async fn list_project_efforts(
+        &self,
+        project_id: i64,
+        route_id: i64,
+    ) -> ShepherdChatResult<Vec<ShepherdEffort>> {
+        let pool = self.pool().await;
+        let rows = sqlx::query(
+            "SELECT id, project_id, route_id, work_item_id, title, summary, status, focused,
+                    created_at, updated_at, last_activity_at, archived_at
+             FROM shepherd_efforts
+             WHERE project_id = ? AND route_id = ? AND archived_at IS NULL
+             ORDER BY focused DESC, last_activity_at DESC, created_at DESC",
+        )
+        .bind(project_id)
+        .bind(route_id)
+        .fetch_all(pool)
+        .await?;
+        Ok(rows.into_iter().map(Self::row_to_effort).collect())
+    }
+
+    pub async fn get_effort(&self, effort_id: &str) -> ShepherdChatResult<ShepherdEffort> {
+        let pool = self.pool().await;
+        let row = sqlx::query(
+            "SELECT id, project_id, route_id, work_item_id, title, summary, status, focused,
+                    created_at, updated_at, last_activity_at, archived_at
+             FROM shepherd_efforts
+             WHERE id = ?",
+        )
+        .bind(effort_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(Self::row_to_effort(row))
+    }
+
+    pub async fn focused_effort(
+        &self,
+        project_id: i64,
+        route_id: i64,
+    ) -> ShepherdChatResult<Option<ShepherdEffort>> {
+        let pool = self.pool().await;
+        let row = sqlx::query(
+            "SELECT id, project_id, route_id, work_item_id, title, summary, status, focused,
+                    created_at, updated_at, last_activity_at, archived_at
+             FROM shepherd_efforts
+             WHERE project_id = ? AND route_id = ? AND archived_at IS NULL AND focused = 1
+             ORDER BY last_activity_at DESC
+             LIMIT 1",
+        )
+        .bind(project_id)
+        .bind(route_id)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.map(Self::row_to_effort))
+    }
+
+    pub async fn set_focused_effort(
+        &self,
+        project_id: i64,
+        effort_id: &str,
+    ) -> ShepherdChatResult<()> {
+        let pool = self.pool().await;
+        let now = utc_now();
+        let mut tx = pool.begin().await?;
+        sqlx::query("UPDATE shepherd_efforts SET focused = 0 WHERE project_id = ?")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "UPDATE shepherd_efforts
+             SET focused = 1, updated_at = ?, last_activity_at = ?
+             WHERE id = ? AND project_id = ?",
+        )
+        .bind(&now)
+        .bind(&now)
+        .bind(effort_id)
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn update_effort(
+        &self,
+        effort_id: &str,
+        summary: Option<&str>,
+        status: Option<&str>,
+    ) -> ShepherdChatResult<()> {
+        let pool = self.pool().await;
+        let now = utc_now();
+        sqlx::query(
+            "UPDATE shepherd_efforts
+             SET summary = COALESCE(?, summary),
+                 status = COALESCE(?, status),
+                 updated_at = ?,
+                 last_activity_at = ?
+             WHERE id = ?",
+        )
+        .bind(summary)
+        .bind(status)
+        .bind(&now)
+        .bind(&now)
+        .bind(effort_id)
+        .execute(pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn archive_effort(&self, effort_id: &str) -> ShepherdChatResult<()> {
+        let pool = self.pool().await;
+        let now = utc_now();
+        sqlx::query(
+            "UPDATE shepherd_efforts
+             SET archived_at = ?, focused = 0, updated_at = ?
+             WHERE id = ?",
+        )
+        .bind(&now)
+        .bind(&now)
+        .bind(effort_id)
+        .execute(pool)
+        .await?;
         Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    // Tests need to be updated for async - skipping for now
-}
+mod tests {}

@@ -16,6 +16,22 @@ pub enum ShepherdScope {
     Project {
         #[serde(rename = "projectId")]
         project_id: i64,
+        #[serde(rename = "routeId")]
+        route_id: i64,
+        #[serde(rename = "workspacePath", default)]
+        workspace_path: Option<String>,
+        #[serde(default)]
+        focus: Option<ShepherdTaskFocus>,
+    },
+    #[serde(rename = "effort")]
+    Effort {
+        #[serde(rename = "projectId")]
+        project_id: i64,
+        #[serde(rename = "routeId")]
+        route_id: i64,
+        #[serde(rename = "effortId")]
+        effort_id: String,
+        title: String,
         #[serde(rename = "workspacePath", default)]
         workspace_path: Option<String>,
         #[serde(default)]
@@ -25,6 +41,8 @@ pub enum ShepherdScope {
     Branch {
         #[serde(rename = "projectId")]
         project_id: i64,
+        #[serde(rename = "routeId")]
+        route_id: i64,
         #[serde(rename = "branchId")]
         branch_id: String,
         #[serde(rename = "parentSessionId")]

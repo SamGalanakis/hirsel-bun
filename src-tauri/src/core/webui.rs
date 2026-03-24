@@ -5,7 +5,7 @@ use crate::core::icons::icon;
 use crate::core::project::{Project, ProjectSurfaceSnapshot};
 use crate::core::route::Route;
 use crate::core::worktree::{WorkItemTree, SYNC_PROJECT_TASK_MARKER, SYNC_PROJECT_TASK_TITLE};
-use crate::core::ShepherdChatMessage;
+use crate::core::{ShepherdChatMessage, ShepherdEffort};
 use crate::gui::commands::shepherd::commands::ShepherdQueueState;
 use crate::gui::commands::types::UnreadNotificationsResponse;
 
@@ -160,6 +160,8 @@ pub fn render_worker_cards(workers: &[Worker]) -> Markup {
 
 pub fn render_chat_panel(
     project_id: i64,
+    efforts: &[ShepherdEffort],
+    focused_effort: Option<&ShepherdEffort>,
     history: &[ShepherdChatMessage],
     queue: &ShepherdQueueState,
 ) -> Markup {
@@ -168,7 +170,12 @@ pub fn render_chat_panel(
             div class="chat-toolbar" {
                 div class="chat-toolbar-left" {
                     (icon("message-square"))
-                    h2 class="chat-title" { "Shepherd" }
+                    h2 class="chat-title" {
+                        "Shepherd"
+                        @if let Some(effort) = focused_effort {
+                            span class="chat-effort-title" { " · " (&effort.title) }
+                        }
+                    }
                 }
                 div class="chat-toolbar-right" {
                     @if queue.has_active_turn {
@@ -180,8 +187,33 @@ pub fn render_chat_panel(
                 }
             }
             hr role="separator" class="shepherd-header-divider" {}
+            @if !efforts.is_empty() {
+                div class="effort-strip" {
+                    @for effort in efforts {
+                        @if focused_effort.map(|item| item.id.as_str()) == Some(effort.id.as_str()) {
+                            span class="effort-chip active" {
+                                (&effort.title)
+                            }
+                        } @else {
+                            form
+                                action=(format!("/app/projects/{}/efforts/{}/focus", project_id, effort.id))
+                                method="post" {
+                                button type="submit" class="effort-chip" {
+                                    span { (&effort.title) }
+                                    span class=(format!("pill status-{}", effort.status)) { (&effort.status) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             div id="chat-thread" class="chat-thread shepherd-messages-area" {
-                @if history.is_empty() && queue.items.is_empty() {
+                @if focused_effort.is_none() && history.is_empty() && queue.items.is_empty() {
+                    div class="shepherd-empty-state" {
+                        p class="eyebrow" { "No focused effort" }
+                        p class="muted" { "Send a message to start or route work." }
+                    }
+                } @else if history.is_empty() && queue.items.is_empty() {
                     div class="shepherd-empty-state" {
                         p class="eyebrow" { "Ready" }
                     }
@@ -354,6 +386,8 @@ pub fn render_project_page(
     surface: &ProjectSurfaceSnapshot,
     work_tree: &[WorkItemTree],
     workers: &[Worker],
+    efforts: &[ShepherdEffort],
+    focused_effort: Option<&ShepherdEffort>,
     history: &[ShepherdChatMessage],
     queue: &ShepherdQueueState,
     notifications: &UnreadNotificationsResponse,
@@ -513,7 +547,7 @@ pub fn render_project_page(
 
                     // ── Chat Rail ──
                     aside class="chat-rail" {
-                        (render_chat_panel(project.id, history, queue))
+                        (render_chat_panel(project.id, efforts, focused_effort, history, queue))
                     }
                 }
             }

@@ -4,7 +4,7 @@ use lash::{PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 
 use super::history::{chunk_image_count, chunk_text};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
-use crate::core::{ProjectStore, RouteFiles, RouteStore};
+use crate::core::{RouteFiles, RouteStore};
 
 pub(super) struct ShepherdLashSink;
 
@@ -94,6 +94,11 @@ fn scope_label(scope: &ShepherdScope) -> String {
     match scope {
         ShepherdScope::General => "general".to_string(),
         ShepherdScope::Project { project_id, .. } => format!("project:{}", project_id),
+        ShepherdScope::Effort {
+            project_id,
+            effort_id,
+            ..
+        } => format!("effort:{}:{}", project_id, effort_id),
         ShepherdScope::Branch {
             project_id,
             branch_id,
@@ -132,6 +137,23 @@ fn build_scope_guidance(
             - Prefer decisions and concrete next actions over long prose.\n",
             parent_session_id,
             goal,
+            focus_line,
+            cwd.display()
+        ),
+        ShepherdScope::Effort { title, .. } => format!(
+            "## Hirsel Effort\n\n\
+            Focused effort: {}\n\
+            {}\n\
+            Workspace root: {}\n\n\
+            ## Hirsel Constraints\n\n\
+            - The final assistant response in this scope is shown directly to the user.\n\
+            - Stay within this effort unless the user explicitly redirects it.\n\
+            - When private branch analysis is supplied in the current turn input, use it as internal context only.\n\
+            - Keep updates coherent with the effort's title and current work item.\n\
+            - Use Hirsel tools to inspect, plan, mutate work items, and delegate workers when needed.\n\
+            - Prefer concrete progress, decisions, and next actions over broad narration.\n\
+            - Never mention hidden branching or internal routing.\n",
+            title,
             focus_line,
             cwd.display()
         ),
@@ -212,6 +234,7 @@ pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i6
     match scope {
         ShepherdScope::General => None,
         ShepherdScope::Project { project_id, .. } => Some(*project_id),
+        ShepherdScope::Effort { project_id, .. } => Some(*project_id),
         ShepherdScope::Branch { project_id, .. } => Some(*project_id),
     }
 }
@@ -221,11 +244,7 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<Pat
         ShepherdScope::General => None,
         ShepherdScope::Project {
             project_id,
-            workspace_path,
-            ..
-        }
-        | ShepherdScope::Branch {
-            project_id,
+            route_id,
             workspace_path,
             ..
         } => {
@@ -233,17 +252,34 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Option<Pat
                 return Some(PathBuf::from(path));
             }
 
-            let project_store = ProjectStore::open().await.ok()?;
-            let project = project_store.get_project(*project_id).await.ok()?;
             let route_store = RouteStore::new(*project_id).await.ok()?;
+            let route = match route_store.get_route(*route_id).await {
+                Ok(route) => route,
+                Err(_) => route_store.create_main_route().await.ok()?,
+            };
 
-            let route = if let Some(route_id) = project.active_route_id {
-                match route_store.get_route(route_id).await {
-                    Ok(route) => route,
-                    Err(_) => route_store.create_main_route().await.ok()?,
-                }
-            } else {
-                route_store.create_main_route().await.ok()?
+            Some(RouteFiles::new(*project_id, &route.name).route_dir())
+        }
+        ShepherdScope::Effort {
+            project_id,
+            route_id,
+            workspace_path,
+            ..
+        }
+        | ShepherdScope::Branch {
+            project_id,
+            route_id,
+            workspace_path,
+            ..
+        } => {
+            if let Some(path) = workspace_path.as_ref().filter(|p| !p.trim().is_empty()) {
+                return Some(PathBuf::from(path));
+            }
+
+            let route_store = RouteStore::new(*project_id).await.ok()?;
+            let route = match route_store.get_route(*route_id).await {
+                Ok(route) => route,
+                Err(_) => route_store.create_main_route().await.ok()?,
             };
 
             Some(RouteFiles::new(*project_id, &route.name).route_dir())

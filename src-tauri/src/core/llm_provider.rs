@@ -88,6 +88,19 @@ pub fn resolve_model(config: &Config, provider: &Provider) -> (String, Option<St
     (model, variant)
 }
 
+/// Resolve the provider's named intelligence tier first, then fall back to the
+/// normal model resolution path.
+pub fn resolve_model_for_tier(
+    config: &Config,
+    provider: &Provider,
+    tier: &str,
+) -> (String, Option<String>) {
+    if let Some((model, variant)) = provider.default_agent_model(tier) {
+        return (model.to_string(), variant.map(str::to_string));
+    }
+    resolve_model(config, provider)
+}
+
 pub async fn resolve_provider(config: &Config) -> Result<Provider, String> {
     let store = CredentialStore::open()
         .await

@@ -27,6 +27,7 @@ use crate::core::webui::{
     render_project_page, render_project_settings_page, render_settings_page,
     render_worker_detail_page,
 };
+use crate::core::ShepherdEffort;
 use crate::gui::commands::concerns as gui_concerns;
 use crate::gui::commands::events as gui_events;
 use crate::gui::commands::projects as gui_projects;
@@ -156,6 +157,8 @@ async fn load_project_page_state(
         crate::core::project::ProjectSurfaceSnapshot,
         Vec<crate::core::worktree::WorkItemTree>,
         Vec<crate::core::api_types::Worker>,
+        Vec<ShepherdEffort>,
+        Option<ShepherdEffort>,
         Vec<crate::core::ShepherdChatMessage>,
         gui_shepherd::ShepherdQueueState,
         crate::gui::commands::types::UnreadNotificationsResponse,
@@ -174,21 +177,33 @@ async fn load_project_page_state(
         .await?
         .tree;
     let workers = gui_workers::get_route_workers(project_id, route.id).await?;
-    let history = gui_shepherd::get_shepherd_history(
-        ShepherdScope::Project {
+    let efforts = gui_shepherd::get_project_efforts(project_id, route.id).await?;
+    let focused_effort = gui_shepherd::get_focused_project_effort(project_id, route.id).await?;
+    let (history, queue) = if let Some(effort) = &focused_effort {
+        let scope = ShepherdScope::Effort {
             project_id,
+            route_id: route.id,
+            effort_id: effort.id.clone(),
+            title: effort.title.clone(),
             workspace_path: None,
-            focus: None,
-        },
-        100,
-    )
-    .await?;
-    let queue = gui_shepherd::get_shepherd_queue(ShepherdScope::Project {
-        project_id,
-        workspace_path: None,
-        focus: None,
-    })
-    .await?;
+            focus: Some(crate::gui::commands::shepherd::types::ShepherdTaskFocus {
+                task_id: effort.work_item_id.clone(),
+                task_name: effort.title.clone(),
+            }),
+        };
+        (
+            gui_shepherd::get_shepherd_history(scope.clone(), 100).await?,
+            gui_shepherd::get_shepherd_queue(scope).await?,
+        )
+    } else {
+        (
+            Vec::new(),
+            gui_shepherd::ShepherdQueueState {
+                items: Vec::new(),
+                has_active_turn: false,
+            },
+        )
+    };
     let notifications = gui_concerns::get_all_unread_notifications().await?;
     Ok((
         projects,
@@ -197,6 +212,8 @@ async fn load_project_page_state(
         surface,
         work_tree,
         workers,
+        efforts,
+        focused_effort,
         history,
         queue,
         notifications,
@@ -227,6 +244,10 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route(
             "/app/projects/{project_id}/chat/send",
             post(send_chat_message),
+        )
+        .route(
+            "/app/projects/{project_id}/efforts/{effort_id}/focus",
+            post(focus_effort),
         )
         .route("/app/projects/{project_id}/routes", post(create_route))
         .route(
@@ -355,10 +376,21 @@ pub async fn create_project(
 pub async fn project_page(
     Path(project_id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let (projects, project, route, surface, work_tree, workers, history, queue, notifications) =
-        load_project_page_state(project_id)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let (
+        projects,
+        project,
+        route,
+        surface,
+        work_tree,
+        workers,
+        efforts,
+        focused_effort,
+        history,
+        queue,
+        notifications,
+    ) = load_project_page_state(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(render_project_page(
         &projects,
         &project,
@@ -366,6 +398,8 @@ pub async fn project_page(
         &surface,
         &work_tree,
         &workers,
+        &efforts,
+        focused_effort.as_ref(),
         &history,
         &queue,
         &notifications,
@@ -394,23 +428,26 @@ pub async fn send_chat_message(
     Path(project_id): Path<i64>,
     Form(form): Form<ChatSendForm>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    gui_shepherd::enqueue_shepherd_message_for_scope(
-        ShepherdScope::Project {
-            project_id,
-            workspace_path: None,
-            focus: None,
-        },
-        Some(form.content),
-        None,
-        None,
-    )
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    gui_shepherd::enqueue_project_message(project_id, Some(form.content), None)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     let stream = stream! {
         yield Ok::<Event, Infallible>(patch_signals("{chatDraft: ''}"));
     };
     Ok(Sse::new(stream))
+}
+
+pub async fn focus_effort(
+    Path((project_id, effort_id)): Path<(i64, String)>,
+) -> Result<Redirect, (StatusCode, String)> {
+    let route = gui_routes::get_active_route(project_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    gui_shepherd::focus_project_effort(project_id, route.id, effort_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
 }
 
 pub async fn create_route(
@@ -728,7 +765,7 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
         let mut last_workers = String::new();
 
         loop {
-            if let Ok((_projects, project, route, surface, work_tree, workers, history, queue, notifications)) =
+            if let Ok((_projects, project, route, surface, work_tree, workers, efforts, focused_effort, history, queue, notifications)) =
                 load_project_page_state(project_id).await
             {
                 let focus_markup = maud::html! {
@@ -747,7 +784,14 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
                     }
                 }.into_string();
 
-                let chat_markup = render_chat_panel(project.id, &history, &queue).into_string();
+                let chat_markup = render_chat_panel(
+                    project.id,
+                    &efforts,
+                    focused_effort.as_ref(),
+                    &history,
+                    &queue,
+                )
+                .into_string();
                 let work_markup = maud::html! {
                     section id="work-panel" class="panel-card" {
                         div class="panel-header" {

@@ -14,6 +14,7 @@ use super::history::{
     load_scope_messages, load_scope_queue, parse_chunks_from_json, save_message,
     RUNTIME_HISTORY_LIMIT,
 };
+use super::router::{focus_effort, focused_or_latest_effort, route_message_to_effort};
 use super::runtime::{
     build_user_turn_text, looks_like_runtime_traceback, resolve_runtime_cwd,
     resolve_scope_project_id, resolve_scope_workspace, shepherd_prompt_overrides, ShepherdLashSink,
@@ -23,11 +24,11 @@ use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::core::credentials::CredentialStore;
 use crate::core::{
     ensure_sync_project_task, llm_provider, DeltaState, ProjectStore, Route, RouteStore,
-    ShepherdChatMessage, ShepherdChatStore, ShepherdQueuedTurn, WorkItem,
+    ShepherdChatMessage, ShepherdChatStore, ShepherdEffort, ShepherdQueuedTurn, WorkItem,
 };
 use crate::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
 
-struct SilentLashSink;
+pub(super) struct SilentLashSink;
 
 static ACTIVE_SCOPE_PROCESSORS: OnceLock<StdMutex<HashSet<String>>> = OnceLock::new();
 
@@ -53,6 +54,8 @@ pub struct StartProjectSyncResponse {
 pub struct EnqueueShepherdMessageResponse {
     pub queued: bool,
     pub queue_depth: usize,
+    #[serde(default)]
+    pub effort_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,14 +187,30 @@ fn scope_queue_key(scope: &ShepherdScope) -> Option<String> {
     match scope {
         ShepherdScope::General => Some("general".to_string()),
         ShepherdScope::Project { project_id, .. } => Some(format!("project:{}", project_id)),
+        ShepherdScope::Effort {
+            project_id,
+            effort_id,
+            ..
+        } => Some(format!("effort:{}:{}", project_id, effort_id)),
         ShepherdScope::Branch { .. } => None,
     }
 }
 
-fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<&str>) {
+fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
     match scope {
         ShepherdScope::General => (None, None),
-        ShepherdScope::Project { project_id, .. } => (Some(*project_id), None),
+        ShepherdScope::Project { project_id, .. } => (
+            Some(*project_id),
+            Some(ShepherdChatStore::PROJECT_CHAT_RUN_NAME.to_string()),
+        ),
+        ShepherdScope::Effort {
+            project_id,
+            effort_id,
+            ..
+        } => (
+            Some(*project_id),
+            Some(ShepherdChatStore::effort_runtime_name(effort_id)),
+        ),
         ShepherdScope::Branch { .. } => (None, None),
     }
 }
@@ -248,22 +267,30 @@ async fn run_private_branch_turn(
     cancel: CancellationToken,
     parent_state: AgentStateEnvelope,
 ) -> Result<Option<String>, String> {
-    let ShepherdScope::Project {
-        project_id,
-        workspace_path,
-        ..
-    } = parent_scope
-    else {
-        return Ok(None);
+    let (project_id, route_id, workspace_path) = match parent_scope {
+        ShepherdScope::Project {
+            project_id,
+            route_id,
+            workspace_path,
+            ..
+        }
+        | ShepherdScope::Effort {
+            project_id,
+            route_id,
+            workspace_path,
+            ..
+        } => (*project_id, *route_id, workspace_path.clone()),
+        _ => return Ok(None),
     };
 
     let branch_id = uuid::Uuid::new_v4().to_string();
     let branch_scope = ShepherdScope::Branch {
-        project_id: *project_id,
+        project_id,
+        route_id,
         branch_id: branch_id.clone(),
         parent_session_id: parent_session_id.to_string(),
         goal: "Think through the latest user request, inspect Hirsel state, use tools if needed, and return a private conclusion for the channel.".to_string(),
-        workspace_path: workspace_path.clone(),
+        workspace_path,
         focus: parent_focus,
     };
     let cwd = resolve_runtime_cwd(resolve_scope_workspace(&branch_scope).await);
@@ -328,6 +355,7 @@ async fn run_project_sync_branch(
 ) -> Result<Option<String>, String> {
     let scope = ShepherdScope::Project {
         project_id,
+        route_id: route.id,
         workspace_path: None,
         focus: Some(ShepherdTaskFocus {
             task_id: item_id.clone(),
@@ -486,7 +514,10 @@ async fn process_scope_queue(scope: ShepherdScope, scope_key: String) {
     let (project_id, runtime_name) = scope_storage_ids(&scope);
 
     loop {
-        let next = match store.claim_next_turn(project_id, runtime_name).await {
+        let next = match store
+            .claim_next_turn(project_id, runtime_name.as_deref())
+            .await
+        {
             Ok(next) => next,
             Err(error) => {
                 tracing::error!(%error, %scope_key, "failed to claim shepherd queue item");
@@ -515,12 +546,27 @@ async fn process_scope_queue(scope: ShepherdScope, scope_key: String) {
         .await;
 
         match result {
-            Ok(_) => {
+            Ok(chunks) => {
+                if let ShepherdScope::Effort { effort_id, .. } = &scope {
+                    let summary = result_summary_from_chunks(&chunks);
+                    if let Ok(store) = ShepherdChatStore::open().await {
+                        let _ = store
+                            .update_effort(effort_id, Some(&summary), Some("active"))
+                            .await;
+                    }
+                }
                 if let Err(error) = store.complete_turn(job.id).await {
                     tracing::error!(%error, queue_id = job.id, %scope_key, "failed to mark shepherd queue item complete");
                 }
             }
             Err(error) => {
+                if let ShepherdScope::Effort { effort_id, .. } = &scope {
+                    if let Ok(store) = ShepherdChatStore::open().await {
+                        let _ = store
+                            .update_effort(effort_id, Some(&error), Some("failed"))
+                            .await;
+                    }
+                }
                 tracing::error!(%error, queue_id = job.id, %scope_key, "queued shepherd turn failed");
                 if let Err(mark_error) = store.fail_turn(job.id, &error).await {
                     tracing::error!(%mark_error, queue_id = job.id, %scope_key, "failed to mark shepherd queue item failed");
@@ -564,7 +610,9 @@ async fn run_shepherd_turn_for_scope(
     use_private_branch: bool,
 ) -> Result<Vec<ShepherdMessageChunk>, String> {
     let focus = focus.or_else(|| match scope {
-        ShepherdScope::Project { focus, .. } | ShepherdScope::Branch { focus, .. } => focus.clone(),
+        ShepherdScope::Project { focus, .. }
+        | ShepherdScope::Effort { focus, .. }
+        | ShepherdScope::Branch { focus, .. } => focus.clone(),
         _ => None,
     });
     let user_chunks_json = chunks_to_json(&user_chunks)?;
@@ -657,11 +705,40 @@ async fn run_shepherd_turn_for_scope(
 
     let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
     save_message(scope, "assistant", &assistant_chunks_json).await?;
+    if let ShepherdScope::Effort { effort_id, .. } = scope {
+        if let Ok(store) = ShepherdChatStore::open().await {
+            let summary = result_summary_from_chunks(&assistant_chunks);
+            let _ = store
+                .update_effort(effort_id, Some(&summary), Some("active"))
+                .await;
+        }
+    }
     tracing::info!(
         chunk_count = assistant_chunks.len(),
         "shepherd turn completed"
     );
     Ok(assistant_chunks)
+}
+
+fn result_summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
+    let joined = chunks
+        .iter()
+        .filter_map(|chunk| match chunk {
+            ShepherdMessageChunk::Text { content } => Some(content.trim()),
+            _ => None,
+        })
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let trimmed = joined.trim();
+    if trimmed.is_empty() {
+        return "No summary available yet.".to_string();
+    }
+    let mut summary = trimmed.chars().take(240).collect::<String>();
+    if trimmed.chars().count() > 240 {
+        summary.push_str("...");
+    }
+    summary
 }
 
 #[tracing::instrument(fields(project_id, route_id))]
@@ -746,7 +823,7 @@ pub async fn enqueue_shepherd_message_for_scope(
     store
         .enqueue_turn(
             project_id,
-            runtime_name,
+            runtime_name.as_deref(),
             &chunks_json,
             focus_json.as_deref(),
         )
@@ -761,7 +838,68 @@ pub async fn enqueue_shepherd_message_for_scope(
             .iter()
             .filter(|item| item.status == "pending")
             .count(),
+        effort_id: match scope {
+            ShepherdScope::Effort { effort_id, .. } => Some(effort_id),
+            _ => None,
+        },
     })
+}
+
+pub async fn enqueue_project_message(
+    project_id: i64,
+    content: Option<String>,
+    chunks: Option<Vec<ShepherdMessageChunk>>,
+) -> Result<EnqueueShepherdMessageResponse, String> {
+    let user_chunks = build_user_chunks(content, chunks)?;
+    let message_text = build_user_turn_text(&user_chunks);
+    let route = resolve_target_route(project_id, None).await?;
+    let effort = route_message_to_effort(project_id, route.id, &route.name, &message_text).await?;
+    let scope = ShepherdScope::Effort {
+        project_id,
+        route_id: route.id,
+        effort_id: effort.id.clone(),
+        title: effort.title.clone(),
+        workspace_path: None,
+        focus: Some(ShepherdTaskFocus {
+            task_id: effort.work_item_id.clone(),
+            task_name: effort.title.clone(),
+        }),
+    };
+    let response = enqueue_shepherd_message_for_scope(scope, None, Some(user_chunks), None).await?;
+    if let Ok(store) = ShepherdChatStore::open().await {
+        let _ = store
+            .update_effort(&effort.id, Some(&effort.summary), Some("active"))
+            .await;
+    }
+    Ok(response)
+}
+
+pub async fn get_project_efforts(
+    project_id: i64,
+    route_id: i64,
+) -> Result<Vec<ShepherdEffort>, String> {
+    let store = ShepherdChatStore::open()
+        .await
+        .map_err(|e| format!("failed to open shepherd chat store: {}", e))?;
+    store
+        .list_project_efforts(project_id, route_id)
+        .await
+        .map_err(|e| format!("failed to load project efforts: {}", e))
+}
+
+pub async fn get_focused_project_effort(
+    project_id: i64,
+    route_id: i64,
+) -> Result<Option<ShepherdEffort>, String> {
+    focused_or_latest_effort(project_id, route_id).await
+}
+
+pub async fn focus_project_effort(
+    project_id: i64,
+    route_id: i64,
+    effort_id: String,
+) -> Result<ShepherdEffort, String> {
+    focus_effort(project_id, route_id, &effort_id).await
 }
 
 pub async fn get_shepherd_queue(scope: ShepherdScope) -> Result<ShepherdQueueState, String> {
@@ -781,7 +919,7 @@ pub async fn get_shepherd_history(
     let messages = load_scope_messages(&scope, limit).await?;
 
     Ok(match scope {
-        ShepherdScope::Project { .. } => messages,
+        ShepherdScope::Project { .. } | ShepherdScope::Effort { .. } => messages,
         _ => messages.into_iter().take(limit).collect(),
     })
 }

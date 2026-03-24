@@ -91,7 +91,7 @@ pub use shepherd::{
     ShepherdDecision, ShepherdDecisionType, ShepherdEngine,
 };
 pub use shepherd_chat::{
-    ShepherdChatError, ShepherdChatMessage, ShepherdChatResult, ShepherdChatStore,
+    ShepherdChatError, ShepherdChatMessage, ShepherdChatResult, ShepherdChatStore, ShepherdEffort,
     ShepherdQueuedTurn,
 };
 
