@@ -225,14 +225,9 @@ pub fn render_chat_panel(
                 }
             }
             div id="chat-thread" class="chat-thread shepherd-messages-area" {
-                @if focused_effort.is_none() && history.is_empty() && queue.items.is_empty() {
+                @if history.is_empty() && queue.items.is_empty() {
                     div class="shepherd-empty-state" {
-                        p class="eyebrow" { "No focused effort" }
-                        p class="muted" { "Send a message to start or route work." }
-                    }
-                } @else if history.is_empty() && queue.items.is_empty() {
-                    div class="shepherd-empty-state" {
-                        p class="eyebrow" { "Ready" }
+                        p class="muted" { "Send a message to get started." }
                     }
                 } @else {
                     @for message in history {
@@ -581,7 +576,7 @@ pub fn render_project_page(
                                         src={ "/app/projects/" (project.id) "/focus" }
                                         class="focus-frame" {}
                                 } @else {
-                                    // No focus at all
+                                    // No focus yet
                                     div class="empty-focus-state" {
                                         svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
                                             rect x="4" y="4" width="32" height="32" {}
@@ -589,21 +584,16 @@ pub fn render_project_page(
                                             line x1="20" y1="4" x2="20" y2="36" {}
                                             rect x="12" y="12" width="16" height="16" opacity="0.35" {}
                                         }
-                                        p class="eyebrow" { "Awaiting project focus" }
                                         @if sync_state == "working" {
-                                            p class="muted" { "Hirsel is surveying the project in the background." }
+                                            p class="eyebrow" { "Getting to know your project" }
+                                            p class="muted" { "Hirsel is surveying the codebase. This view will update automatically." }
+                                            span class="pill status-working" { "Syncing" }
                                         } @else if sync_state == "failed" {
-                                            p class="muted" { "Project sync failed." }
+                                            p class="eyebrow" { "Sync failed" }
+                                            p class="muted" { "Tell Shepherd to retry in the chat." }
                                         } @else {
-                                            p class="muted" { "Generate the first project picture when you are ready." }
-                                        }
-                                        @if sync_state != "working" {
-                                            form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
-                                                button type="submit" class="action-btn primary" {
-                                                    (icon("refresh-cw"))
-                                                    @if sync_state == "failed" { "Retry sync" } @else { "Sync" }
-                                                }
-                                            }
+                                            p class="eyebrow" { "Ready" }
+                                            p class="muted" { "Send a message to start working." }
                                         }
                                     }
                                 }

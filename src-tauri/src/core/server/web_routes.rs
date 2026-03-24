@@ -240,7 +240,6 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route("/app/projects/{project_id}", get(project_page))
         .route("/app/projects/{project_id}/focus", get(project_focus_page))
         .route("/app/projects/{project_id}/stream", get(project_stream))
-        .route("/app/projects/{project_id}/sync", post(start_sync))
         .route(
             "/app/projects/{project_id}/chat/send",
             post(send_chat_message),
@@ -375,6 +374,11 @@ pub async fn create_project(
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
+    // Auto-sync immediately after creation
+    if let Err(e) = gui_shepherd::start_project_sync(project.id, None, true).await {
+        tracing::warn!(project_id = project.id, error = %e, "auto-sync failed after project creation");
+    }
+
     Ok(Redirect::to(&format!("/app/projects/{}", project.id)))
 }
 
@@ -420,13 +424,6 @@ pub async fn project_focus_page(
     Ok(axum::response::Html(
         render_focus_document(&surface.focus_view.html).into_string(),
     ))
-}
-
-pub async fn start_sync(Path(project_id): Path<i64>) -> Result<Redirect, (StatusCode, String)> {
-    gui_shepherd::start_project_sync(project_id, None, true)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
-    Ok(Redirect::to(&format!("/app/projects/{}", project_id)))
 }
 
 pub async fn send_chat_message(
@@ -849,15 +846,15 @@ pub async fn project_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
                                         rect x="12" y="12" width="16" height="16" opacity="0.35" {}
                                     }
                                     @if sync_state == "working" {
-                                        p class="eyebrow" { "Syncing project" }
-                                        p class="muted" { "Hirsel is surveying the codebase." }
-                                        span class="pill status-working" { "Working" }
+                                        p class="eyebrow" { "Getting to know your project" }
+                                        p class="muted" { "Hirsel is surveying the codebase. This view will update automatically." }
+                                        span class="pill status-working" { "Syncing" }
+                                    } @else if sync_state == "failed" {
+                                        p class="eyebrow" { "Sync failed" }
+                                        p class="muted" { "Tell Shepherd to retry in the chat." }
                                     } @else {
-                                        p class="eyebrow" { "Awaiting project focus" }
-                                        p class="muted" { "Sync the project to generate the first picture." }
-                                        form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
-                                            button type="submit" class="action-btn primary" { "Sync" }
-                                        }
+                                        p class="eyebrow" { "Ready" }
+                                        p class="muted" { "Send a message to start working." }
                                     }
                                 }
                             }
