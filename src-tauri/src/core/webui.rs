@@ -840,23 +840,31 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                         header {
                             h3 { (icon("trash-2")) "Danger zone" }
                         }
-                        section {
+                        section data-signals:confirm-delete="false" {
                             p class="muted" style="margin-bottom: 12px;" {
                                 "Permanently delete this project and all its routes, work items, efforts, and history."
+                            }
+                            // First click: reveal confirm. Second click: submit the hidden form.
+                            button
+                                type="button"
+                                class="action-btn danger"
+                                style="width:100%;"
+                                data-show="!$confirmDelete"
+                                data-on:click="$confirmDelete = true" {
+                                (icon("trash-2"))
+                                "Delete project"
                             }
                             form
                                 action={ "/app/projects/" (project.id) "/delete" }
                                 method="post"
-                                data-signals:confirm-delete="false"
-                                data-on:submit__prevent="if (!$confirmDelete) { $confirmDelete = true; return; } this.submit();" {
-                                button
-                                    type="submit"
-                                    class="action-btn danger"
-                                    style="width:100%;"
-                                    data-class:confirmed="$confirmDelete" {
+                                data-show="$confirmDelete"
+                                style="display: flex; gap: 8px;" {
+                                button type="submit" class="action-btn danger confirmed" style="flex:1;" {
                                     (icon("trash-2"))
-                                    span data-show="!$confirmDelete" { "Delete project" }
-                                    span data-show="$confirmDelete" { "Click again to confirm" }
+                                    "Confirm delete"
+                                }
+                                button type="button" class="action-btn ghost" data-on:click="$confirmDelete = false" {
+                                    "Cancel"
                                 }
                             }
                         }
