@@ -277,7 +277,7 @@ pub fn render_connect_page(error: Option<&str>, return_to: Option<&str>) -> Mark
                                 label for="api-key" { "API key" }
                                 input id="api-key" type="password" name="api_key" autocomplete="current-password" required;
                             }
-                            button type="submit" class="btn btn-primary" style="width:100%; margin-top: 8px;" {
+                            button type="submit" class="btn btn-outline" style="width:100%; margin-top: 8px;" {
                                 (icon("key"))
                                 "Open Hirsel"
                             }
@@ -334,7 +334,7 @@ pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
                                     label for="branch" { "Branch" }
                                     input id="branch" type="text" name="branch" value="main";
                                 }
-                                button type="submit" class="btn btn-primary" style="width:100%; margin-top: 8px;" {
+                                button type="submit" class="btn btn-outline" style="width:100%; margin-top: 8px;" {
                                     (icon("plus"))
                                     "Create project"
                                 }
@@ -393,7 +393,7 @@ pub fn render_project_page(
                                 (&project.name)
                             }
                             a href=(format!("/app/projects/{}/settings", project.id)) class="btn btn-sm-icon btn-ghost" data-tooltip="Project settings" {
-                                (icon("pencil"))
+                                (icon("settings"))
                             }
                         }
                     }
@@ -570,7 +570,7 @@ pub fn render_settings_page(
                                     label for="or-base" { "OpenRouter base URL" }
                                     input id="or-base" type="text" name="openrouter_base_url" value=(openrouter_base_url.unwrap_or(""));
                                 }
-                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                button type="submit" class="btn btn-outline" style="width:100%;" {
                                     (icon("save"))
                                     "Save provider"
                                 }
@@ -629,7 +629,7 @@ pub fn render_settings_page(
                                     }
                                     input id="or-key" type="password" name="api_key" placeholder="sk-or-...";
                                 }
-                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                button type="submit" class="btn btn-outline" style="width:100%;" {
                                     (icon("save"))
                                     "Save OpenRouter key"
                                 }
@@ -681,7 +681,7 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                     // ── Project Card ──
                     article class="card" {
                         header {
-                            h3 { (icon("pencil")) "Project" }
+                            h3 { (icon("folder")) "Project" }
                         }
                         section {
                             form action={ "/app/projects/" (project.id) "/settings/project" } method="post" {
@@ -693,7 +693,7 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                                     label for="proj-desc" { "Description" }
                                     textarea id="proj-desc" name="description" rows="4" { (project.description.as_deref().unwrap_or("")) }
                                 }
-                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                button type="submit" class="btn btn-outline" style="width:100%;" {
                                     (icon("save"))
                                     "Save project"
                                 }
@@ -724,7 +724,7 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                                     label for="target-branch" { "Target branch" }
                                     input id="target-branch" type="text" name="target_branch" value=(route.target_branch.as_deref().unwrap_or(""));
                                 }
-                                button type="submit" class="btn btn-primary" style="width:100%;" {
+                                button type="submit" class="btn btn-outline" style="width:100%;" {
                                     (icon("save"))
                                     "Save route"
                                 }
