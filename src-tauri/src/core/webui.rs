@@ -21,10 +21,8 @@ fn page_head(title: &str, description: &str) -> Markup {
         link rel="preconnect" href="https://fonts.googleapis.com";
         link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
         link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Space+Grotesk:wght@300;400;500;600&display=swap";
-        link rel="stylesheet" href="/static/basecoat.css";
         link rel="stylesheet" href="/static/webui.css";
         script type="module" src=(DATASTAR_BUNDLE) {}
-        script src="/static/basecoat.js" defer {}
     }
 }
 
@@ -102,9 +100,9 @@ pub fn render_work_tree_nodes(nodes: &[WorkItemTree]) -> Markup {
                         div class="tree-row" {
                             div class="tree-meta" {
                                 span class="tree-title" { (&node.title) }
-                                span class=(format!("badge badge-outline status-{}", node.status)) { (&node.status) }
+                                span class=(format!("pill status-{}", node.status)) { (&node.status) }
                                 @if let Some(profile) = node.capability_profile {
-                                    span class="badge badge-secondary" { (profile.as_str()) }
+                                    span class="pill muted" { (profile.as_str()) }
                                 }
                             }
                             @if !node.description.trim().is_empty() {
@@ -132,11 +130,11 @@ pub fn render_worker_cards(workers: &[Worker]) -> Markup {
         } @else {
             div class="worker-grid" {
                 @for worker in workers {
-                    article class="card worker-card" {
+                    article class="panel worker-card" {
                         header {
                             h3 { (icon("cpu")) (&worker.name) }
                             span data-slot="card-action" {
-                                span class=(format!("badge badge-outline status-{}", format!("{:?}", worker.status).to_lowercase())) {
+                                span class=(format!("pill status-{}", format!("{:?}", worker.status).to_lowercase())) {
                                     (format!("{:?}", worker.status).to_lowercase())
                                 }
                             }
@@ -144,7 +142,7 @@ pub fn render_worker_cards(workers: &[Worker]) -> Markup {
                         @if worker.current_task.is_some() || worker.capability_profile.is_some() {
                             section {
                                 @if let Some(task) = &worker.current_task {
-                                    p class="text-muted-foreground" { (task) }
+                                    p class="muted" { (task) }
                                 }
                                 @if let Some(profile) = &worker.capability_profile {
                                     p class="eyebrow" { (profile.as_str()) }
@@ -174,10 +172,10 @@ pub fn render_chat_panel(
                 }
                 div class="chat-toolbar-right" {
                     @if queue.has_active_turn {
-                        span class="badge badge-outline status-working" { "Working" }
+                        span class="pill status-working" { "Working" }
                     }
                     @if !queue.items.is_empty() {
-                        span class="badge badge-outline" { "Queued " (queue.items.len()) }
+                        span class="pill" { "Queued " (queue.items.len()) }
                     }
                 }
             }
@@ -239,7 +237,7 @@ pub fn render_chat_panel(
                         data-bind:chat-draft {}
                     button
                         type="submit"
-                        class="btn btn-sm btn-primary shepherd-send-btn"
+                        class="action-btn sm shepherd-send-btn"
                         data-attr:disabled="$chatSending || !$chatDraft.trim()" {
                         (icon("send"))
                         "Send"
@@ -258,7 +256,7 @@ pub fn render_connect_page(error: Option<&str>, return_to: Option<&str>) -> Mark
         "Connect to a Hirsel backend",
         html! {
             main class="connect-page" {
-                section class="card connect-card" {
+                section class="panel connect-card" {
                     header {
                         h2 { "Connect to Hirsel" }
                         p { "Enter the backend API key to open this Hirsel server." }
@@ -273,11 +271,11 @@ pub fn render_connect_page(error: Option<&str>, return_to: Option<&str>) -> Mark
                         }
                         form action="/connect/session" method="post" {
                             input type="hidden" name="return_to" value=(return_to.unwrap_or("/app"));
-                            div role="group" class="field" {
+                            div class="form-field" {
                                 label for="api-key" { "API key" }
                                 input id="api-key" type="password" name="api_key" autocomplete="current-password" required;
                             }
-                            button type="submit" class="btn btn-outline" style="width:100%; margin-top: 8px;" {
+                            button type="submit" class="action-btn" style="width:100%; margin-top: 8px;" {
                                 (icon("key"))
                                 "Open Hirsel"
                             }
@@ -308,33 +306,33 @@ pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
                         }
                     }
                     div class="sidebar-actions" {
-                        a href="/app/settings" class="btn btn-ghost" style="width:100%;" {
+                        a href="/app/settings" class="action-btn ghost" style="width:100%;" {
                             (icon("settings"))
                             "Backend settings"
                         }
                     }
                 }
                 section class="main-panel" {
-                    article class="card" style="max-width: 540px;" {
+                    article class="panel" style="max-width: 540px;" {
                         header {
                             h2 { "Create project" }
                             p { "Point Hirsel at a repository to get started." }
                         }
                         section {
                             form action="/app/projects" method="post" {
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="proj-name" { "Project name" }
                                     input id="proj-name" type="text" name="name" required;
                                 }
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="repo-url" { "Repository URL" }
                                     input id="repo-url" type="url" name="repo_url" placeholder="https://github.com/owner/repo" required;
                                 }
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="branch" { "Branch" }
                                     input id="branch" type="text" name="branch" value="main";
                                 }
-                                button type="submit" class="btn btn-outline" style="width:100%; margin-top: 8px;" {
+                                button type="submit" class="action-btn" style="width:100%; margin-top: 8px;" {
                                     (icon("plus"))
                                     "Create project"
                                 }
@@ -388,23 +386,23 @@ pub fn render_project_page(
                         a href="/app" class="brandmark" { "HIRSEL" }
                         div class="title-divider" {}
                         div class="project-picker" {
-                            a href=(format!("/app/projects/{}", project.id)) class="btn btn-sm btn-ghost project-chip active" {
+                            a href=(format!("/app/projects/{}", project.id)) class="action-btn sm ghost project-chip active" {
                                 (icon("folder"))
                                 (&project.name)
                             }
-                            a href=(format!("/app/projects/{}/settings", project.id)) class="btn btn-sm-icon btn-ghost" data-tooltip="Project settings" {
+                            a href=(format!("/app/projects/{}/settings", project.id)) class="icon-btn" data-tooltip="Project settings" {
                                 (icon("settings"))
                             }
                         }
                     }
                     div class="titlebar-right" {
                         @if !notifications.notifications.is_empty() {
-                            span class="badge badge-outline notification-pill" {
+                            span class="pill notification-pill" {
                                 (icon("bell"))
                                 (notifications.notifications.len())
                             }
                         }
-                        a href="/app/settings" class="btn btn-sm-icon btn-ghost" data-tooltip="Settings" {
+                        a href="/app/settings" class="icon-btn" data-tooltip="Settings" {
                             (icon("settings"))
                         }
                     }
@@ -417,14 +415,14 @@ pub fn render_project_page(
                         // ── Surface Toolbar ──
                         header class="surface-toolbar" {
                             div class="route-strip" {
-                                span class="badge badge-outline route-pill" {
+                                span class="pill route-pill" {
                                     (icon("git-branch"))
                                     (&route.name)
                                     " · "
                                     (route_status)
                                 }
                             }
-                            button type="button" class="btn btn-sm btn-ghost toolbar-toggle" data-on:click="$machineryOpen = !$machineryOpen" {
+                            button type="button" class="action-btn sm ghost toolbar-toggle" data-on:click="$machineryOpen = !$machineryOpen" {
                                 "Machinery"
                             }
                         }
@@ -446,15 +444,15 @@ pub fn render_project_page(
                                     }
                                     p class="eyebrow" { "Awaiting project focus" }
                                     @if sync_state == "working" {
-                                        p class="text-muted-foreground" { "Hirsel is surveying the project in the background." }
+                                        p class="muted" { "Hirsel is surveying the project in the background." }
                                     } @else if sync_state == "failed" {
-                                        p class="text-muted-foreground" { "Project sync failed. Retry to build the first project picture." }
+                                        p class="muted" { "Project sync failed. Retry to build the first project picture." }
                                     } @else {
-                                        p class="text-muted-foreground" { "Generate the first project picture when you are ready." }
+                                        p class="muted" { "Generate the first project picture when you are ready." }
                                     }
                                     @if sync_state != "working" {
                                         form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
-                                            button type="submit" class="btn btn-primary" {
+                                            button type="submit" class="action-btn primary" {
                                                 (icon("refresh-cw"))
                                                 @if sync_state == "failed" { "Retry sync" } @else { "Sync" }
                                             }
@@ -471,14 +469,14 @@ pub fn render_project_page(
                                 div class="machinery-actions" {
                                     form action=(format!("/app/projects/{}/routes", project.id)) method="post" class="inline-form" {
                                         input type="text" name="name" placeholder="New route name" required;
-                                        button type="submit" class="btn btn-sm btn-ghost" {
+                                        button type="submit" class="action-btn sm ghost" {
                                             (icon("copy-plus"))
                                             "Fork"
                                         }
                                     }
                                     @if surface.routes.len() > 1 {
                                         form action={ "/app/projects/" (project.id) "/routes/" (route.id) "/archive" } method="post" {
-                                            button type="submit" class="btn btn-sm btn-ghost btn-destructive-text" {
+                                            button type="submit" class="action-btn sm ghost danger" {
                                                 (icon("archive"))
                                                 "Archive"
                                             }
@@ -546,31 +544,31 @@ pub fn render_settings_page(
                             p class="eyebrow" { "Backend" }
                             h1 { "Settings" }
                         }
-                        a href="/app" class="btn btn-ghost" {
+                        a href="/app" class="action-btn ghost" {
                             (icon("arrow-left"))
                             "Back"
                         }
                     }
 
                     // ── LLM Provider ──
-                    article class="card" {
+                    article class="panel" {
                         header {
                             h3 { (icon("cpu")) "LLM Provider" }
                         }
                         section {
                             form action="/app/settings/llm" method="post" {
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="provider" { "Provider" }
                                     select id="provider" name="provider" {
                                         option value="codex" selected[provider == "codex"] { "Codex (OpenAI)" }
                                         option value="openrouter" selected[provider == "openrouter"] { "OpenRouter" }
                                     }
                                 }
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="or-base" { "OpenRouter base URL" }
                                     input id="or-base" type="text" name="openrouter_base_url" value=(openrouter_base_url.unwrap_or(""));
                                 }
-                                button type="submit" class="btn btn-outline" style="width:100%;" {
+                                button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
                                     "Save provider"
                                 }
@@ -579,26 +577,26 @@ pub fn render_settings_page(
                     }
 
                     // ── Codex ──
-                    article class="card" id="codex-status" {
+                    article class="panel" id="codex-status" {
                         header {
                             h3 { (icon("key")) "Codex" }
                             span data-slot="card-action" {
                                 @if codex_connected {
-                                    span class="badge badge-outline status-working" { "Connected" }
+                                    span class="pill status-working" { "Connected" }
                                 }
                             }
                         }
                         section {
                             @if codex_connected {
-                                p class="text-muted-foreground" { "Codex OAuth is connected. Sessions will use Codex for model inference." }
+                                p class="muted" { "Codex OAuth is connected. Sessions will use Codex for model inference." }
                             } @else if let Some((device_auth_id, user_code, verify_url)) = codex_state {
                                 div data-init=(format!("@get('/app/settings/codex/stream?device_auth_id={}&user_code={}', {{openWhenHidden: true}})", device_auth_id, user_code)) {}
-                                p class="text-muted-foreground" { "Open the verification page, enter the code, and keep this page open." }
+                                p class="muted" { "Open the verification page, enter the code, and keep this page open." }
                                 div style="margin: 12px 0;" {
                                     span class="code-block" { (user_code) }
                                 }
                                 p {
-                                    a href=(verify_url) target="_blank" rel="noreferrer" class="btn btn-ghost" {
+                                    a href=(verify_url) target="_blank" rel="noreferrer" class="action-btn ghost" {
                                         (icon("globe"))
                                         "Open Codex verification"
                                     }
@@ -606,7 +604,7 @@ pub fn render_settings_page(
                                 p class="eyebrow" { "Waiting for approval…" }
                             } @else {
                                 form action="/app/settings/codex/start" method="post" {
-                                    button type="submit" class="btn btn-primary" {
+                                    button type="submit" class="action-btn primary" {
                                         (icon("link"))
                                         "Connect Codex"
                                     }
@@ -616,34 +614,34 @@ pub fn render_settings_page(
                     }
 
                     // ── API Keys ──
-                    article class="card" {
+                    article class="panel" {
                         header {
                             h3 { (icon("key")) "API Keys" }
                         }
                         section {
                             form action="/app/settings/openrouter" method="post" {
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="or-key" { "OpenRouter API key" }
                                     @if let Some(masked) = openrouter_masked {
-                                        p class="text-muted-foreground" style="font-size: 12px;" { "Current: " (masked) }
+                                        p class="muted" style="font-size: 12px;" { "Current: " (masked) }
                                     }
                                     input id="or-key" type="password" name="api_key" placeholder="sk-or-...";
                                 }
-                                button type="submit" class="btn btn-outline" style="width:100%;" {
+                                button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
                                     "Save OpenRouter key"
                                 }
                             }
                             hr role="separator" style="margin: 16px 0;" {}
                             form action="/app/settings/tavily" method="post" {
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="tav-key" { "Tavily API key" }
                                     @if let Some(masked) = tavily_masked {
-                                        p class="text-muted-foreground" style="font-size: 12px;" { "Current: " (masked) }
+                                        p class="muted" style="font-size: 12px;" { "Current: " (masked) }
                                     }
                                     input id="tav-key" type="password" name="api_key" placeholder="tvly-...";
                                 }
-                                button type="submit" class="btn btn-ghost" style="width:100%;" {
+                                button type="submit" class="action-btn ghost" style="width:100%;" {
                                     (icon("save"))
                                     "Save Tavily key"
                                 }
@@ -672,28 +670,28 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                             p class="eyebrow" { "Project" }
                             h1 { "Project settings" }
                         }
-                        a href=(format!("/app/projects/{}", project.id)) class="btn btn-ghost" {
+                        a href=(format!("/app/projects/{}", project.id)) class="action-btn ghost" {
                             (icon("arrow-left"))
                             "Back"
                         }
                     }
 
                     // ── Project Card ──
-                    article class="card" {
+                    article class="panel" {
                         header {
                             h3 { (icon("folder")) "Project" }
                         }
                         section {
                             form action={ "/app/projects/" (project.id) "/settings/project" } method="post" {
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="proj-name" { "Project name" }
                                     input id="proj-name" type="text" name="name" value=(&project.name);
                                 }
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="proj-desc" { "Description" }
                                     textarea id="proj-desc" name="description" rows="4" { (project.description.as_deref().unwrap_or("")) }
                                 }
-                                button type="submit" class="btn btn-outline" style="width:100%;" {
+                                button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
                                     "Save project"
                                 }
@@ -702,29 +700,29 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                     }
 
                     // ── Route Card ──
-                    article class="card" {
+                    article class="panel" {
                         header {
                             h3 { (icon("git-branch")) "Route" }
                             span data-slot="card-action" {
-                                span class="badge badge-outline" { (&route.name) }
+                                span class="pill" { (&route.name) }
                             }
                         }
                         section {
                             form action={ "/app/projects/" (project.id) "/settings/route" } method="post" {
                                 input type="hidden" name="route_id" value=(route.id);
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="time-limit" { "Time limit (minutes)" }
                                     input id="time-limit" type="number" min="0" name="time_limit_minutes" value=(route.time_limit_minutes.unwrap_or_default());
                                 }
-                                div role="group" class="field" data-orientation="horizontal" {
+                                div class="form-field" style="flex-direction:row; align-items:center; gap:10px;" {
                                     input id="hitl" type="checkbox" name="human_in_the_loop" role="switch" checked[route.human_in_the_loop];
                                     label for="hitl" { "Require human in the loop" }
                                 }
-                                div role="group" class="field" {
+                                div class="form-field" {
                                     label for="target-branch" { "Target branch" }
                                     input id="target-branch" type="text" name="target_branch" value=(route.target_branch.as_deref().unwrap_or(""));
                                 }
-                                button type="submit" class="btn btn-outline" style="width:100%;" {
+                                button type="submit" class="action-btn" style="width:100%;" {
                                     (icon("save"))
                                     "Save route"
                                 }
@@ -761,7 +759,7 @@ pub fn render_worker_detail_page(
                     div class="panel-header" style="margin-bottom: 12px;" {
                         div {
                             h1 { (icon("cpu")) (&worker.name) }
-                            p class="text-muted-foreground" {
+                            p class="muted" {
                                 "Route " (&route.name)
                                 " · "
                                 span class=(format!("status-{}", format!("{:?}", worker.status).to_lowercase())) {
@@ -769,20 +767,20 @@ pub fn render_worker_detail_page(
                                 }
                             }
                         }
-                        a href=(format!("/app/projects/{}", project.id)) class="btn btn-ghost" {
+                        a href=(format!("/app/projects/{}", project.id)) class="action-btn ghost" {
                             (icon("arrow-left"))
                             "Back"
                         }
                     }
 
                     // ── Events ──
-                    article class="card" {
+                    article class="panel" {
                         section {
                             div id="worker-events" class="worker-events" {
                                 @for event in events {
                                     article class="event-row" {
                                         div class="message-meta" {
-                                            span class="badge badge-outline" { (&event.event_type) }
+                                            span class="pill" { (&event.event_type) }
                                             span { (format_time(&event.timestamp)) }
                                         }
                                         @if let Some(content) = &event.content {

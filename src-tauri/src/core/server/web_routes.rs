@@ -210,8 +210,6 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route("/connect/session", post(connect_session))
         .route("/connect/bootstrap", get(connect_bootstrap))
         .route("/connect/logout", post(connect_logout))
-        .route("/static/basecoat.css", get(basecoat_css))
-        .route("/static/basecoat.js", get(basecoat_js))
         .route("/static/webui.css", get(webui_css))
         .route("/static/datastar.js", get(datastar_bundle))
         .route("/app", get(app_home))
@@ -304,20 +302,6 @@ pub async fn connect_bootstrap(
 
 pub async fn connect_logout() -> Response {
     redirect_with_cookie("/connect", clear_cookie_header())
-}
-
-pub async fn basecoat_css() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/css; charset=utf-8")],
-        include_str!("vendor/basecoat.cdn.css"),
-    )
-}
-
-pub async fn basecoat_js() -> impl IntoResponse {
-    (
-        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
-        include_str!("vendor/basecoat.js"),
-    )
 }
 
 pub async fn webui_css() -> impl IntoResponse {
