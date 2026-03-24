@@ -136,30 +136,32 @@ EOF
     fi
 
     if curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
-        echo "Reusing existing local hirsel serve on port $REMOTE_PORT"
-    else
-        echo "Starting local hirsel serve..."
-        "$BINARY" serve --port "$REMOTE_PORT" >> "$LOG_FILE" 2>&1 &
-        server_pid=$!
+        echo "Restarting existing local hirsel serve on port $REMOTE_PORT"
+        pkill -f "$BINARY serve --port $REMOTE_PORT" 2>/dev/null || true
+        sleep 0.5
+    fi
 
-        for _ in $(seq 1 30); do
-            if curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
-                break
-            fi
+    echo "Starting local hirsel serve..."
+    "$BINARY" serve --port "$REMOTE_PORT" >> "$LOG_FILE" 2>&1 &
+    server_pid=$!
 
-            if ! kill -0 "$server_pid" 2>/dev/null; then
-                echo "hirsel serve exited early; tailing dev log:" >&2
-                tail -n 50 "$LOG_FILE" >&2 || true
-                exit 1
-            fi
+    for _ in $(seq 1 30); do
+        if curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
+            break
+        fi
 
-            sleep 0.2
-        done
-
-        if ! curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
-            echo "hirsel serve did not become healthy on port $REMOTE_PORT" >&2
+        if ! kill -0 "$server_pid" 2>/dev/null; then
+            echo "hirsel serve exited early; tailing dev log:" >&2
+            tail -n 50 "$LOG_FILE" >&2 || true
             exit 1
         fi
+
+        sleep 0.2
+    done
+
+    if ! curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
+        echo "hirsel serve did not become healthy on port $REMOTE_PORT" >&2
+        exit 1
     fi
 
     echo "Running tauri dev against local hirsel serve..."

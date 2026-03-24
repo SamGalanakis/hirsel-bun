@@ -17,7 +17,7 @@ const state = {
   url: '',
   apiKey: '',
   error: '',
-  connected: false,
+  connecting: false,
 };
 
 async function loadConfig() {
@@ -38,6 +38,28 @@ function backendBootstrapUrl(): string {
   return url.toString();
 }
 
+async function openBackend() {
+  state.error = '';
+
+  if (!state.url || !state.apiKey) {
+    state.error = 'Backend URL and API key are required.';
+    render();
+    return;
+  }
+
+  state.connecting = true;
+  render();
+
+  try {
+    await invoke('check_backend_health', { url: state.url, apiKey: state.apiKey });
+    window.location.replace(backendBootstrapUrl());
+  } catch (error) {
+    state.connecting = false;
+    state.error = `Failed to reach backend: ${String(error)}`;
+    render();
+  }
+}
+
 async function saveConnection(event: Event) {
   event.preventDefault();
   const form = event.currentTarget as HTMLFormElement;
@@ -53,7 +75,6 @@ async function saveConnection(event: Event) {
   }
 
   try {
-    await invoke('check_backend_health', { url: state.url, apiKey: state.apiKey });
     await invoke('save_config', {
       updates: {
         backend: {
@@ -62,10 +83,10 @@ async function saveConnection(event: Event) {
         },
       },
     });
-    state.connected = true;
-    render();
+    await openBackend();
   } catch (error) {
-    state.error = `Failed to reach backend: ${String(error)}`;
+    state.connecting = false;
+    state.error = `Failed to save backend config: ${String(error)}`;
     render();
   }
 }
@@ -81,7 +102,7 @@ async function disconnect() {
   });
   state.url = '';
   state.apiKey = '';
-  state.connected = false;
+  state.connecting = false;
   state.error = '';
   render();
 }
@@ -92,11 +113,15 @@ function connectMarkup() {
       <div class="stack">
         <div>
           <div class="brand">HIRSEL</div>
-          <h1>Connect wrapper</h1>
-          <p class="muted">This desktop shell only stores your backend connection, then loads the backend-served Hirsel app.</p>
+          <h1>${state.connecting ? 'Opening backend…' : 'Connect Hirsel'}</h1>
+          <p class="muted">${
+            state.connecting
+              ? `Connecting to ${state.url}`
+              : 'This shell only appears when backend setup is needed.'
+          }</p>
         </div>
         ${state.error ? `<p class="error">${state.error}</p>` : ''}
-        <form id="connect-form" class="stack">
+        <form id="connect-form" class="stack" ${state.connecting ? 'hidden' : ''}>
           <label class="stack">
             <span>Backend URL</span>
             <input class="toolbar-input" type="url" name="url" value="${state.url}" placeholder="http://127.0.0.1:8080" required />
@@ -112,21 +137,6 @@ function connectMarkup() {
   `;
 }
 
-function connectedMarkup() {
-  return `
-    <div class="shell">
-      <header class="topbar">
-        <div class="brand">HIRSEL</div>
-        <div class="topbar-actions">
-          <input class="toolbar-input" type="text" value="${state.url}" readonly />
-          <button id="disconnect-btn" class="ghost-btn" type="button">Change backend</button>
-        </div>
-      </header>
-      <iframe class="frame" src="${backendBootstrapUrl()}" title="Hirsel backend app"></iframe>
-    </div>
-  `;
-}
-
 function attachHandlers() {
   const form = document.getElementById('connect-form');
   if (form) {
@@ -134,22 +144,20 @@ function attachHandlers() {
       void saveConnection(event);
     });
   }
-
-  const disconnectButton = document.getElementById('disconnect-btn');
-  if (disconnectButton) {
-    disconnectButton.addEventListener('click', () => {
-      void disconnect();
-    });
-  }
 }
 
 function render() {
-  state.connected = Boolean(state.url && state.apiKey);
-  app!.innerHTML = state.connected ? connectedMarkup() : connectMarkup();
+  app!.innerHTML = connectMarkup();
   attachHandlers();
 }
 
 void (async () => {
   await loadConfig();
+  if (state.url && state.apiKey) {
+    state.connecting = true;
+  }
   render();
+  if (state.url && state.apiKey) {
+    void openBackend();
+  }
 })();

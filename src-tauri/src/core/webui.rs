@@ -16,7 +16,10 @@ fn page_head(title: &str, description: &str) -> Markup {
         meta name="viewport" content="width=device-width, initial-scale=1";
         title { (title) " · Hirsel" }
         meta name="description" content=(description);
-        meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-src 'self'; connect-src 'self';";
+        meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src https://fonts.gstatic.com; frame-src 'self'; connect-src 'self';";
+        link rel="preconnect" href="https://fonts.googleapis.com";
+        link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
+        link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..700;1,6..72,300..700&family=Space+Grotesk:wght@300;400;500;600&display=swap";
         link rel="stylesheet" href="/static/webui.css";
         script type="module" src=(DATASTAR_BUNDLE) {}
     }
@@ -36,8 +39,14 @@ fn app_document(title: &str, description: &str, body: Markup) -> Markup {
     }
 }
 
-fn format_time(timestamp: &str) -> &str {
-    timestamp
+fn format_time(timestamp: &str) -> String {
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(timestamp) {
+        return parsed
+            .with_timezone(&chrono::Local)
+            .format("%H:%M")
+            .to_string();
+    }
+    String::new()
 }
 
 fn render_chat_text(chunks_json: &str) -> String {
@@ -142,66 +151,79 @@ pub fn render_chat_panel(
     queue: &ShepherdQueueState,
 ) -> Markup {
     html! {
-        section id="chat-panel" class="chat-panel" {
-            div class="panel-header" {
-                h2 { "Shepherd" }
-                @if queue.has_active_turn {
-                    span class="muted small" { "Working" }
+        section id="chat-panel" class="chat-panel shepherd-chat-panel" {
+            div class="chat-toolbar" {
+                div class="chat-toolbar-left" {
+                    h2 class="chat-title" { "Shepherd" }
+                }
+                div class="chat-toolbar-right" {
+                    @if queue.has_active_turn {
+                        span class="muted small" { "Working" }
+                    }
+                    @if !queue.items.is_empty() {
+                        span class="muted small" { "Queued " (queue.items.len()) }
+                    }
                 }
             }
-            div id="chat-thread" class="chat-thread" {
+            div class="shepherd-header-divider" {}
+            div id="chat-thread" class="chat-thread shepherd-messages-area" {
                 @if history.is_empty() && queue.items.is_empty() {
-                    article class="message message-assistant" {
-                        p { "Hello. I can help steer the project surface, routes, work items, and workers." }
+                    div class="shepherd-empty-state" {
+                        p class="eyebrow" { "Ready" }
                     }
                 } @else {
                     @for message in history {
-                        article class=(format!("message message-{}", message.role)) {
-                            div class="message-meta" {
-                                span { (&message.role) }
-                                span { (format_time(&message.timestamp)) }
+                        @let is_user = message.role == "user";
+                        div class=(if is_user { "chat-row user" } else { "chat-row assistant" }) {
+                            article class=(if is_user { "shepherd-message-user" } else { "shepherd-message-assistant" }) {
+                                div class="message-meta" {
+                                    span { (&message.role) }
+                                    span { (format_time(&message.timestamp)) }
+                                }
+                                pre class="message-body" { (render_chat_text(&message.chunks_json)) }
                             }
-                            pre class="message-body" { (render_chat_text(&message.chunks_json)) }
                         }
                     }
                     @for item in &queue.items {
-                        article class="message message-user pending" {
-                            div class="message-meta" {
-                                span { "user" }
-                                span { (format_time(&item.created_at)) }
-                            }
-                            pre class="message-body" { (render_chat_text(&item.chunks_json)) }
-                            p class="muted small" {
-                                @if item.status == "working" {
-                                    "Processing on server"
-                                } @else if item.status == "failed" {
-                                    "Failed on server"
-                                } @else {
-                                    "Queued on server"
+                        div class="chat-row user" {
+                            article class="shepherd-message-user pending" {
+                                div class="message-meta" {
+                                    span { "user" }
+                                    span { (format_time(&item.created_at)) }
                                 }
-                            }
-                            @if let Some(error) = &item.error {
-                                p class="error-text" { (error) }
+                                pre class="message-body" { (render_chat_text(&item.chunks_json)) }
+                                p class="muted small" {
+                                    @if item.status == "working" {
+                                        "Processing on server"
+                                    } @else if item.status == "failed" {
+                                        "Failed on server"
+                                    } @else {
+                                        "Queued on server"
+                                    }
+                                }
+                                @if let Some(error) = &item.error {
+                                    p class="error-text" { (error) }
+                                }
                             }
                         }
                     }
                 }
             }
             form
-                class="chat-composer"
+                class="chat-composer shepherd-input-area"
                 data-signals:chat-draft="''"
                 data-signals:chat-sending="false"
                 data-indicator:chat-sending
                 data-on:submit__prevent=(format!("@post('/app/projects/{}/chat/send')", project_id)) {
-                textarea
-                    name="content"
-                    rows="4"
-                    placeholder="Message Shepherd..."
-                    data-bind:chat-draft {}
-                div class="composer-row" {
+                div class="shepherd-input-wrapper" {
+                    textarea
+                        name="content"
+                        rows="2"
+                        placeholder="Message Shepherd..."
+                        data-bind:chat-draft {}
                     button
                         type="submit"
-                        class="primary-btn"
+                        class="shepherd-send-btn"
                         data-attr:disabled="$chatSending || !$chatDraft.trim()" {
                         "Send"
                     }
@@ -278,7 +300,7 @@ pub fn render_empty_projects_page(projects: &[Project]) -> Markup {
 }
 
 pub fn render_project_page(
-    projects: &[Project],
+    _projects: &[Project],
     project: &Project,
     route: &Route,
     surface: &ProjectSurfaceSnapshot,
@@ -291,6 +313,12 @@ pub fn render_project_page(
     let sync_state = sync_task(work_tree)
         .map(|item| item.status.as_str())
         .unwrap_or("idle");
+    let route_status = surface
+        .routes
+        .iter()
+        .find(|item| item.route_id == route.id)
+        .map(|item| item.status.as_str())
+        .unwrap_or("idle");
     let has_focus = !matches!(
         surface.focus_view.source.as_deref(),
         Some("placeholder" | "seed")
@@ -301,49 +329,47 @@ pub fn render_project_page(
         &project.name,
         "Hirsel project workspace",
         html! {
-            main class="shell" data-signals:machinery-open="true" {
+            main class="app-shell" data-signals:machinery-open="false" data-signals:machinery-tab="'work'" {
                 div data-init=(format!("@get('{}', {{openWhenHidden: true}})", stream_url)) {}
-                aside class="sidebar" id="project-sidebar" {
-                    div class="brand" { "HIRSEL" }
-                    nav class="project-nav" {
-                        @for item in projects {
-                            a
-                                href=(format!("/app/projects/{}", item.id))
-                                class=(if item.id == project.id { "project-link active" } else { "project-link" }) {
-                                (&item.name)
-                            }
+                header class="titlebar" {
+                    div class="titlebar-left" {
+                        a href="/app" class="brandmark" { "HIRSEL" }
+                        div class="title-divider" {}
+                        div class="project-picker" {
+                            a href=(format!("/app/projects/{}", project.id)) class="project-chip active" { (&project.name) }
+                            a href=(format!("/app/projects/{}/settings", project.id)) class="icon-chip" { "Project settings" }
                         }
                     }
-                    div class="sidebar-actions" {
-                        a href="/app" class="ghost-btn full" { "New project" }
-                        a href="/app/settings" class="ghost-btn full" { "Backend settings" }
-                        a href=(format!("/app/projects/{}/settings", project.id)) class="ghost-btn full" { "Project settings" }
+                    div class="titlebar-right" {
+                        @if !notifications.notifications.is_empty() {
+                            span class="notification-pill" { (notifications.notifications.len()) }
+                        }
+                        a href="/app/settings" class="icon-chip" { "Settings" }
                     }
                 }
-                section class="workspace" {
-                    header id="project-header" class="topbar" {
-                        div {
-                            h1 { (&project.name) }
-                            p class="muted small" { "Route " (&route.name) }
-                        }
-                        div class="topbar-actions" {
-                            span class="notification-pill" { (notifications.notifications.len()) " unread" }
-                            button type="button" class="ghost-btn" data-on:click="$machineryOpen = !$machineryOpen" {
+                section class="workbench" {
+                    section class="surface-stack" {
+                        header class="surface-toolbar" {
+                            div class="route-pill" { (&route.name) " · " (route_status) }
+                            button type="button" class="toolbar-toggle" data-on:click="$machineryOpen = !$machineryOpen" {
                                 "Machinery"
                             }
                         }
-                    }
-                    div class="workspace-grid" {
-                        section id="focus-panel" class="focus-panel" {
+                        section id="focus-panel" class="focus-stage" {
                             @if has_focus {
                                 iframe
                                     title={ "Project focus for " (&project.name) }
                                     src={ "/app/projects/" (project.id) "/focus" }
                                     class="focus-frame" {}
                             } @else {
-                                div class="empty-focus" {
-                                    p class="eyebrow" { "Project focus view" }
-                                    h2 { "Awaiting project focus" }
+                                div class="empty-focus-state" {
+                                    svg class="empty-glyph" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="0.75" {
+                                        rect x="4" y="4" width="32" height="32" {}
+                                        line x1="4" y1="20" x2="36" y2="20" {}
+                                        line x1="20" y1="4" x2="20" y2="36" {}
+                                        rect x="12" y="12" width="16" height="16" opacity="0.35" {}
+                                    }
+                                    p class="eyebrow" { "Awaiting project focus" }
                                     @if sync_state == "working" {
                                         p class="muted" { "Hirsel is surveying the project in the background." }
                                     } @else if sync_state == "failed" {
@@ -351,55 +377,59 @@ pub fn render_project_page(
                                     } @else {
                                         p class="muted" { "Generate the first project picture when you are ready." }
                                     }
-                                    form action={ "/app/projects/" (project.id) "/sync" } method="post" {
-                                        button type="submit" class="primary-btn" {
-                                            @if sync_state == "working" { "Syncing" } @else if sync_state == "failed" { "Retry sync" } @else { "Sync" }
+                                    @if sync_state != "working" {
+                                        form action={ "/app/projects/" (project.id) "/sync" } method="post" class="empty-actions" {
+                                            button type="submit" class="primary-btn" {
+                                                @if sync_state == "failed" { "Retry sync" } @else { "Sync" }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                        (render_chat_panel(project.id, history, queue))
+                        section class="machinery-drawer" data-show="$machineryOpen" {
+                            div class="machinery-header" {
+                                div class="machinery-title" { "Machinery" }
+                                div class="machinery-actions" {
+                                    form action=(format!("/app/projects/{}/routes", project.id)) method="post" class="inline-form" {
+                                        input type="text" name="name" placeholder="New route name" required;
+                                        button type="submit" class="ghost-btn" { "Fork route" }
+                                    }
+                                    @if surface.routes.len() > 1 {
+                                        form action={ "/app/projects/" (project.id) "/routes/" (route.id) "/archive" } method="post" {
+                                            button type="submit" class="ghost-btn danger" { "Archive route" }
+                                        }
+                                    }
+                                }
+                            }
+                            div class="machinery-tabs" {
+                                button
+                                    type="button"
+                                    class="machinery-tab"
+                                    data-class:active="$machineryTab === 'work'"
+                                    data-on:click="$machineryTab = 'work'" {
+                                    "Work"
+                                }
+                                button
+                                    type="button"
+                                    class="machinery-tab"
+                                    data-class:active="$machineryTab === 'workers'"
+                                    data-on:click="$machineryTab = 'workers'" {
+                                    "Workers"
+                                }
+                            }
+                            div class="machinery-body" {
+                                section id="work-panel" class="panel-card machinery-panel" data-show="$machineryTab === 'work'" {
+                                    (render_work_tree_nodes(work_tree))
+                                }
+                                section id="workers-panel" class="panel-card machinery-panel" data-show="$machineryTab === 'workers'" {
+                                    (render_worker_cards(workers))
+                                }
+                            }
+                        }
                     }
-                    section class="machinery" data-show="$machineryOpen" {
-                        div class="panel-header" {
-                            div class="route-toolbar" {
-                                @for item in &surface.routes {
-                                    form action=(format!("/app/projects/{}/routes/{}/select", project.id, item.route_id)) method="post" {
-                                        button
-                                            type="submit"
-                                            class=(if item.route_id == route.id { "route-btn active" } else { "route-btn" }) {
-                                            (&item.name) " · " (&item.status)
-                                        }
-                                    }
-                                }
-                            }
-                            div class="route-actions" {
-                                form action=(format!("/app/projects/{}/routes", project.id)) method="post" class="inline-form" {
-                                    input type="text" name="name" placeholder="New route name" required;
-                                    button type="submit" class="ghost-btn" { "Fork route" }
-                                }
-                                @if surface.routes.len() > 1 {
-                                    form action={ "/app/projects/" (project.id) "/routes/" (route.id) "/archive" } method="post" {
-                                        button type="submit" class="ghost-btn danger" { "Archive route" }
-                                    }
-                                }
-                            }
-                        }
-                        div class="machinery-grid" {
-                            section id="work-panel" class="panel-card" {
-                                div class="panel-header" {
-                                    h2 { "Work" }
-                                }
-                                (render_work_tree_nodes(work_tree))
-                            }
-                            section id="workers-panel" class="panel-card" {
-                                div class="panel-header" {
-                                    h2 { "Workers" }
-                                }
-                                (render_worker_cards(workers))
-                            }
-                        }
+                    aside class="chat-rail" {
+                        (render_chat_panel(project.id, history, queue))
                     }
                 }
             }
@@ -423,7 +453,10 @@ pub fn render_settings_page(
                 section class="main-panel main-panel-narrow" {
                     article class="form-card" {
                         div class="panel-header" {
-                            h1 { "Backend settings" }
+                            div class="stack" {
+                                p class="eyebrow" { "Backend" }
+                                h1 { "Backend settings" }
+                            }
                             a href="/app" class="ghost-btn" { "Back" }
                         }
                         form action="/app/settings/llm" method="post" class="stack" {
@@ -442,7 +475,10 @@ pub fn render_settings_page(
                         }
                     }
                     article class="form-card" {
-                        h2 { "Credentials" }
+                        div class="stack" {
+                            p class="eyebrow" { "Services" }
+                            h2 { "Credentials" }
+                        }
                         form action="/app/settings/openrouter" method="post" class="stack" {
                             p class="muted small" { "OpenRouter API key" }
                             @if let Some(masked) = openrouter_masked {
@@ -461,7 +497,10 @@ pub fn render_settings_page(
                         }
                     }
                     article class="form-card" id="codex-status" {
-                        h2 { "Codex" }
+                        div class="stack" {
+                            p class="eyebrow" { "OpenAI" }
+                            h2 { "Codex" }
+                        }
                         @if codex_connected {
                             p { "Codex is connected." }
                         } @else if let Some((device_auth_id, user_code, verify_url)) = codex_state {
@@ -491,7 +530,10 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                 section class="main-panel main-panel-narrow" {
                     article class="form-card" {
                         div class="panel-header" {
-                            h1 { "Project settings" }
+                            div class="stack" {
+                                p class="eyebrow" { "Project" }
+                                h1 { "Project settings" }
+                            }
                             a href=(format!("/app/projects/{}", project.id)) class="ghost-btn" { "Back" }
                         }
                         form action={ "/app/projects/" (project.id) "/settings/project" } method="post" class="stack" {
@@ -507,7 +549,10 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                         }
                     }
                     article class="form-card" {
-                        h2 { "Selected route" }
+                        div class="stack" {
+                            p class="eyebrow" { "Route" }
+                            h2 { "Selected route" }
+                        }
                         form action={ "/app/projects/" (project.id) "/settings/route" } method="post" class="stack" {
                             input type="hidden" name="route_id" value=(route.id);
                             p class="muted" { "Current route: " (&route.name) }
