@@ -280,7 +280,7 @@ pub fn render_chat_panel(
                 data-signals:chat-sending="false"
                 data-indicator:chat-sending
                 data-on:submit__prevent=(format!(
-                    "@post('/app/projects/{}/chat/send', {{contentType: 'form', selector: '#chat-send-form-{}'}})",
+                    "if (!$chatDraft.trim()) return; @post('/app/projects/{}/chat/send', {{contentType: 'form', selector: '#chat-send-form-{}'}}); $chatDraft = ''",
                     project_id,
                     project_id
                 )) {
