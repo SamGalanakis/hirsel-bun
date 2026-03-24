@@ -528,11 +528,12 @@ h3 {
 .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-4); }
 
 /* Settings */
-.provider-switch { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-2); }
-.provider-option { padding: var(--sp-3); border: 1px solid var(--border); background: transparent; text-align: left; cursor: pointer; color: var(--text-muted); }
+.provider-switch { display: flex; gap: var(--sp-1); }
+.provider-option { padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); background: transparent; text-align: left; cursor: pointer; color: var(--text-muted); flex: 1; }
 .provider-option:hover { border-color: var(--border-hover); color: var(--text); }
-.provider-option.active { border-color: var(--border-active); background: rgba(255,255,255,0.03); color: var(--text); }
-.provider-option-title { font-weight: 500; font-size: 13px; margin-bottom: var(--sp-1); }
+.provider-option.active { border-color: var(--border-active); background: rgba(255,255,255,0.04); color: var(--text); }
+.provider-option-title { font-weight: 500; font-size: 13px; }
+.provider-option .muted { font-size: 11px; margin-top: 2px; }
 
 .verification-block { margin: var(--sp-3) 0; display: grid; gap: var(--sp-3); }
 .verification-value-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }

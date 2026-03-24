@@ -722,7 +722,7 @@ pub fn render_settings_page(
                     }
 
                     // ── LLM Provider ──
-                    article class="panel" {
+                    article class="card" {
                         header {
                             h3 { (icon("cpu")) "LLM Provider" }
                         }
@@ -749,7 +749,7 @@ pub fn render_settings_page(
                     }
 
                     // ── Codex ──
-                    article class="panel" id="codex-status" data-show="$providerChoice === 'codex'" {
+                    article class="card" id="codex-status" data-show="$providerChoice === 'codex'" {
                         header {
                             h3 { (icon("key")) "Codex" }
                             span data-slot="card-action" {
@@ -822,7 +822,7 @@ pub fn render_settings_page(
                     }
 
                     // ── OpenRouter ──
-                    article class="panel" data-show="$providerChoice === 'openrouter'" {
+                    article class="card" data-show="$providerChoice === 'openrouter'" {
                         header {
                             h3 { (icon("key")) "OpenRouter" }
                             @if provider == "openrouter" {
@@ -853,7 +853,7 @@ pub fn render_settings_page(
                     }
 
                     @if !setup_required {
-                        article class="panel" {
+                        article class="card" {
                             header {
                                 h3 { (icon("key")) "Services" }
                             }
@@ -902,7 +902,7 @@ pub fn render_project_settings_page(project: &Project, route: &Route) -> Markup 
                         }
                     }
 
-                    article class="panel" data-signals:confirm-delete="false" {
+                    article class="card" data-signals:confirm-delete="false" {
                         // ── Project ──
                         section {
                             h3 { (icon("folder")) "Project" }
@@ -1021,7 +1021,7 @@ pub fn render_worker_detail_page(
                     }
 
                     // ── Events ──
-                    article class="panel" {
+                    article class="card" {
                         section {
                             div id="worker-events" class="worker-events" {
                                 @for event in events {
