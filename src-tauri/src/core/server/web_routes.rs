@@ -175,13 +175,23 @@ fn project_create_redirect(error: &str) -> Response {
 
 fn validate_remote_project_source(
     repo_url: &str,
-    _branch: Option<&str>,
+    branch: Option<&str>,
 ) -> std::result::Result<(), String> {
     let parsed = crate::core::git::parse_github_url(repo_url);
-    // Just check that the remote is reachable. Don't block on missing branches —
-    // the workspace setup will create the branch if needed.
-    let _branches = crate::core::git::list_remote_branches(&parsed.repo_url)
+    let branches = crate::core::git::list_remote_branches(&parsed.repo_url)
         .map_err(|error| format!("Could not reach the repository: {}", error))?;
+
+    // Don't block on empty repos or missing branches — just check reachability
+    if let Some(branch_name) = branch.filter(|value| !value.trim().is_empty()) {
+        if !branches.is_empty() && !branches.iter().any(|candidate| candidate == branch_name) {
+            return Err(format!(
+                "Branch '{}' was not found. Available: {}",
+                branch_name,
+                branches.join(", ")
+            ));
+        }
+    }
+
     Ok(())
 }
 
