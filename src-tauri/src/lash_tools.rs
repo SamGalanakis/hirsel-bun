@@ -81,6 +81,36 @@ pub(crate) fn embedded_tool_plugin_factories(
     factories
 }
 
+pub(crate) fn embedded_shepherd_plugin_factories(
+    custom_plugin_id: &'static str,
+    custom_tool_provider: Arc<dyn ToolProvider>,
+    tavily_api_key: Option<String>,
+) -> Vec<Arc<dyn PluginFactory>> {
+    let mut factories: Vec<Arc<dyn PluginFactory>> = vec![
+        Arc::new(BuiltinToolResultProjectionPluginFactory::default()) as Arc<dyn PluginFactory>,
+        Arc::new(StaticPluginFactory::new(
+            custom_plugin_id,
+            PluginSpec::new().with_tool_provider(custom_tool_provider),
+        )) as Arc<dyn PluginFactory>,
+    ];
+
+    if let Some(key) = tavily_api_key {
+        let search_key = key.clone();
+        factories.push(Arc::new(StaticPluginFactory::new(
+            "search_web",
+            PluginSpec::new()
+                .with_tool_provider(Arc::new(WebSearch::new(search_key)) as Arc<dyn ToolProvider>),
+        )) as Arc<dyn PluginFactory>);
+        factories.push(Arc::new(StaticPluginFactory::new(
+            "fetch_url",
+            PluginSpec::new()
+                .with_tool_provider(Arc::new(FetchUrl::new(key)) as Arc<dyn ToolProvider>),
+        )) as Arc<dyn PluginFactory>);
+    }
+
+    factories
+}
+
 pub(crate) async fn attach_embedded_mcp_servers(
     dynamic_tools: &DynamicToolProvider,
     servers: &BTreeMap<String, McpServerConfig>,

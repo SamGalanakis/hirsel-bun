@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use crate::core::app::{delivery, events, routes, workers, worktree};
 use crate::core::db::{global_pool, utc_now};
 use crate::core::delta::{DeltaState, UpdateBoardNodeRequest};
@@ -8,6 +10,7 @@ use crate::core::{ensure_sync_project_task, CapabilityProfile};
 use lash::tools::ApplyPatchTool;
 use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
 use serde_json::{json, Value};
+use walkdir::WalkDir;
 
 const NODE_READ_DEFAULT_LIMIT: usize = 2000;
 const NODE_READ_MAX_LINE_LEN: usize = 2000;
@@ -33,13 +36,19 @@ macro_rules! tool_definition {
 pub(super) struct ShepherdToolProvider {
     app: Option<tauri::AppHandle>,
     default_project_id: Option<i64>,
+    workspace_root: Option<PathBuf>,
 }
 
 impl ShepherdToolProvider {
-    pub(super) fn new(app: Option<tauri::AppHandle>, default_project_id: Option<i64>) -> Self {
+    pub(super) fn new(
+        app: Option<tauri::AppHandle>,
+        default_project_id: Option<i64>,
+        workspace_root: Option<PathBuf>,
+    ) -> Self {
         Self {
             app,
             default_project_id,
+            workspace_root,
         }
     }
 
@@ -148,6 +157,205 @@ impl ShepherdToolProvider {
             ToolParam::optional("project_id", "int"),
             ToolParam::optional("route_name", "str"),
         ]
+    }
+
+    fn workspace_root(&self) -> Result<&Path, ToolResult> {
+        self.workspace_root
+            .as_deref()
+            .ok_or_else(|| ToolResult::err_fmt("This scope has no attached workspace"))
+    }
+
+    fn resolve_workspace_path(&self, relative: Option<&str>) -> Result<PathBuf, ToolResult> {
+        let root = self.workspace_root()?;
+        let mut candidate = root.to_path_buf();
+        if let Some(value) = relative.map(str::trim).filter(|value| !value.is_empty()) {
+            let rel = Path::new(value);
+            if rel.is_absolute() {
+                return Err(ToolResult::err_fmt(
+                    "Workspace paths must be relative to the attached route workspace",
+                ));
+            }
+            for component in rel.components() {
+                if matches!(component, std::path::Component::ParentDir) {
+                    return Err(ToolResult::err_fmt(
+                        "Workspace paths may not escape the attached route workspace",
+                    ));
+                }
+            }
+            candidate = root.join(rel);
+        }
+        Ok(candidate)
+    }
+
+    async fn list_workspace(&self, args: &Value) -> ToolResult {
+        let target = match self.resolve_workspace_path(Self::trimmed_string(args, "path")) {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        let max_depth = args
+            .get("max_depth")
+            .and_then(|value| value.as_u64())
+            .map(|value| value as usize)
+            .unwrap_or(2);
+
+        if !target.exists() {
+            return ToolResult::err(json!({
+                "error": format!("Workspace path does not exist: {}", target.display())
+            }));
+        }
+
+        let root = match self.workspace_root() {
+            Ok(root) => root,
+            Err(error) => return error,
+        };
+
+        let entries = WalkDir::new(&target)
+            .max_depth(max_depth)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path() != target)
+            .filter_map(|entry| {
+                let rel = entry.path().strip_prefix(root).ok()?;
+                Some(json!({
+                    "path": rel.display().to_string(),
+                    "is_dir": entry.file_type().is_dir(),
+                }))
+            })
+            .collect::<Vec<_>>();
+
+        ToolResult::ok(json!({
+            "root": root.display().to_string(),
+            "entries": entries,
+        }))
+    }
+
+    async fn read_workspace_file(&self, args: &Value) -> ToolResult {
+        let relative = match Self::trimmed_string(args, "path") {
+            Some(value) => value,
+            None => return ToolResult::err_fmt("Missing required parameter: path"),
+        };
+        let target = match self.resolve_workspace_path(Some(relative)) {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        if !target.exists() || !target.is_file() {
+            return ToolResult::err(json!({
+                "error": format!("Workspace file not found: {}", target.display())
+            }));
+        }
+
+        let content = match std::fs::read_to_string(&target) {
+            Ok(content) => content,
+            Err(error) => {
+                return ToolResult::err(json!({
+                    "error": format!("Failed to read workspace file '{}': {}", target.display(), error)
+                }))
+            }
+        };
+
+        let offset = Self::parse_offset(args);
+        let limit = match Self::parse_limit(args) {
+            Ok(limit) => limit,
+            Err(error) => return error,
+        };
+        let root = match self.workspace_root() {
+            Ok(root) => root,
+            Err(error) => return error,
+        };
+        let rel = target
+            .strip_prefix(root)
+            .unwrap_or(&target)
+            .display()
+            .to_string();
+
+        let total_lines = content.lines().count();
+        let start = offset.saturating_sub(1);
+        let text = match limit {
+            Some(limit) => content
+                .lines()
+                .skip(start)
+                .take(limit)
+                .map(|line| {
+                    if line.len() > NODE_READ_MAX_LINE_LEN {
+                        format!("{}…", &line[..NODE_READ_MAX_LINE_LEN])
+                    } else {
+                        line.to_string()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            None => content,
+        };
+
+        ToolResult::ok(json!({
+            "path": rel,
+            "offset": offset,
+            "total_lines": total_lines,
+            "content": text,
+        }))
+    }
+
+    async fn grep_workspace(&self, args: &Value) -> ToolResult {
+        let pattern = match Self::trimmed_string(args, "pattern") {
+            Some(value) => value.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: pattern"),
+        };
+        let base = match self.resolve_workspace_path(Self::trimmed_string(args, "path")) {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
+        let root = match self.workspace_root() {
+            Ok(root) => root,
+            Err(error) => return error,
+        };
+
+        let regex = match regex::Regex::new(&pattern) {
+            Ok(regex) => regex,
+            Err(error) => {
+                return ToolResult::err(json!({
+                    "error": format!("Invalid regex '{}': {}", pattern, error)
+                }))
+            }
+        };
+
+        let mut matches = Vec::new();
+        for entry in WalkDir::new(&base)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(entry.path()) else {
+                continue;
+            };
+            for (idx, line) in content.lines().enumerate() {
+                if regex.is_match(line) {
+                    let rel = entry
+                        .path()
+                        .strip_prefix(root)
+                        .unwrap_or(entry.path())
+                        .display()
+                        .to_string();
+                    matches.push(json!({
+                        "path": rel,
+                        "line": idx + 1,
+                        "text": line,
+                    }));
+                    if matches.len() >= 200 {
+                        break;
+                    }
+                }
+            }
+            if matches.len() >= 200 {
+                break;
+            }
+        }
+
+        ToolResult::ok(json!({
+            "pattern": pattern,
+            "matches": matches,
+        }))
     }
 
     async fn selected_route(&self, project_id: i64) -> Result<Route, ToolResult> {
@@ -1094,7 +1302,7 @@ impl ShepherdToolProvider {
 #[async_trait::async_trait]
 impl ToolProvider for ShepherdToolProvider {
     fn definitions(&self) -> Vec<ToolDefinition> {
-        vec![
+        let mut definitions = vec![
             tool_definition! {
                 name: "list_routes".to_string(),
                 description: "List active routes for the project and show which route is currently selected.".to_string(),
@@ -1154,6 +1362,54 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
+        ];
+
+        if self.workspace_root.is_some() {
+            definitions.extend([
+                tool_definition! {
+                    name: "list_workspace".to_string(),
+                    description: "List files and directories inside the attached route workspace. Paths must stay relative to that workspace.".to_string(),
+                    params: vec![
+                        ToolParam::optional("path", "str"),
+                        ToolParam::optional("max_depth", "int"),
+                        ToolParam::optional("project_id", "int"),
+                    ],
+                    returns: "dict".to_string(),
+                    examples: vec![],
+                    enabled: true,
+                    injected: true,
+                },
+                tool_definition! {
+                    name: "read_workspace_file".to_string(),
+                    description: "Read a text file from the attached route workspace. The path must be relative to that workspace.".to_string(),
+                    params: vec![
+                        ToolParam::typed("path", "str"),
+                        ToolParam::optional("offset", "int"),
+                        ToolParam::optional("limit", "int"),
+                        ToolParam::optional("project_id", "int"),
+                    ],
+                    returns: "dict".to_string(),
+                    examples: vec![],
+                    enabled: true,
+                    injected: true,
+                },
+                tool_definition! {
+                    name: "grep_workspace".to_string(),
+                    description: "Search text files inside the attached route workspace using a regex pattern.".to_string(),
+                    params: vec![
+                        ToolParam::typed("pattern", "str"),
+                        ToolParam::optional("path", "str"),
+                        ToolParam::optional("project_id", "int"),
+                    ],
+                    returns: "dict".to_string(),
+                    examples: vec![],
+                    enabled: true,
+                    injected: true,
+                },
+            ]);
+        }
+
+        definitions.extend([
             tool_definition! {
                 name: "get_route_work_tree".to_string(),
                 description: "Return the current route work tree. Uses the selected route when route_name is omitted.".to_string(),
@@ -1519,7 +1775,9 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-        ]
+        ]);
+
+        definitions
     }
 
     async fn execute(&self, name: &str, args: &Value) -> ToolResult {
@@ -1534,6 +1792,9 @@ impl ToolProvider for ShepherdToolProvider {
             "select_route" => self.select_route(project_id, args).await,
             "archive_route" => self.archive_route(project_id, args).await,
             "sync_project" => self.sync_project_tool(project_id, args).await,
+            "list_workspace" => self.list_workspace(args).await,
+            "read_workspace_file" => self.read_workspace_file(args).await,
+            "grep_workspace" => self.grep_workspace(args).await,
             "read_project_focus_view" => self.read_project_focus_view(project_id).await,
             "update_project_focus_view" => self.update_project_focus_view(project_id, args).await,
             "read_project_retained_context" => self.read_project_retained_context(project_id).await,

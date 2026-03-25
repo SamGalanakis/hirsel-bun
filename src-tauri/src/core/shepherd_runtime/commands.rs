@@ -27,7 +27,7 @@ use crate::core::{
     ensure_sync_project_task, llm_provider, ProjectStore, Route, RouteStore, ShepherdChatMessage,
     ShepherdChatStore, ShepherdEffort, ShepherdQueuedTurn, WorkItem,
 };
-use crate::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
+use crate::lash_tools::embedded_shepherd_plugin_factories;
 
 pub(super) struct SilentLashSink;
 
@@ -76,14 +76,16 @@ async fn load_tavily_api_key() -> Option<String> {
 async fn build_runtime_services(
     app: Option<&tauri::AppHandle>,
     default_project_id: Option<i64>,
+    workspace_root: Option<std::path::PathBuf>,
     agent_id: &str,
     execution_mode: ExecutionMode,
 ) -> Result<RuntimeServices, String> {
-    let tools: Arc<dyn ToolProvider> =
-        Arc::new(ShepherdToolProvider::new(app.cloned(), default_project_id));
-    let (hirsel_config, _) =
-        crate::core::config::Config::load().map_err(|e| format!("failed to load config: {}", e))?;
-    let plugin_factories = embedded_tool_plugin_factories(
+    let tools: Arc<dyn ToolProvider> = Arc::new(ShepherdToolProvider::new(
+        app.cloned(),
+        default_project_id,
+        workspace_root,
+    ));
+    let plugin_factories = embedded_shepherd_plugin_factories(
         "hirsel_shepherd_tools",
         Arc::clone(&tools),
         load_tavily_api_key().await,
@@ -92,10 +94,6 @@ async fn build_runtime_services(
     let root_plugins = plugin_host
         .build_session(agent_id, execution_mode, None)
         .map_err(|e| format!("failed to build shepherd tool session: {}", e))?;
-    let dynamic_tools = root_plugins
-        .dynamic_tools()
-        .ok_or_else(|| "shepherd dynamic tool provider was not initialized".to_string())?;
-    attach_embedded_mcp_servers(&dynamic_tools, &hirsel_config.mcp_servers).await?;
     Ok(RuntimeServices::new(root_plugins))
 }
 
@@ -139,6 +137,7 @@ async fn create_runtime_from_history(
     let services = build_runtime_services(
         app,
         scope_project_id,
+        Some(cwd.to_path_buf()),
         &state.agent_id,
         session_policy.execution_mode,
     )
@@ -237,6 +236,7 @@ async fn create_runtime_from_state(
     let services = build_runtime_services(
         app,
         scope_project_id,
+        Some(cwd.to_path_buf()),
         &state.agent_id,
         session_policy.execution_mode,
     )
