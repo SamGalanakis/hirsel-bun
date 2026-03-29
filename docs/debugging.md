@@ -66,10 +66,10 @@ Then it loads the backend-served web UI. If the wrapper opens but the product UI
 RUST_LOG=debug ./dev.sh
 
 # Focus on the backend UI / HTTP path
-RUST_LOG=hirsel_lib::core::server=debug,hirsel_lib::core::webui=debug ./dev.sh
+RUST_LOG=hirsel_lib::backend::server=debug,hirsel_lib::backend::webui=debug ./dev.sh
 
 # Focus on worker execution
-RUST_LOG=hirsel_lib::worker=debug,hirsel_lib::core::workers=debug ./dev.sh
+RUST_LOG=hirsel_lib::worker=debug,hirsel_lib::backend::workers=debug ./dev.sh
 ```
 
 ## Resetting local state

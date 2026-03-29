@@ -21,7 +21,7 @@
 use serde_json::{json, Value};
 
 use super::{WorkerConfig, WorkerError, WorkerRunner};
-use crate::core::mcp::{run_mcp_server, McpToolServer, Tool};
+use crate::backend::mcp::{run_mcp_server, McpToolServer, Tool};
 
 /// Get the list of available MCP tools.
 fn get_tools() -> Vec<Tool> {

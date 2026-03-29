@@ -1,4 +1,5 @@
 [files]
 extend-exclude = [
   "src-tauri/src/core/server/vendor/*",
+  "src-tauri/src/backend/server/vendor/*",
 ]

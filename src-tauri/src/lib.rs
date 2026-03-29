@@ -1,26 +1,22 @@
 //! Hirsel - Herd your AI coding agents
 //!
-//! This library provides the core functionality for hirsel,
-//! including file system utilities, state management, CLI
-//! command routing, and the Tauri GUI integration.
+//! This library provides Hirsel's backend services, worker runtime,
+//! CLI entrypoints, and the thin Tauri desktop host.
 
 // Allow these clippy warnings crate-wide
 #![allow(clippy::should_implement_trait)] // from_str methods are intentional
 #![allow(clippy::too_many_arguments)] // Complex functions need many args
 #![allow(clippy::ptr_arg)] // &PathBuf is fine for owned paths
 
+pub mod backend;
 pub mod cli;
-pub mod core;
-#[cfg(feature = "server")]
-pub mod daemon;
 #[cfg(feature = "gui")]
-pub mod gui;
-mod lash_tools;
+pub mod desktop;
 pub mod version;
 pub mod worker;
 
 #[cfg(feature = "gui")]
-use crate::core::orchestrator::Orchestrator;
+use crate::backend::orchestrator::Orchestrator;
 #[cfg(feature = "gui")]
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
@@ -29,7 +25,7 @@ use tauri::{WebviewUrl, WebviewWindowBuilder};
 /// JSON to `~/.hirsel/profiling/trace-{timestamp}.json` for viewing in Perfetto UI.
 fn init_tracing() {
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::EnvFilter;
@@ -79,7 +75,7 @@ fn init_tracing() {
     }
 
     let role = process_role();
-    let logs_dir = core::hirsel_dir().join("logs").join(role);
+    let logs_dir = backend::hirsel_dir().join("logs").join(role);
     if let Err(error) = fs::create_dir_all(&logs_dir) {
         eprintln!(
             "[hirsel] failed to create log directory {}: {}",
@@ -122,7 +118,7 @@ fn init_tracing() {
             let profiling_dir = std::env::var("HIRSEL_PROFILING_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| {
-                    core::hirsel_dir()
+                    backend::hirsel_dir()
                         .join("profiling")
                         .join(chrono::Local::now().format("%Y-%m-%dT%H-%M-%S").to_string())
                 });
@@ -159,11 +155,11 @@ fn init_tracing() {
 }
 
 // Re-export commonly used types
+pub use backend::state;
+pub use backend::Files;
 pub use cli::{
     parse_cli, parse_worker_cli, Cli, Commands, TaskSubcommands, WorkerCli, WorkerCommands,
 };
-pub use core::state;
-pub use core::Files;
 pub use worker::{WorkerConfig, WorkerError, WorkerRunner};
 
 /// Run the CLI commands (called when invoked with arguments)
@@ -257,7 +253,7 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
                                 _ = sigterm.recv() => {
                                     // Received SIGTERM from GUI - ensure cleanup
                                     tracing::info!("[{}] Received SIGTERM, cleaning up process group", worker_name);
-                                    core::process::cleanup_process_group(&worker_name);
+                                    backend::process::cleanup_process_group(&worker_name);
                                     Ok(())
                                 }
                             }
@@ -286,7 +282,7 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
             rt.block_on(async {
                 tokio::task::LocalSet::new()
                     .run_until(async {
-                        core::eval::run_eval_from_args(
+                        backend::eval::run_eval_from_args(
                             &args.runtime,
                             &args.runtime_dir,
                             &args.agent_command,
@@ -313,13 +309,13 @@ fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
             // Server mode - run the backend HTTP server
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async { core::server::start_server(args.port).await })
+            rt.block_on(async { backend::server::start_server(args.port).await })
                 .map_err(|e| format!("Server error: {}", e))?;
         }
         #[cfg(feature = "server")]
         Commands::Daemon(args) => {
             // Internal daemon command - runs the daemon server
-            use daemon::{start_daemon, DaemonConfig};
+            use backend::daemon::{start_daemon, DaemonConfig};
 
             let config = DaemonConfig {
                 idle_timeout_secs: args.idle_timeout,
@@ -355,7 +351,7 @@ pub fn run() {
         }));
 
     builder
-        .invoke_handler(gui::get_handlers())
+        .invoke_handler(desktop::get_handlers())
         .setup(|app| {
             // In dev mode, clean up orphaned processes from previous hot-reload sessions
             #[cfg(debug_assertions)]
@@ -367,7 +363,7 @@ pub fn run() {
             // Workers that appear "Working" but have dead PIDs are marked as Paused
             // Create a runtime since we're in a sync context (tauri setup, no runtime yet)
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            let stale = rt.block_on(core::workers::reconcile_stale_workers());
+            let stale = rt.block_on(backend::workers::reconcile_stale_workers());
             if !stale.is_empty() {
                 tracing::info!(
                     "[GUI] Startup reconciliation: marked {} stale worker(s) as Paused",
@@ -393,8 +389,8 @@ pub fn run() {
 
 #[cfg(feature = "gui")]
 fn create_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let (config, _) =
-        core::config::Config::load().unwrap_or_else(|_| (core::config::Config::default(), vec![]));
+    let (config, _) = backend::config::Config::load()
+        .unwrap_or_else(|_| (backend::config::Config::default(), vec![]));
     let mut window_config = app
         .config()
         .app
@@ -411,7 +407,7 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
                 .expect("Failed to create tokio runtime for backend bootstrap");
             let should_open = rt.block_on(async {
                 let orchestrator =
-                    core::orchestrator::RemoteOrchestrator::new(url.clone(), api_key.clone());
+                    backend::orchestrator::RemoteOrchestrator::new(url.clone(), api_key.clone());
                 orchestrator.health().await.is_ok()
             });
 

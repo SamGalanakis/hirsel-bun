@@ -9,10 +9,10 @@
 //!
 //! Workers always access local SQLite state on the single host backend.
 
+use crate::backend::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
+use crate::backend::state_access::{StateAccess, StateAccessError};
+use crate::backend::Files;
 use crate::cli::{TaskSubcommands, WorkerCommands};
-use crate::core::state::{SQLiteState, StateError, WorkerStatus, WorkerUpdate};
-use crate::core::state_access::{StateAccess, StateAccessError};
-use crate::core::Files;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -233,7 +233,7 @@ impl WorkerRunner {
     /// Get the full task tree with hierarchy and status.
     /// Returns a hierarchical structure with dependencies using persisted work items.
     pub fn get_task_tree(&self) -> WorkerResult<String> {
-        use crate::core::delta::{BoardNode, NodeKind};
+        use crate::backend::delta::{BoardNode, NodeKind};
 
         let nodes = self.run_async(self.state().get_nodes())?;
 
@@ -259,7 +259,7 @@ impl WorkerRunner {
             node: &BoardNode,
             children_map: &std::collections::HashMap<String, Vec<String>>,
             node_map: &std::collections::HashMap<String, &BoardNode>,
-            state: &dyn crate::core::state_access::StateAccess,
+            state: &dyn crate::backend::state_access::StateAccess,
             runner: &WorkerRunner,
         ) -> serde_json::Value {
             let blocked = runner
@@ -374,7 +374,7 @@ impl WorkerRunner {
 
     /// Get full details for a specific board node.
     pub fn get_task_details(&self, task_id: &str) -> WorkerResult<String> {
-        use crate::core::delta::NodeKind;
+        use crate::backend::delta::NodeKind;
 
         let nodes = self.run_async(self.state().get_nodes())?;
         let node = nodes
@@ -586,7 +586,7 @@ impl WorkerRunner {
 
     /// Walk up the parent chain to find the root feature of a node.
     fn find_root_feature(&self, node_id: &str) -> Option<String> {
-        use crate::core::delta::NodeKind;
+        use crate::backend::delta::NodeKind;
 
         let nodes = self.run_async(self.state().get_nodes()).ok()?;
         let find = |id: &str| nodes.iter().find(|n| n.id == id);
@@ -613,7 +613,7 @@ impl WorkerRunner {
     /// Only tasks with source='worker' can be deleted (not spec tasks).
     /// Cannot delete tasks that are currently claimed or completed.
     pub fn delete_task(&self, task_id: &str) -> WorkerResult<String> {
-        use crate::core::delta::{BoardNodeSource, BoardNodeStatus};
+        use crate::backend::delta::{BoardNodeSource, BoardNodeStatus};
 
         // Get the node first to validate it can be deleted
         let nodes = self.run_async(self.state().get_nodes())?;
@@ -777,7 +777,7 @@ impl WorkerRunner {
     // =========================================================================
 
     /// Get time information for the run.
-    pub fn get_time_info(&self) -> WorkerResult<Option<crate::core::state::TimeInfo>> {
+    pub fn get_time_info(&self) -> WorkerResult<Option<crate::backend::state::TimeInfo>> {
         Ok(self.run_async(self.state().get_time_info())?)
     }
 
@@ -809,7 +809,7 @@ impl WorkerRunner {
     /// Handle check pass - validates all nodes in the validates list.
     /// Only available for check node types.
     pub fn check_pass(&self) -> WorkerResult<String> {
-        use crate::core::delta::NodeKind;
+        use crate::backend::delta::NodeKind;
 
         let worker_name = self.config.worker_name.clone();
 
@@ -843,7 +843,7 @@ impl WorkerRunner {
     /// Handle check fail - creates a repair node as child of the check.
     /// Only available for check node types.
     pub fn check_fail(&self, feedback: &str) -> WorkerResult<String> {
-        use crate::core::delta::NodeKind;
+        use crate::backend::delta::NodeKind;
 
         let worker_name = self.config.worker_name.clone();
 

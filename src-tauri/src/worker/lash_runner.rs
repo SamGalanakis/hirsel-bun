@@ -17,9 +17,9 @@ use tracing::{debug, info, warn};
 
 use super::common::{build_worker_prompt, WorkerRunConfig};
 use super::runner::{WorkerConfig, WorkerRunner};
-use crate::core::state::{SQLiteState, ToolCallStatus};
-use crate::core::{llm_provider, Config};
-use crate::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
+use crate::backend::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
+use crate::backend::state::{SQLiteState, ToolCallStatus};
+use crate::backend::{llm_provider, Config};
 
 macro_rules! tool_definition {
     ($($field:tt)*) => {
@@ -514,6 +514,7 @@ impl EventSink for DbEventSink {
             | AgentEvent::RetryStatus { .. }
             | AgentEvent::InjectedMessagesCommitted { .. }
             | AgentEvent::PluginEvent { .. }
+            | AgentEvent::DurableSnapshot { .. }
             | AgentEvent::Prompt { .. }
             | AgentEvent::CodeOutput { .. }
             | AgentEvent::Done => {}
@@ -573,7 +574,7 @@ pub async fn run_worker(config: WorkerRunConfig) -> anyhow::Result<()> {
     let session_policy = SessionPolicy {
         model: model.clone(),
         provider,
-        max_context_tokens: Some(crate::core::config::get_context_window(&model) as usize),
+        max_context_tokens: Some(crate::backend::config::get_context_window(&model) as usize),
         model_variant,
         session_id: Some(config.worker_name.clone()),
         execution_mode,

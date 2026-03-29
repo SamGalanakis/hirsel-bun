@@ -14,7 +14,7 @@ pub struct AgentPreset {
 }
 
 fn config_file_path() -> PathBuf {
-    crate::core::config::hirsel_dir().join("config.toml")
+    crate::backend::config::hirsel_dir().join("config.toml")
 }
 
 fn read_config_file() -> Option<toml::Table> {

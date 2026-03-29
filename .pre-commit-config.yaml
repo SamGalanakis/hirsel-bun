@@ -17,7 +17,7 @@ repos:
     rev: v1.28.4
     hooks:
       - id: typos
-        exclude: ^src-tauri/src/core/server/vendor/
+        exclude: ^src-tauri/src/(core|backend)/server/vendor/
 
   - repo: local
     hooks:

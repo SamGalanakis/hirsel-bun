@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
-use crate::core::mcp::{run_mcp_server, McpToolServer, Tool};
+use crate::backend::mcp::{run_mcp_server, McpToolServer, Tool};
 
 /// Eval result written to the result file.
 #[derive(Debug, Serialize)]

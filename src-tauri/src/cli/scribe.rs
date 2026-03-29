@@ -3,7 +3,7 @@
 //! This is an internal command spawned by the daemon to condense batched
 //! worker learnings into project-level retained context.
 
-use crate::core::{
+use crate::backend::{
     config,
     scribe::{process_scribe_batch, ScribeError},
 };
@@ -36,7 +36,7 @@ pub async fn execute(runtime_name: &str) -> Result<(), Box<dyn std::error::Error
     };
 
     // Clean up any remaining child processes
-    crate::core::process::cleanup_process_group("scribe");
+    crate::backend::process::cleanup_process_group("scribe");
 
     result
 }

@@ -14,6 +14,7 @@ src-tauri/runtimes/
 .env
 .env.*
 !.env.example
+.envrc
 *.pem
 *.key
 
@@ -27,6 +28,7 @@ Thumbs.db
 # IDE
 .idea/
 .vscode/
+.direnv/
 *.swp
 *.swo
 
@@ -42,3 +44,4 @@ __pycache__/
 # Rust/Cargo build output
 target/
 src-tauri/target/
+result

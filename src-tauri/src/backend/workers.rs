@@ -1,0 +1,637 @@
+//! Worker spawning and utilities
+//!
+//! This module handles:
+//! - Spawning worker processes as detached subprocesses
+//! - Worker lifecycle tracking (heartbeats, status updates)
+//! - Time notifications
+//! - Reconciliation of stale workers on startup
+//!
+//! Note: Core lifecycle operations (pause/resume, eval triggering, scaling)
+//! have been moved to the `lifecycle` module for centralized management.
+
+use crate::backend::constants::TIME_NOTIFICATION_THRESHOLDS;
+use crate::backend::state::{SQLiteState, StateError, Status, WorkerStatus, WorkerUpdate};
+use crate::backend::{CreateWorkerConcernRequest, WorkerConcernStore};
+use crate::cli::AgentPreset;
+use std::collections::HashMap;
+use std::process::{Command, Stdio};
+use thiserror::Error;
+use tracing::{info, warn};
+
+// Re-export WorkerSpawnConfig from canonical location (runner module)
+pub use crate::backend::runner::WorkerSpawnConfig;
+
+/// Errors that can occur during worker operations
+#[derive(Debug, Error)]
+pub enum WorkerError {
+    #[error("State error: {0}")]
+    State(#[from] StateError),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Runtime is paused")]
+    RunPaused,
+
+    #[error("Worker not found: {0}")]
+    WorkerNotFound(String),
+
+    #[error("Process spawn failed: {0}")]
+    SpawnFailed(String),
+
+    #[error("Invalid agent configuration")]
+    InvalidAgentConfig,
+}
+
+pub type WorkerResult<T> = Result<T, WorkerError>;
+
+/// Result of spawning a worker
+#[derive(Debug)]
+pub struct SpawnResult {
+    /// Worker name
+    pub worker_name: String,
+    /// Process ID of spawned worker
+    pub pid: u32,
+}
+
+/// Spawn a new worker process
+///
+/// Creates a detached subprocess running the worker runner, which manages
+/// the task claim/done cycle.
+///
+/// Note: Worker status is only set to Working AFTER successful spawn and
+/// process alive verification. This prevents race conditions where the
+/// status shows Working but the process failed to start.
+pub async fn spawn_worker(
+    config: WorkerSpawnConfig,
+    state: &SQLiteState,
+) -> WorkerResult<SpawnResult> {
+    // Check if the route runtime is paused before spawning.
+    if state.status().await? == Status::Paused {
+        info!(
+            "[{}] spawn_worker: runtime is paused, not spawning",
+            config.worker_name
+        );
+        state
+            .update_worker(
+                &config.worker_name,
+                WorkerUpdate {
+                    status: Some(WorkerStatus::Paused),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        return Err(WorkerError::RunPaused);
+    }
+
+    // Build environment for worker subprocess BEFORE updating state
+    let mut env: HashMap<String, String> = std::env::vars().collect();
+    env.insert("HIRSEL_WORKER_SUBPROCESS".to_string(), "1".to_string());
+    env.insert("HIRSEL_RUNTIME".to_string(), config.runtime_name.clone());
+    env.insert("HIRSEL_WORKER".to_string(), config.worker_name.clone());
+
+    // Apply forwarded credentials from the backend runtime
+    if let Some(ref creds) = config.credentials {
+        if let Some(ref key) = creds.openai_api_key {
+            env.insert("OPENAI_API_KEY".to_string(), key.clone());
+        }
+        if let Some(ref key) = creds.openrouter_api_key {
+            env.insert("OPENROUTER_API_KEY".to_string(), key.clone());
+        }
+        if let Some(ref key) = creds.tavily_api_key {
+            env.insert("TAVILY_API_KEY".to_string(), key.clone());
+        }
+        if let Some(ref token) = creds.codex_access_token {
+            env.insert("CODEX_ACCESS_TOKEN".to_string(), token.clone());
+        }
+        if let Some(ref token) = creds.codex_refresh_token {
+            env.insert("CODEX_REFRESH_TOKEN".to_string(), token.clone());
+        }
+        if let Some(ref expires_at) = creds.codex_expires_at {
+            env.insert("CODEX_EXPIRES_AT".to_string(), expires_at.clone());
+        }
+        if let Some(ref account_id) = creds.codex_account_id {
+            env.insert("CODEX_ACCOUNT_ID".to_string(), account_id.clone());
+        }
+    }
+
+    // Set agent command for lifecycle manager in worker subprocess
+    if let Ok(agent_cmd_json) = serde_json::to_string(&config.agent_command) {
+        env.insert("HIRSEL_AGENT_COMMAND".to_string(), agent_cmd_json);
+    }
+
+    // Get the executable path
+    let hirsel_exe = std::env::current_exe().map_err(|e| {
+        let err = WorkerError::SpawnFailed(format!("Failed to get current exe: {}", e));
+        err
+    })?;
+
+    // Build args for hirsel __worker-runtime.
+    let agent_command_json = serde_json::to_string(&config.agent_command).map_err(|e| {
+        WorkerError::SpawnFailed(format!("Failed to serialize agent command: {}", e))
+    })?;
+
+    let mut args = vec![
+        "__worker-runtime".to_string(),
+        "--runtime".to_string(),
+        config.runtime_name.clone(),
+        "--worker".to_string(),
+        config.worker_name.clone(),
+        "--work-dir".to_string(),
+        config.work_dir.to_string_lossy().to_string(),
+        "--runtime-dir".to_string(),
+        config.runtime_dir.to_string_lossy().to_string(),
+        "--agent-command".to_string(),
+        agent_command_json,
+    ];
+
+    if config.is_leader {
+        args.push("--is-leader".to_string());
+    }
+
+    if let Some(ref leader) = config.leader_name {
+        args.push("--leader-name".to_string());
+        args.push(leader.clone());
+    }
+
+    if let Some(ref teammates) = config.teammates {
+        if !teammates.is_empty() {
+            args.push("--teammates".to_string());
+            args.push(teammates.join(","));
+        }
+    }
+
+    if let Some(ref session_id) = config.resume_session_id {
+        args.push("--resume-session-id".to_string());
+        args.push(session_id.clone());
+    }
+
+    // Spawn the detached subprocess in its own process group
+    // This allows us to kill the entire process tree when stopping workers
+    let mut cmd = Command::new(&hirsel_exe);
+    cmd.args(&args)
+        .current_dir(&config.work_dir)
+        .envs(&env)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        // Create a new process group with the child's PID as the group leader
+        // This ensures all descendant helper processes are in the same group.
+        cmd.process_group(0);
+    }
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| WorkerError::SpawnFailed(e.to_string()))?;
+
+    let pid = child.id();
+
+    // Verify the process is actually alive after spawn
+    // This catches cases where the process exits immediately
+    if !is_pid_alive(pid) {
+        warn!(
+            "[{}] spawn_worker: process {} died immediately after spawn",
+            config.worker_name, pid
+        );
+        state
+            .update_worker(
+                &config.worker_name,
+                WorkerUpdate {
+                    status: Some(WorkerStatus::Error),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        return Err(WorkerError::SpawnFailed(format!(
+            "Process {} exited immediately after spawn",
+            pid
+        )));
+    }
+
+    // SUCCESS: Update worker with status, PID, and runner info
+    // Status is only set to Working AFTER successful spawn and alive check
+    state
+        .update_worker(
+            &config.worker_name,
+            WorkerUpdate {
+                status: Some(WorkerStatus::Working),
+                pid: Some(Some(pid as i64)),
+                runner_id: Some(pid.to_string()),
+                runner_type: Some("local".to_string()),
+                ..Default::default()
+            },
+        )
+        .await?;
+
+    info!(
+        "Spawned worker {} (hirsel __worker-runtime, PID {}, runner_type: local)",
+        config.worker_name, pid
+    );
+
+    Ok(SpawnResult {
+        worker_name: config.worker_name,
+        pid,
+    })
+}
+
+/// Check if a process is still alive
+pub fn is_pid_alive(pid: u32) -> bool {
+    // PID 0 is the kernel scheduler, never a valid user process
+    // Also, kill(0, sig) sends to the process group, not PID 0
+    if pid == 0 {
+        return false;
+    }
+
+    #[cfg(unix)]
+    {
+        // Send signal 0 to check if process exists
+        unsafe { libc::kill(pid as i32, 0) == 0 }
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On non-Unix platforms, try to read /proc/{pid}
+        std::path::Path::new(&format!("/proc/{}", pid)).exists()
+    }
+}
+
+/// Check worker heartbeats and mark stale workers
+pub async fn check_worker_heartbeats(
+    state: &SQLiteState,
+    timeout_seconds: i64,
+) -> WorkerResult<Vec<String>> {
+    let workers = state.get_workers().await?;
+    let now = chrono::Utc::now();
+    let mut stale = Vec::new();
+
+    for worker in workers {
+        // Only check workers that should be running (Working or Awaiting with hitl_waiting)
+        if worker.status != WorkerStatus::Working
+            && !(worker.status == WorkerStatus::Awaiting && worker.hitl_waiting)
+        {
+            continue;
+        }
+
+        // Check if process is still alive
+        if let Some(pid) = worker.pid {
+            if !is_pid_alive(pid as u32) {
+                // Process died - mark as error
+                warn!("Worker {} process died (PID {})", worker.name, pid);
+
+                // Mark worker as error and clear assigned_task_id
+                state
+                    .update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            pid: Some(None),
+                            status: Some(WorkerStatus::Error),
+                            assigned_task_id: Some(None), // Clear assigned task
+                            ..Default::default()
+                        },
+                    )
+                    .await?;
+
+                // Trigger scaling check - unclaimed task needs a worker
+                if let Err(e) = state.request_scaling_check().await {
+                    warn!(
+                        "Failed to request scaling check after worker {} death: {}",
+                        worker.name, e
+                    );
+                }
+
+                stale.push(worker.name.clone());
+                continue;
+            }
+        }
+
+        // Check heartbeat timestamp
+        if let Some(ref heartbeat) = worker.last_heartbeat {
+            match chrono::DateTime::parse_from_rfc3339(heartbeat) {
+                Ok(heartbeat_time) => {
+                    let elapsed =
+                        now.signed_duration_since(heartbeat_time.with_timezone(&chrono::Utc));
+                    if elapsed.num_seconds() > timeout_seconds {
+                        warn!(
+                            "Worker {} heartbeat stale ({}s ago)",
+                            worker.name,
+                            elapsed.num_seconds()
+                        );
+                        stale.push(worker.name.clone());
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Worker {} has unparsable heartbeat '{}': {}",
+                        worker.name, heartbeat, e
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(stale)
+}
+
+/// Update a worker's heartbeat timestamp
+pub async fn update_worker_heartbeat(state: &SQLiteState, worker_name: &str) -> WorkerResult<()> {
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    state
+        .update_worker(
+            worker_name,
+            WorkerUpdate {
+                last_heartbeat: Some(timestamp),
+                ..Default::default()
+            },
+        )
+        .await?;
+    Ok(())
+}
+
+/// Get the agent command for a preset
+pub fn get_agent_command(preset: &AgentPreset) -> Vec<String> {
+    preset.command.clone()
+}
+
+// =============================================================================
+// Time Limit Notifications and Timeout Handling
+// =============================================================================
+
+/// Get message for a time notification threshold
+fn get_time_notification_message(threshold: i64) -> &'static str {
+    match threshold {
+        25 => "Time check: 25% elapsed, 75% remaining",
+        50 => "Halfway point: 50% of time used",
+        75 => "75% of time used. Start wrapping up non-essential tasks.",
+        85 => "85% elapsed. Prioritize completing current work.",
+        90 => "90% of time elapsed! Focus on essential tasks only.",
+        95 => "5% time remaining! Finalize immediately.",
+        98 => "2% remaining - run will auto-complete very soon.",
+        _ => "Time notification",
+    }
+}
+
+/// Check time limit and send notifications at threshold crossings.
+/// Returns the threshold that was notified, if any.
+pub async fn check_and_send_time_notifications(
+    state: &SQLiteState,
+    is_multi_worker: bool,
+    worker_name: Option<&str>,
+) -> WorkerResult<Option<i64>> {
+    let time_info = match state.get_time_info().await? {
+        Some(info) => info,
+        None => return Ok(None),
+    };
+
+    let pct_elapsed = time_info.percent_elapsed as i64;
+    let last_notified = state.get_last_time_notification_pct().await?.unwrap_or(0);
+
+    // Find thresholds we've crossed since last notification
+    for &threshold in TIME_NOTIFICATION_THRESHOLDS {
+        if threshold > last_notified && pct_elapsed >= threshold {
+            let message = get_time_notification_message(threshold);
+
+            // Record as a structured worker concern if the run is linked to a project
+            if let (Ok(Some(project_id)), Ok(route_id)) =
+                (state.get_project_id().await, state.get_route_id().await)
+            {
+                if let Ok(store) = WorkerConcernStore::open().await {
+                    let _ = store
+                        .create(&CreateWorkerConcernRequest {
+                            project_id,
+                            route_id,
+                            runtime_name: Some(state.runtime_name().to_string()),
+                            worker_name: worker_name.unwrap_or("system").to_string(),
+                            kind: "time_warning".to_string(),
+                            severity: "medium".to_string(),
+                            summary: message.to_string(),
+                            details: Some(format!(
+                                "Run has reached {}% of its configured time limit.",
+                                threshold
+                            )),
+                            status: "open".to_string(),
+                            source: Some(
+                                if is_multi_worker {
+                                    "time-check-multi"
+                                } else {
+                                    "time-check-single"
+                                }
+                                .to_string(),
+                            ),
+                        })
+                        .await;
+                }
+            }
+
+            info!("Time notification sent: {}% - {}", threshold, message);
+            state.set_last_time_notification_pct(threshold).await?;
+
+            return Ok(Some(threshold));
+        }
+    }
+
+    Ok(None)
+}
+
+// =============================================================================
+// Worker Reconciliation (Startup)
+// =============================================================================
+
+/// Reconcile worker state on app startup.
+///
+/// When the app restarts (or crashes), workers may have been killed but their
+/// database entries still show them as "Working" or "Waiting". This function
+/// scans all runs and marks workers with dead PIDs as Paused.
+///
+/// Workers marked as Paused can be resumed with their full context using
+/// the resume functionality (session_id is preserved).
+pub async fn reconcile_stale_workers() -> Vec<(String, String)> {
+    let mut marked: Vec<(String, String)> = Vec::new();
+
+    // Get the runs directory
+    let runtimes_dir = match dirs::home_dir() {
+        Some(home) => home.join(".hirsel").join("runtimes"),
+        None => {
+            warn!("[reconcile] Could not determine home directory");
+            return marked;
+        }
+    };
+
+    // Iterate over all run directories
+    let entries = match std::fs::read_dir(&runtimes_dir) {
+        Ok(e) => e,
+        Err(_) => return marked,
+    };
+
+    for entry in entries.flatten() {
+        let runtime_name = entry.file_name().to_string_lossy().to_string();
+        let db_path = entry.path().join("hirsel.db");
+
+        if !db_path.exists() {
+            continue;
+        }
+
+        let state = match SQLiteState::new(&runtime_name).await {
+            Ok(s) => s,
+            Err(e) => {
+                warn!(
+                    "[reconcile] Failed to open database for {}: {}",
+                    runtime_name, e
+                );
+                continue;
+            }
+        };
+
+        let workers = match state.get_workers().await {
+            Ok(w) => w,
+            Err(e) => {
+                warn!(
+                    "[reconcile] Failed to get workers for {}: {}",
+                    runtime_name, e
+                );
+                continue;
+            }
+        };
+
+        for worker in workers {
+            // Only check workers that should be running (Working or Awaiting with hitl_waiting)
+            let is_active = worker.status == WorkerStatus::Working
+                || (worker.status == WorkerStatus::Awaiting && worker.hitl_waiting);
+            if !is_active {
+                continue;
+            }
+
+            // If worker has a PID, check if it's still alive
+            if let Some(pid) = worker.pid {
+                if !is_pid_alive(pid as u32) {
+                    // Process is dead but status shows it should be running
+                    // Mark as Paused so it can be resumed
+                    info!(
+                        "[reconcile] Marking stale worker {} in run {} as Paused (PID {} dead)",
+                        worker.name, runtime_name, pid
+                    );
+
+                    if let Err(e) = state
+                        .update_worker(
+                            &worker.name,
+                            WorkerUpdate {
+                                pid: Some(None),
+                                status: Some(WorkerStatus::Paused),
+                                hitl_waiting: Some(false),
+                                assigned_task_id: Some(None), // Clear assigned task
+                                ..Default::default()
+                            },
+                        )
+                        .await
+                    {
+                        warn!(
+                            "[reconcile] Failed to mark worker {} as paused: {}",
+                            worker.name, e
+                        );
+                    } else {
+                        marked.push((runtime_name.clone(), worker.name.clone()));
+                    }
+                }
+            } else if worker.status == WorkerStatus::Working {
+                // Worker marked as working but has no PID
+                // Skip Docker workers - they use container ID (runner_id) instead of PID
+                let is_docker = worker
+                    .runner_type
+                    .as_ref()
+                    .map(|t| t == "docker")
+                    .unwrap_or(false);
+
+                if is_docker {
+                    // Docker workers are managed by container runtime, not by PID
+                    // Container status would require docker ps check - skip for now
+                    continue;
+                }
+
+                // Local worker without PID - stale entry, mark as Paused
+                info!(
+                    "[reconcile] Marking stale worker {} in run {} as Paused (no PID)",
+                    worker.name, runtime_name
+                );
+
+                if let Err(e) = state
+                    .update_worker(
+                        &worker.name,
+                        WorkerUpdate {
+                            pid: Some(None),
+                            status: Some(WorkerStatus::Paused),
+                            assigned_task_id: Some(None), // Clear assigned task
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                {
+                    warn!(
+                        "[reconcile] Failed to mark worker {} as paused: {}",
+                        worker.name, e
+                    );
+                } else {
+                    marked.push((runtime_name.clone(), worker.name.clone()));
+                }
+            }
+        }
+    }
+
+    if !marked.is_empty() {
+        info!(
+            "[reconcile] Marked {} stale worker(s) as Paused: {:?}",
+            marked.len(),
+            marked
+        );
+    }
+
+    marked
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_get_agent_command() {
+        let codex_default = AgentPreset {
+            command: vec!["codex".to_string()],
+            description: "Codex CLI",
+            install_hint: Some("Install Codex CLI"),
+        };
+        assert_eq!(get_agent_command(&codex_default), vec!["codex"]);
+
+        let codex = AgentPreset {
+            command: vec!["codex".to_string()],
+            description: "Codex CLI",
+            install_hint: None,
+        };
+        assert_eq!(get_agent_command(&codex), vec!["codex"]);
+    }
+
+    #[test]
+    fn test_worker_spawn_config() {
+        let config = WorkerSpawnConfig {
+            runtime_name: "my-run".to_string(),
+            worker_name: "worker1".to_string(),
+            work_dir: PathBuf::from("/tmp/work"),
+            runtime_dir: PathBuf::from("/tmp/run"),
+            agent_command: vec!["test-agent".to_string()],
+            is_leader: true,
+            leader_name: Some("worker1".to_string()),
+            teammates: Some(vec!["worker2".to_string()]),
+            resume_session_id: None,
+            env_vars: None,
+            credentials: None,
+            assigned_task_id: None,
+            is_plan_task: false,
+        };
+
+        assert!(config.is_leader);
+        assert_eq!(config.leader_name, Some("worker1".to_string()));
+        assert_eq!(config.teammates, Some(vec!["worker2".to_string()]));
+    }
+}

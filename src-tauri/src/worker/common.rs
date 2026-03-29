@@ -36,7 +36,7 @@ pub fn build_worker_prompt(
 
     // Plan worker system prompt (injected before generic worker instructions)
     if is_plan_task {
-        prompt.push_str(crate::core::constants::PLAN_WORKER_SYSTEM_PROMPT);
+        prompt.push_str(crate::backend::constants::PLAN_WORKER_SYSTEM_PROMPT);
         prompt.push_str("\n\n---\n\n");
     }
 
