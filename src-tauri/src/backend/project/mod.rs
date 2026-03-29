@@ -1,12 +1,13 @@
 //! Project management module
 //!
-//! Projects are lightweight outcome containers. Repository linkage and execution
-//! settings are route-scoped.
+//! Projects are the top-level product object.
 //!
-//! All runs belong to a project. Projects enable:
-//! - Reusable configuration for multiple runs
-//! - Documentation persistence through git history
-//! - Organized run management
+//! Each project owns:
+//! - one starting point
+//! - one central checkout
+//! - one shepherd conversation
+//! - one canvas artifact
+//! - many visible threads
 
 mod focus;
 mod store;
@@ -16,5 +17,5 @@ pub use focus::validate_project_focus_view_html;
 pub use store::{ProjectError, ProjectResult, ProjectStore};
 pub use types::{
     CreateProjectRequest, Project, ProjectFocusView, ProjectRetainedContext,
-    ProjectSurfaceSnapshot, RouteSummary, UpdateProjectRequest,
+    ProjectSurfaceSnapshot, UpdateProjectRequest,
 };

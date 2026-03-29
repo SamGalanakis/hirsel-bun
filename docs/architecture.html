@@ -10,133 +10,169 @@
   </script>
   <style>
     :root {
-      --bg: #111111;
-      --panel: #1a1a1a;
-      --panel-2: #202020;
-      --border: #303030;
+      --bg: #0d0d0c;
+      --panel: rgba(20, 20, 18, 0.92);
+      --panel-soft: rgba(30, 30, 27, 0.9);
+      --line: rgba(232, 228, 208, 0.12);
       --text: #ece7dc;
-      --muted: #aaa397;
-      --accent: #d6b05d;
-      --green: #95b67c;
-      --blue: #8eb2c7;
-      --red: #c9826c;
+      --muted: #b2ac9e;
+      --accent: #d7a84a;
+      --green: #92b276;
+      --red: #c87c67;
+      --blue: #87abc5;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: "Inter", "Segoe UI", sans-serif;
-      background:
-        radial-gradient(circle at top, rgba(214, 176, 93, 0.08), transparent 28%),
-        var(--bg);
+      font-family: "Chivo Mono", monospace;
       color: var(--text);
-      line-height: 1.55;
+      background:
+        radial-gradient(circle at top left, rgba(215, 168, 74, 0.14), transparent 24rem),
+        radial-gradient(circle at bottom right, rgba(135, 171, 197, 0.08), transparent 26rem),
+        linear-gradient(180deg, #090908, var(--bg));
+      line-height: 1.6;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      opacity: 0.3;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 320 320' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
     }
     .wrap {
+      position: relative;
+      z-index: 1;
       max-width: 1180px;
       margin: 0 auto;
-      padding: 32px 20px 72px;
+      padding: 32px 20px 80px;
     }
-    .hero, section, .card {
-      background: rgba(26, 26, 26, 0.92);
-      border: 1px solid var(--border);
+    .hero,
+    section,
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      backdrop-filter: blur(10px);
       border-radius: 18px;
     }
     .hero {
-      padding: 28px;
-      margin-bottom: 20px;
+      padding: 30px;
+      margin-bottom: 18px;
     }
     .eyebrow {
       color: var(--accent);
       text-transform: uppercase;
-      letter-spacing: 0.18em;
+      letter-spacing: 0.22em;
       font-size: 12px;
       margin-bottom: 10px;
     }
-    h1, h2, h3 { margin: 0 0 10px; }
-    h1 { font-size: 44px; line-height: 1; }
-    h2 { font-size: 24px; }
-    p, li { color: var(--muted); }
+    h1, h2, h3 {
+      margin: 0 0 10px;
+      font-family: "Azeret Mono", monospace;
+    }
+    h1 {
+      font-size: clamp(2.5rem, 6vw, 3.6rem);
+      line-height: 0.95;
+    }
+    h2 {
+      font-size: 1.45rem;
+    }
+    p, li {
+      color: var(--muted);
+    }
+    code {
+      color: var(--accent);
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 0.95em;
+    }
+    .pillrow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 16px;
+    }
+    .pill {
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(255,255,255,0.03);
+    }
+    section, .card {
+      padding: 22px;
+      margin-bottom: 16px;
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
-      margin-top: 16px;
-    }
-    .card, section {
-      padding: 22px;
-      margin-bottom: 16px;
     }
     .three {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 16px;
     }
-    code {
-      background: #262626;
-      border: 1px solid #343434;
-      padding: 2px 6px;
-      border-radius: 999px;
-      color: var(--accent);
-      font-size: 0.95em;
-    }
-    ul { margin: 0; padding-left: 18px; }
-    .pillrow {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 14px;
-    }
-    .pill {
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 6px 10px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .callout {
-      border-left: 3px solid var(--accent);
-      padding-left: 14px;
-      margin-top: 14px;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
-    }
-    th, td {
-      border-top: 1px solid var(--border);
-      padding: 10px 12px;
-      text-align: left;
-      vertical-align: top;
-    }
-    th { color: var(--text); }
-    .ok { color: var(--green); }
-    .warn { color: var(--accent); }
-    .danger { color: var(--red); }
     .mermaid {
-      background: var(--panel-2);
-      border: 1px solid var(--border);
+      background: var(--panel-soft);
+      border: 1px solid var(--line);
       border-radius: 14px;
       padding: 12px;
       overflow: auto;
     }
+    .callout {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-left: 3px solid var(--accent);
+      background: rgba(255,255,255,0.02);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+    th, td {
+      border-top: 1px solid var(--line);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: var(--text);
+    }
+    .ok { color: var(--green); }
+    .warn { color: var(--accent); }
+    .info { color: var(--blue); }
+    .danger { color: var(--red); }
+    ul {
+      margin: 0;
+      padding-left: 18px;
+    }
     @media (max-width: 900px) {
-      .grid, .three { grid-template-columns: 1fr; }
-      h1 { font-size: 34px; }
+      .grid, .three {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&display=swap">
 </head>
 <body>
   <div class="wrap">
     <div class="hero">
-      <div class="eyebrow">Current End State</div>
-      <h1>Hirsel is now backend-first.</h1>
-      <p>The backend is the product. The desktop app is only a thin shell that stores the backend URL and API key, then loads the backend-served Datastar UI. Durable chat, orchestration, workers, routes, and artifacts all live on the backend.</p>
+      <div class="eyebrow">Current Architecture</div>
+      <h1>One project, one shepherd, many visible threads.</h1>
+      <p>Hirsel is now backend-first. The desktop app is a thin shell that stores backend connection details and loads the backend-served Datastar UI. The durable product model is <code>project + shepherd + canvas + threads</code>, with coding work executed in Docker containers that enter the repo through <code>nix develop</code>.</p>
       <div class="pillrow">
-        <div class="pill">Datastar web UI</div>
-        <div class="pill">Thin Tauri wrapper</div>
-        <div class="pill">Durable backend queueing</div>
-        <div class="pill">Routes + work tree</div>
+        <div class="pill">Backend-served Datastar UI</div>
+        <div class="pill">Thin Tauri shell</div>
+        <div class="pill">Docker + Nix scope runtime</div>
+        <div class="pill">Central checkout</div>
+        <div class="pill">Visible thread cards</div>
       </div>
     </div>
 
@@ -145,105 +181,148 @@
       <div class="mermaid">
 flowchart LR
     User[User]
-    Shell[Desktop shell / browser]
-    Connect[Backend connect bootstrap]
-    WebUI[Datastar UI routes]
-    Core[Project / route / work tree / chat state]
-    Orch[Channel + branches]
-    Workers[Sandbox workers]
-    Artifacts[Virtual artifacts / focus / retained context]
+    Shell[Desktop shell or browser]
+    Server[Axum + Datastar backend]
+    Project[Project state]
+    Canvas[Canvas HTML artifact]
+    Shepherd[Shepherd conversation + queue]
+    Threads[Visible thread records]
+    Runtime[Central checkout]
+    Scope[Hidden scope runtime]
+    Container[Docker container]
+    Checkout[Thread checkout]
 
     User --> Shell
-    Shell --> Connect
-    Connect --> WebUI
-    WebUI --> Core
-    Core --> Orch
-    Orch --> Workers
-    Orch --> Artifacts
-    Workers --> Artifacts
+    Shell --> Server
+    Server --> Project
+    Project --> Canvas
+    Project --> Shepherd
+    Project --> Threads
+    Shepherd --> Runtime
+    Shepherd --> Scope
+    Threads --> Checkout
+    Scope --> Container
+    Container --> Runtime
+    Container --> Checkout
       </div>
       <div class="callout">
-        <p><span class="ok">Important:</span> closing the UI no longer stops backend-owned work. User messages and project sync are queued durably on the backend.</p>
+        <p><span class="ok">Important:</span> threads are durable product objects, but their coding turns are not in-process. Each queued shepherd or thread turn launches the hidden <code>hirsel __shepherd-scope-runtime</code> inside a Docker container.</p>
       </div>
     </section>
 
     <div class="three">
       <div class="card">
-        <h3>Desktop shell</h3>
-        <p>Minimal Tauri wrapper.</p>
+        <h3>Project</h3>
+        <p>Top-level unit of work.</p>
         <ul>
-          <li>Stores backend URL + API key locally</li>
-          <li>Checks backend health</li>
-          <li>Loads backend UI in a webview</li>
+          <li>One starting point</li>
+          <li>One central checkout</li>
+          <li>One shepherd conversation</li>
+          <li>One canvas artifact</li>
+          <li>Many visible threads</li>
         </ul>
       </div>
       <div class="card">
-        <h3>Backend UI</h3>
-        <p>Server-rendered HTML with Datastar.</p>
+        <h3>Shepherd</h3>
+        <p>The only agent the user talks to directly.</p>
         <ul>
-          <li>Explicit pages and actions</li>
-          <li>SSE for live updates</li>
-          <li>No generic client RPC bridge</li>
+          <li>Answers simple questions directly</li>
+          <li>Creates, renames, pauses, archives, and messages threads</li>
+          <li>Owns integration decisions in the central checkout</li>
         </ul>
       </div>
       <div class="card">
-        <h3>Execution layer</h3>
-        <p>Backend-owned orchestration and workers.</p>
+        <h3>Canvas</h3>
+        <p>A separately-authored HTML artifact stored on the backend.</p>
         <ul>
-          <li>Durable Shepherd queue</li>
-          <li>Background sync / orchestration tasks</li>
-          <li>Workers spawned from the backend</li>
+          <li>Rendered on the project page</li>
+          <li>Updated by shepherd through a narrow tool surface</li>
+          <li>Intended for synthesis, comparisons, and current project state</li>
         </ul>
       </div>
     </div>
 
     <section>
-      <h2>Agent Model</h2>
+      <h2>Core Objects</h2>
       <table>
         <thead>
           <tr>
-            <th>Kind</th>
-            <th>Where it runs</th>
-            <th>What it does</th>
+            <th>Object</th>
+            <th>Durable?</th>
+            <th>Where it lives</th>
+            <th>Purpose</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td><code>channel</code></td>
-            <td>Backend process</td>
-            <td>User-facing orchestrator, durable message queue, state mutations, delegation</td>
+            <td><code>project</code></td>
+            <td>Yes</td>
+            <td>SQLite + project workspace</td>
+            <td>Top-level product object and workspace root</td>
           </tr>
           <tr>
-            <td><code>branch</code></td>
-            <td>Backend process</td>
-            <td>Private reasoning fork used during a channel turn</td>
+            <td><code>canvas</code></td>
+            <td>Yes</td>
+            <td><code>project_focus_views</code></td>
+            <td>Shared HTML artifact shown in the main project view</td>
           </tr>
           <tr>
-            <td><code>code_worker</code></td>
-            <td>Backend-side worker runtime</td>
-            <td>Repo / shell / git / code execution</td>
+            <td><code>retained context</code></td>
+            <td>Yes</td>
+            <td><code>project_retained_contexts</code></td>
+            <td>Compact markdown memory for the project</td>
           </tr>
           <tr>
-            <td><code>ops_worker</code></td>
-            <td>Backend-side worker runtime</td>
-            <td>Operational shell tasks, CI/log/deploy inspection</td>
+            <td><code>thread</code></td>
+            <td>Yes</td>
+            <td><code>shepherd_threads</code></td>
+            <td>Visible parallel line of work with title, status, summary, and checkout</td>
           </tr>
           <tr>
-            <td><code>scribe</code></td>
-            <td>Backend process</td>
-            <td>Condenses retained context and project artifacts</td>
+            <td><code>scope turn</code></td>
+            <td>Queued durably</td>
+            <td><code>shepherd_chat_queue</code></td>
+            <td>Pending or completed shepherd/thread turn execution</td>
+          </tr>
+          <tr>
+            <td><code>conversation</code></td>
+            <td>Yes</td>
+            <td><code>shepherd_chat_messages</code></td>
+            <td>User-visible transcript for project and thread scopes</td>
           </tr>
         </tbody>
       </table>
     </section>
 
     <section>
-      <h2>UI Routing</h2>
-      <p>The live product path is now page/action/SSE based.</p>
+      <h2>Execution Model</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Central Checkout</h3>
+          <p>The first time a project needs workspace materialization, Hirsel creates a central checkout at <code>~/.hirsel/workspaces/project-&lt;id&gt;/work/central</code>. This becomes the integration base that shepherd reasons over and that thread checkouts branch from.</p>
+        </div>
+        <div class="card">
+          <h3>Thread Checkouts</h3>
+          <p>Each visible thread gets its own checkout under the same project workspace, usually at <code>.../work/thread-&lt;slug&gt;-&lt;id&gt;</code>. The checkout path and checkout name are stored on the thread record.</p>
+        </div>
+        <div class="card">
+          <h3>Container Runtime</h3>
+          <p>When a queued turn runs, the backend launches a Docker container, mounts <code>/work</code>, <code>/hirsel</code>, session home, and the hidden <code>hirsel</code> binary, then enters the repo through <code>nix develop</code>.</p>
+        </div>
+        <div class="card">
+          <h3>Flake Bootstrapping</h3>
+          <p>Project scope may bootstrap a temporary shell if the project has no <code>flake.nix</code> yet. Thread scope is stricter: normal coding threads require the project flake to exist first.</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>HTTP Surface</h2>
+      <p>The live UI is page/action/SSE based rather than a client-owned SPA store.</p>
       <table>
         <thead>
           <tr>
-            <th>Path type</th>
+            <th>Type</th>
             <th>Examples</th>
             <th>Purpose</th>
           </tr>
@@ -251,43 +330,64 @@ flowchart LR
         <tbody>
           <tr>
             <td>Pages</td>
-            <td><code>/connect</code>, <code>/app</code>, <code>/app/projects/:id</code></td>
+            <td><code>/connect</code>, <code>/app</code>, <code>/app/projects/:id</code>, <code>/app/projects/:id/threads/:thread_id</code></td>
             <td>Initial HTML and navigation targets</td>
           </tr>
           <tr>
             <td>Actions</td>
-            <td><code>/connect/session</code>, <code>/app/projects/:id/chat/send</code>, <code>/app/projects/:id/sync</code></td>
+            <td><code>/connect/session</code>, <code>/app/projects/:id/chat/send</code>, <code>/app/projects/:id/threads/:thread_id/chat/send</code></td>
             <td>State-changing POST flows</td>
           </tr>
           <tr>
             <td>Streams</td>
-            <td><code>/app/projects/:id/stream</code>, worker detail stream</td>
+            <td><code>/app/projects/:id/stream</code>, <code>/app/projects/:id/threads/:thread_id/stream</code></td>
             <td>Incremental Datastar patches over SSE</td>
+          </tr>
+          <tr>
+            <td>Artifacts</td>
+            <td><code>/app/projects/:id/focus</code></td>
+            <td>Project canvas document embedded in the main view</td>
           </tr>
         </tbody>
       </table>
     </section>
 
     <section>
-      <h2>State Model</h2>
-      <div class="grid">
-        <div class="card">
-          <h3>Project / route / work tree</h3>
-          <p>Projects contain routes. Routes carry the durable line of work. Each route has a hierarchical work tree instead of the old board/node canvas model.</p>
-        </div>
-        <div class="card">
-          <h3>Artifacts</h3>
-          <p>Focus view and retained context are backend-owned artifacts. The focus view is served as a dedicated document and embedded in the main project page.</p>
-        </div>
-        <div class="card">
-          <h3>Shepherd chat</h3>
-          <p>User messages are queued on the backend. The UI reads transcript and queue state from the server instead of owning turns locally.</p>
-        </div>
-        <div class="card">
-          <h3>Worker state</h3>
-          <p>Workers and their events are backend state. The Datastar app subscribes to streamed updates rather than polling a client-side store.</p>
-        </div>
-      </div>
+      <h2>On-Disk Layout</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Path</th>
+            <th>What lives there</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>~/.hirsel/hirsel.db</code></td>
+            <td>Projects, canvas HTML, retained context, threads, chat history, and queue state</td>
+          </tr>
+          <tr>
+            <td><code>~/.hirsel/workspaces/project-&lt;id&gt;/work/central</code></td>
+            <td>Central checkout for a project</td>
+          </tr>
+          <tr>
+            <td><code>~/.hirsel/workspaces/project-&lt;id&gt;/work/thread-*</code></td>
+            <td>Per-thread checkouts</td>
+          </tr>
+          <tr>
+            <td><code>~/.hirsel/agent-sessions/</code></td>
+            <td>Per-scope home directories mounted into coding containers</td>
+          </tr>
+          <tr>
+            <td><code>~/.hirsel/logs/server</code>, <code>.../gui</code>, <code>.../scope</code></td>
+            <td>Rotated tracing logs</td>
+          </tr>
+          <tr>
+            <td><code>~/.hirsel/bootstrap-flake/flake.nix</code></td>
+            <td>Temporary bootstrap shell used only before a project defines its own flake</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section>
@@ -301,41 +401,48 @@ flowchart LR
         </thead>
         <tbody>
           <tr>
-            <td>Thin wrapper</td>
-            <td><code>src/main.ts</code>, <code>src/wrapper.css</code></td>
+            <td>Thin shell</td>
+            <td><code>src/main.ts</code>, <code>src/wrapper.css</code>, <code>src-tauri/src/desktop/</code></td>
           </tr>
           <tr>
-            <td>Datastar pages</td>
-            <td><code>src-tauri/src/backend/webui.rs</code>, <code>src-tauri/src/backend/server/webui.css</code></td>
+            <td>HTTP server</td>
+            <td><code>src-tauri/src/backend/server/mod.rs</code>, <code>src-tauri/src/backend/server/web_routes/</code>, <code>src-tauri/src/backend/server/auth.rs</code></td>
           </tr>
           <tr>
-            <td>Backend UI routes</td>
-            <td><code>src-tauri/src/backend/server/web_routes.rs</code>, <code>src-tauri/src/backend/server/auth.rs</code></td>
+            <td>UI rendering</td>
+            <td><code>src-tauri/src/backend/webui/</code>, <code>src-tauri/src/backend/server/webui.css</code></td>
           </tr>
           <tr>
-            <td>Chat durability</td>
-            <td><code>src-tauri/src/backend/shepherd_chat.rs</code>, <code>src-tauri/src/desktop/commands/shepherd/commands.rs</code></td>
+            <td>Project state</td>
+            <td><code>src-tauri/src/backend/project/</code>, <code>src-tauri/src/backend/workspace.rs</code></td>
           </tr>
           <tr>
-            <td>Project/route/work tree</td>
-            <td><code>src-tauri/src/backend/project/</code>, <code>src-tauri/src/backend/route/</code>, <code>src-tauri/src/backend/worktree.rs</code></td>
+            <td>Thread state</td>
+            <td><code>src-tauri/src/backend/shepherd_threads.rs</code></td>
           </tr>
           <tr>
-            <td>Workers</td>
-            <td><code>src-tauri/src/backend/workers.rs</code>, <code>src-tauri/src/worker/</code></td>
+            <td>Conversation + queue</td>
+            <td><code>src-tauri/src/backend/shepherd_chat.rs</code>, <code>src-tauri/src/backend/shepherd_runtime/commands.rs</code></td>
+          </tr>
+          <tr>
+            <td>Scope runtime</td>
+            <td><code>src-tauri/src/backend/shepherd_runtime/runtime.rs</code>, <code>src-tauri/src/backend/shepherd_runtime/sandbox.rs</code>, <code>src-tauri/src/backend/sandbox.rs</code></td>
+          </tr>
+          <tr>
+            <td>Git workspace materialization</td>
+            <td><code>src-tauri/src/backend/git.rs</code></td>
           </tr>
         </tbody>
       </table>
     </section>
 
     <section>
-      <h2>What Was Removed</h2>
+      <h2>Current Constraints</h2>
       <ul>
-        <li>The Solid SPA and its client stores/hooks</li>
-        <li>The active <code>/api/ui/invoke</code> bridge</li>
-        <li>The old profile-based local/remote client split</li>
-        <li>The old run-centric user model</li>
-        <li>The board/specflow canvas as the active planning surface</li>
+        <li>Docker is a hard requirement for coding turns.</li>
+        <li>Normal thread execution requires a project <code>flake.nix</code>.</li>
+        <li>The deploy image serves the backend UI, but full coding execution still expects the backend process to have Docker available on its host.</li>
+        <li>The biggest remaining code hotspots are still <code>web_routes.rs</code> and <code>webui.rs</code>, which own too many concerns each.</li>
       </ul>
     </section>
   </div>

@@ -17,9 +17,10 @@ CREATE TABLE IF NOT EXISTS projects (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     description TEXT,
+    starting_point_json TEXT NOT NULL,
+    sandbox_image TEXT,
     x REAL,
-    y REAL,
-    active_route_id INTEGER
+    y REAL
 );
 
 CREATE INDEX IF NOT EXISTS idx_projects_name ON projects(name);
@@ -39,8 +40,8 @@ CREATE TABLE IF NOT EXISTS project_retained_contexts (
 );
 "#;
 
-const SCHEMA_VERSION_KEY: &str = "project_route_model_version";
-const SCHEMA_VERSION: &str = "2";
+const SCHEMA_VERSION_KEY: &str = "project_thread_model_version";
+const SCHEMA_VERSION: &str = "6";
 
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
 
@@ -88,16 +89,23 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Hard reset for project/route-owned domain tables.
+/// Hard reset for legacy project-owned domain tables.
 ///
-/// This is intentionally destructive: route ownership changed and old layouts are
-/// not supported.
+/// This is intentionally destructive: only the current project/thread model is
+/// supported.
 async fn reset_project_domain(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     const RESET_SQL: &str = r#"
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS project_focus_views;
+DROP TABLE IF EXISTS project_retained_contexts;
+DROP TABLE IF EXISTS shepherd_threads;
+DROP TABLE IF EXISTS shepherd_chat_messages;
+DROP TABLE IF EXISTS shepherd_live_turns;
+DROP TABLE IF EXISTS shepherd_scope_states;
+DROP TABLE IF EXISTS shepherd_sessions;
 DROP TABLE IF EXISTS project_repos;
 DROP TABLE IF EXISTS route_repos;
 DROP TABLE IF EXISTS routes;
-DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS board_node_checked_by;
 DROP TABLE IF EXISTS board_node_blocked_by;
 DROP TABLE IF EXISTS board_nodes;
@@ -107,7 +115,6 @@ DROP TABLE IF EXISTS delivery_attempts;
 DROP TABLE IF EXISTS deliveries;
 DROP TABLE IF EXISTS worker_concerns;
 DROP TABLE IF EXISTS worker_concern_reads;
-DROP TABLE IF EXISTS project_focus_views;
 DROP TABLE IF EXISTS meta;
 "#;
 
@@ -126,10 +133,6 @@ pub enum ProjectError {
     NotFound(String),
     #[error("Project already exists: {0}")]
     AlreadyExists(String),
-    #[error("Route error: {0}")]
-    Route(#[from] crate::backend::route::RouteError),
-    #[error("Work tree error: {0}")]
-    WorkTree(String),
     #[error("Invalid input: {0}")]
     InvalidInput(String),
 }
@@ -159,12 +162,6 @@ impl ProjectStore {
     ) -> ProjectResult<Project> {
         let pool = self.pool().await;
 
-        if req.repos.is_empty() {
-            return Err(ProjectError::InvalidInput(
-                "Project must include at least one repo".to_string(),
-            ));
-        }
-
         let exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE name = ?)")
                 .bind(&req.name)
@@ -175,15 +172,19 @@ impl ProjectStore {
             return Err(ProjectError::AlreadyExists(req.name.clone()));
         }
 
+        let starting_point_json = serde_json::to_string(&req.starting_point)
+            .map_err(|e| ProjectError::InvalidInput(format!("Invalid starting point: {}", e)))?;
         let now = utc_now();
         let result = sqlx::query(
-            "INSERT INTO projects (name, created_at, updated_at, description, x, y, active_route_id)
-             VALUES (?, ?, ?, ?, ?, ?, NULL)",
+            "INSERT INTO projects (name, created_at, updated_at, description, starting_point_json, sandbox_image, x, y)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&req.name)
         .bind(&now)
         .bind(&now)
         .bind(&req.description)
+        .bind(&starting_point_json)
+        .bind(&req.sandbox_image)
         .bind(req.x)
         .bind(req.y)
         .execute(pool)
@@ -192,25 +193,12 @@ impl ProjectStore {
         self.get_project(result.last_insert_rowid()).await
     }
 
-    /// Select the active route for a project.
-    pub async fn set_active_route_id(&self, project_id: i64, route_id: i64) -> ProjectResult<()> {
-        let pool = self.pool().await;
-        let _ = self.get_project(project_id).await?;
-        sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")
-            .bind(route_id)
-            .bind(utc_now())
-            .bind(project_id)
-            .execute(pool)
-            .await?;
-        Ok(())
-    }
-
     /// Get a project by ID
     pub async fn get_project(&self, id: i64) -> ProjectResult<Project> {
         let pool = self.pool().await;
 
         let row = sqlx::query(
-            "SELECT id, name, created_at, updated_at, description, icon, x, y, active_route_id
+            "SELECT id, name, created_at, updated_at, description, icon, starting_point_json, sandbox_image, x, y
              FROM projects
              WHERE id = ?",
         )
@@ -227,7 +215,7 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let row = sqlx::query(
-            "SELECT id, name, created_at, updated_at, description, icon, x, y, active_route_id
+            "SELECT id, name, created_at, updated_at, description, icon, starting_point_json, sandbox_image, x, y
              FROM projects
              WHERE name = ?",
         )
@@ -243,7 +231,7 @@ impl ProjectStore {
         let pool = self.pool().await;
 
         let rows = sqlx::query(
-            "SELECT id, name, created_at, updated_at, description, icon, x, y, active_route_id
+            "SELECT id, name, created_at, updated_at, description, icon, starting_point_json, sandbox_image, x, y
              FROM projects
              ORDER BY created_at DESC",
         )
@@ -276,6 +264,10 @@ impl ProjectStore {
             updates.push(format!("description = ?{}", bind_index));
             bind_index += 1;
         }
+        if req.sandbox_image.is_some() {
+            updates.push(format!("sandbox_image = ?{}", bind_index));
+            bind_index += 1;
+        }
         if req.x.is_some() {
             updates.push(format!("x = ?{}", bind_index));
             bind_index += 1;
@@ -299,6 +291,9 @@ impl ProjectStore {
         if let Some(ref description) = req.description {
             query = query.bind(description);
         }
+        if let Some(ref sandbox_image) = req.sandbox_image {
+            query = query.bind(sandbox_image);
+        }
         if let Some(x) = req.x {
             query = query.bind(x);
         }
@@ -312,80 +307,11 @@ impl ProjectStore {
         self.get_project(id).await
     }
 
-    /// Replace only the project's description.
-    pub async fn set_project_description(
-        &self,
-        id: i64,
-        description: Option<&str>,
-    ) -> ProjectResult<Project> {
-        let pool = self.pool().await;
-
-        let _ = self.get_project(id).await?;
-
-        sqlx::query("UPDATE projects SET description = ?, updated_at = ? WHERE id = ?")
-            .bind(description)
-            .bind(utc_now())
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        self.get_project(id).await
-    }
-
     /// Delete a project and all associated data
     pub async fn delete_project(&self, id: i64) -> ProjectResult<()> {
         let pool = self.pool().await;
 
         let _ = self.get_project(id).await?;
-
-        sqlx::query("DELETE FROM projects WHERE id = ?")
-            .bind(id)
-            .execute(pool)
-            .await?;
-
-        // Best-effort cleanup for route-scoped/project-scoped tables
-        let _ = sqlx::query("DELETE FROM board_node_checked_by WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM board_node_blocked_by WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM board_nodes WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM route_runtimes WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM route_repos WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM routes WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query(
-            "DELETE FROM worker_concern_reads WHERE concern_id IN (SELECT id FROM worker_concerns WHERE project_id = ?)",
-        )
-        .bind(id)
-        .execute(pool)
-        .await;
-        let _ = sqlx::query("DELETE FROM worker_concerns WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM project_focus_views WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
-        let _ = sqlx::query("DELETE FROM project_retained_contexts WHERE project_id = ?")
-            .bind(id)
-            .execute(pool)
-            .await;
 
         if let Ok(shepherd_store) = crate::backend::shepherd_chat::ShepherdChatStore::open().await {
             let _ = shepherd_store.delete_project_messages(id).await;
@@ -396,18 +322,26 @@ impl ProjectStore {
             let _ = thread_store.delete_project_threads(id).await;
         }
 
-        let project_dir = crate::backend::config::hirsel_dir()
-            .join("projects")
-            .join(id.to_string());
-        if project_dir.exists() {
-            if let Err(e) = std::fs::remove_dir_all(&project_dir) {
-                tracing::warn!(
-                    "Failed to delete project directory {:?}: {}",
-                    project_dir,
-                    e
-                );
+        let workspace_dir =
+            crate::backend::config::workspace_dir(&crate::backend::workspace_name_for_project(id));
+        if workspace_dir.exists() {
+            if let Err(error) = std::fs::remove_dir_all(&workspace_dir) {
+                tracing::warn!(%error, project_id = id, path = %workspace_dir.display(), "failed to delete project workspace directory");
             }
         }
+
+        let _ = sqlx::query("DELETE FROM project_focus_views WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM project_retained_contexts WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM projects WHERE id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
 
         Ok(())
     }
@@ -549,6 +483,9 @@ impl ProjectStore {
     }
 
     fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
+        let starting_point_json: String = row.get("starting_point_json");
+        let starting_point = serde_json::from_str(&starting_point_json)
+            .unwrap_or(crate::backend::draft::StartingPoint::Greenfield);
         Project {
             id: row.get("id"),
             name: row.get("name"),
@@ -556,9 +493,10 @@ impl ProjectStore {
             updated_at: row.get("updated_at"),
             description: row.get("description"),
             icon: row.get("icon"),
+            starting_point,
+            sandbox_image: row.get("sandbox_image"),
             x: row.get("x"),
             y: row.get("y"),
-            active_route_id: row.get("active_route_id"),
         }
     }
 }

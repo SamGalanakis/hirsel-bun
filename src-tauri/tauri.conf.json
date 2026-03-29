@@ -1,6 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Hirsel",
+  "mainBinaryName": "hirsel-desktop",
   "version": "0.3.2",
   "identifier": "app.hirsel",
   "build": {

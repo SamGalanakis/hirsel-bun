@@ -2,14 +2,21 @@
 
 This file is no longer a product-spec test plan.
 
-The old rewrite-eval checklist was for a different Hirsel shape: Alpine.js, broad CLI workflows, scenario fixtures, and a route/board-first UI. The current codebase is a SolidJS + Tauri client around a backend-first runtime with project focus views, route work trees, and route-scoped worker concerns.
+The old rewrite-eval checklist targeted a different Hirsel shape. The current repo is:
 
-Use these checks for the current repo instead:
+- a backend-served Datastar UI
+- a thin Tauri wrapper
+- one project with one shepherd, one canvas, and many visible threads
+- Docker + Nix scope execution for coding turns
+
+Use these checks for the current repo:
 
 ```bash
-cargo check --manifest-path src-tauri/Cargo.toml
-bunx tsc --noEmit
+cargo check --manifest-path src-tauri/Cargo.toml --all-targets --all-features
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+bash -n dev.sh
 bun run vite:build
+bun run test
 ```
 
 For architecture context, see `docs/architecture.html`.

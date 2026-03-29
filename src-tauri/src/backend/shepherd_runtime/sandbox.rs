@@ -1,0 +1,501 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
+
+use super::rpc::{server_control_socket_path, wait_for_worker_socket};
+use super::runtime::resolve_scope_workspace;
+use super::session::{ShepherdScopeSession, ShepherdSessionStore};
+use super::types::ShepherdScope;
+use crate::backend::project::ProjectStore;
+use crate::backend::sandbox::{
+    ensure_sandbox_image_available, humanize_docker_error, SandboxConfig,
+};
+
+const BOOTSTRAP_FLAKE: &str = r#"
+{
+  description = "Hirsel bootstrap shell";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = { self, nixpkgs }:
+    let
+      systems = [ "x86_64-linux" "aarch64-linux" ];
+      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
+    in {
+      devShells = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+        in {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              bash
+              coreutils
+              findutils
+              gawk
+              git
+              gnugrep
+              gnused
+              jq
+              procps
+              ripgrep
+              which
+            ];
+          };
+        });
+    };
+}
+"#;
+
+fn quote_shell(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+pub(crate) fn scope_key(scope: &ShepherdScope) -> String {
+    match scope {
+        ShepherdScope::General => "general".to_string(),
+        ShepherdScope::Project { project_id, .. } => format!("project-{project_id}"),
+        ShepherdScope::Thread { thread_id, .. } => format!("thread-{thread_id}"),
+    }
+}
+
+pub(crate) fn session_dir(scope: &ShepherdScope) -> PathBuf {
+    crate::backend::config::hirsel_dir()
+        .join("agent-sessions")
+        .join(scope_key(scope))
+}
+
+fn container_session_dir(scope: &ShepherdScope) -> String {
+    format!("/hirsel/agent-sessions/{}", scope_key(scope))
+}
+
+fn scope_file_path(scope: &ShepherdScope) -> PathBuf {
+    session_dir(scope).join("scope.json")
+}
+
+fn container_scope_file(scope: &ShepherdScope) -> String {
+    format!("{}/scope.json", container_session_dir(scope))
+}
+
+fn worker_socket_path(scope: &ShepherdScope) -> PathBuf {
+    session_dir(scope).join("worker.sock")
+}
+
+fn container_worker_socket(scope: &ShepherdScope) -> String {
+    format!("{}/worker.sock", container_session_dir(scope))
+}
+
+fn container_name(scope: &ShepherdScope) -> String {
+    let raw = format!("hirsel-{}", scope_key(scope));
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
+}
+
+fn ensure_bootstrap_flake() -> Result<PathBuf, String> {
+    let dir = crate::backend::config::hirsel_dir().join("bootstrap-flake");
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("failed to create bootstrap flake dir: {}", error))?;
+    std::fs::write(dir.join("flake.nix"), BOOTSTRAP_FLAKE)
+        .map_err(|error| format!("failed to write bootstrap flake: {}", error))?;
+    Ok(dir)
+}
+
+fn build_scope_runtime_script(
+    scope: &ShepherdScope,
+    allow_bootstrap: bool,
+) -> Result<String, String> {
+    let _bootstrap_dir = if allow_bootstrap {
+        Some(ensure_bootstrap_flake()?)
+    } else {
+        None
+    };
+    let serve_cmd = format!(
+        "hirsel-worker serve --scope-file {} --socket-path {}{}",
+        quote_shell(&container_scope_file(scope)),
+        quote_shell(&container_worker_socket(scope)),
+        if allow_bootstrap {
+            " --bootstrap-flake"
+        } else {
+            ""
+        }
+    );
+    let mut script = String::from(
+        r#"set -e
+export HIRSEL_ROOT=/hirsel
+export HOME=/tmp/home
+mkdir -p "$HOME" /nix
+export PATH="$HOME/.nix-profile/bin:/usr/local/bin:$PATH"
+
+for tool in curl git xz; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "Worker image is missing required tool '$tool'. Use the default Hirsel worker image or provide a custom image that includes the standard worker runtime dependencies." >&2
+    exit 1
+  fi
+done
+
+export HIRSEL_SERVER_RPC_SOCKET=/hirsel/server/control.sock
+if ! command -v nix >/dev/null 2>&1 && [ ! -x "$HOME/.nix-profile/bin/nix" ]; then
+  if ! sh <(curl -L https://nixos.org/nix/install) --no-daemon >/tmp/hirsel-nix-install.log 2>&1; then
+    cat /tmp/hirsel-nix-install.log >&2
+    exit 1
+  fi
+fi
+"#,
+    );
+
+    if allow_bootstrap {
+        script.push_str(&format!(
+            "export HIRSEL_BOOTSTRAP_FLAKE=1\nexec nix --extra-experimental-features \"nix-command flakes\" develop /hirsel/bootstrap-flake --command {}\n",
+            serve_cmd
+        ));
+    } else {
+        script.push_str(&format!(
+            "unset HIRSEL_BOOTSTRAP_FLAKE\nexec nix --extra-experimental-features \"nix-command flakes\" develop /work --command {}\n",
+            serve_cmd
+        ));
+    }
+
+    if !allow_bootstrap {
+        return Ok(script);
+    }
+
+    if matches!(scope, ShepherdScope::Project { .. }) {
+        Ok(script)
+    } else {
+        let message = match scope {
+            ShepherdScope::Thread { title, .. } => format!(
+                "Thread '{}' cannot start because the central checkout has no flake.nix yet. Ask shepherd to create one first.",
+                title
+            ),
+            _ => "This project central checkout has no flake.nix yet.".to_string(),
+        };
+        Ok(format!("echo {} >&2\nexit 1\n", quote_shell(&message)))
+    }
+}
+
+fn pass_env(args: &mut Vec<String>, key: &str) {
+    if let Ok(value) = std::env::var(key) {
+        args.push("-e".to_string());
+        args.push(format!("{key}={value}"));
+    }
+}
+
+async fn load_sandbox_config(scope: &ShepherdScope) -> Result<SandboxConfig, String> {
+    let (config, _) = crate::backend::config::Config::load()
+        .map_err(|error| format!("failed to load sandbox config: {}", error))?;
+    let mut sandbox = config.sandbox;
+
+    let project_id = match scope {
+        ShepherdScope::General => None,
+        ShepherdScope::Project { project_id, .. } => Some(*project_id),
+        ShepherdScope::Thread { project_id, .. } => Some(*project_id),
+    };
+
+    if let Some(project_id) = project_id {
+        let store = ProjectStore::open()
+            .await
+            .map_err(|error| format!("failed to open project store: {}", error))?;
+        let project = store
+            .get_project(project_id)
+            .await
+            .map_err(|error| format!("failed to load project {}: {}", project_id, error))?;
+        if let Some(image) = project
+            .sandbox_image
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            sandbox.image = image.to_string();
+        }
+    }
+
+    Ok(sandbox)
+}
+
+async fn prepare_scope_runtime(
+    scope: &ShepherdScope,
+) -> Result<(PathBuf, bool, SandboxConfig), String> {
+    let work_dir = resolve_scope_workspace(scope).await?;
+    let allow_bootstrap =
+        matches!(scope, ShepherdScope::Project { .. }) && !work_dir.join("flake.nix").exists();
+    if matches!(scope, ShepherdScope::Thread { .. }) && !work_dir.join("flake.nix").exists() {
+        return Err(
+            "Thread containers require a project flake. Ask shepherd to create flake.nix in the central checkout first."
+                .to_string(),
+        );
+    }
+    let sandbox = load_sandbox_config(scope).await?;
+    ensure_sandbox_image_available(&sandbox.image)?;
+    Ok((work_dir, allow_bootstrap, sandbox))
+}
+
+pub(super) async fn validate_scope_runtime(scope: &ShepherdScope) -> Result<(), String> {
+    prepare_scope_runtime(scope).await.map(|_| ())
+}
+
+fn docker_output(args: &[String]) -> Result<std::process::Output, String> {
+    Command::new("docker")
+        .args(args)
+        .output()
+        .map_err(|error| humanize_docker_error(&format!("failed to run docker: {}", error)))
+}
+
+fn docker_logs(container_name: &str) -> String {
+    match docker_output(&["logs".to_string(), container_name.to_string()]) {
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !stderr.is_empty() {
+                stderr
+            } else {
+                stdout
+            }
+        }
+        Err(error) => error,
+    }
+}
+
+fn container_is_running(container_name: &str) -> Result<bool, String> {
+    let output = docker_output(&[
+        "inspect".to_string(),
+        "-f".to_string(),
+        "{{.State.Running}}".to_string(),
+        container_name.to_string(),
+    ])?;
+    if !output.status.success() {
+        return Err(humanize_docker_error(&best_output(&output)));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
+fn remove_container_if_present(container_name: &str) -> Result<(), String> {
+    let output = docker_output(&[
+        "rm".to_string(),
+        "-f".to_string(),
+        container_name.to_string(),
+    ])?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let text = if !stderr.is_empty() { stderr } else { stdout };
+    if text.to_ascii_lowercase().contains("no such container") {
+        return Ok(());
+    }
+    Err(humanize_docker_error(&text))
+}
+
+fn best_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !stdout.is_empty() {
+        return stdout;
+    }
+    "docker command failed".to_string()
+}
+
+fn write_scope_file(scope: &ShepherdScope) -> Result<(), String> {
+    let dir = session_dir(scope);
+    std::fs::create_dir_all(&dir)
+        .map_err(|error| format!("failed to create session dir: {}", error))?;
+    let scope_json = serde_json::to_vec_pretty(scope)
+        .map_err(|error| format!("failed to serialize scope json: {}", error))?;
+    std::fs::write(scope_file_path(scope), scope_json)
+        .map_err(|error| format!("failed to write scope file: {}", error))
+}
+
+async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSession, String> {
+    let (work_dir, allow_bootstrap, sandbox) = prepare_scope_runtime(scope).await?;
+    let hirsel_root = crate::backend::config::hirsel_dir();
+    std::fs::create_dir_all(hirsel_root.join("server"))
+        .map_err(|error| format!("failed to create hirsel server dir: {}", error))?;
+    std::fs::create_dir_all(hirsel_root.join("nix"))
+        .map_err(|error| format!("failed to create nix store dir: {}", error))?;
+    std::fs::create_dir_all(session_dir(scope).join("home"))
+        .map_err(|error| format!("failed to create session home dir: {}", error))?;
+    write_scope_file(scope)?;
+    let socket_path = worker_socket_path(scope);
+    if socket_path.exists() {
+        let _ = std::fs::remove_file(&socket_path);
+    }
+
+    let container_name = container_name(scope);
+    remove_container_if_present(&container_name)?;
+
+    let script = build_scope_runtime_script(scope, allow_bootstrap)?;
+    let mut args = vec![
+        "run".to_string(),
+        "-d".to_string(),
+        "--name".to_string(),
+        container_name.clone(),
+        "--user".to_string(),
+        format!("{}:{}", unsafe { libc::getuid() }, unsafe {
+            libc::getgid()
+        }),
+        "-v".to_string(),
+        format!("{}:/hirsel", hirsel_root.display()),
+        "-v".to_string(),
+        format!("{}:/work", work_dir.display()),
+        "-v".to_string(),
+        format!("{}:/tmp/home", session_dir(scope).join("home").display()),
+        "-v".to_string(),
+        format!("{}:/nix", hirsel_root.join("nix").display()),
+        "-w".to_string(),
+        "/work".to_string(),
+    ];
+
+    pass_env(&mut args, "OPENAI_API_KEY");
+    pass_env(&mut args, "OPENROUTER_API_KEY");
+    pass_env(&mut args, "TAVILY_API_KEY");
+    pass_env(&mut args, "CODEX_ACCESS_TOKEN");
+    pass_env(&mut args, "CODEX_REFRESH_TOKEN");
+    pass_env(&mut args, "CODEX_EXPIRES_AT");
+    pass_env(&mut args, "CODEX_ACCOUNT_ID");
+
+    args.push(sandbox.image.clone());
+    args.push("bash".to_string());
+    args.push("-lc".to_string());
+    args.push(script);
+
+    let output = docker_output(&args)?;
+    if !output.status.success() {
+        return Err(humanize_docker_error(&best_output(&output)));
+    }
+
+    let store = ShepherdSessionStore::open()
+        .await
+        .map_err(|error| format!("failed to open session store: {}", error))?;
+    let scope_key = scope_key(scope);
+    let scope_json = serde_json::to_string(scope)
+        .map_err(|error| format!("failed to serialize scope json: {}", error))?;
+    store
+        .upsert_session(
+            match scope {
+                ShepherdScope::General => None,
+                ShepherdScope::Project { project_id, .. } => Some(*project_id),
+                ShepherdScope::Thread { project_id, .. } => Some(*project_id),
+            },
+            &scope_key,
+            &scope_json,
+            Some(&work_dir.display().to_string()),
+            &socket_path.display().to_string(),
+            allow_bootstrap,
+            Some(&container_name),
+            "starting",
+            None,
+        )
+        .await
+        .map_err(|error| format!("failed to persist session record: {}", error))?;
+
+    let startup_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let startup_result = loop {
+        if wait_for_worker_socket(&socket_path, Duration::from_millis(200))
+            .await
+            .is_ok()
+        {
+            break Ok(());
+        }
+
+        if std::time::Instant::now() >= startup_deadline {
+            break Err("worker socket did not become ready within 30 seconds".to_string());
+        }
+
+        match container_is_running(&container_name) {
+            Ok(true) => {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            Ok(false) => {
+                break Err("worker container exited before opening its RPC socket".to_string());
+            }
+            Err(error) => break Err(error),
+        }
+    };
+
+    if let Err(error) = startup_result {
+        let logs = docker_logs(&container_name);
+        let message = if logs.trim().is_empty() {
+            error
+        } else {
+            format!("{error}\n\n[hirsel] worker logs ->\n{logs}")
+        };
+        let _ = store.set_status(&scope_key, "failed", Some(&message)).await;
+        let _ = remove_container_if_present(&container_name);
+        return Err(message);
+    }
+
+    store
+        .set_status(&scope_key, "idle", None)
+        .await
+        .map_err(|error| format!("failed to mark session idle: {}", error))?;
+    store
+        .get_session(&scope_key)
+        .await
+        .map_err(|error| format!("failed to reload session: {}", error))?
+        .ok_or_else(|| "worker session disappeared after startup".to_string())
+}
+
+pub(super) async fn ensure_scope_session(
+    scope: &ShepherdScope,
+) -> Result<ShepherdScopeSession, String> {
+    let scope_key = scope_key(scope);
+    let socket_path = worker_socket_path(scope);
+    let store = ShepherdSessionStore::open()
+        .await
+        .map_err(|error| format!("failed to open session store: {}", error))?;
+    if let Some(session) = store
+        .get_session(&scope_key)
+        .await
+        .map_err(|error| format!("failed to load session record: {}", error))?
+    {
+        if socket_path.exists()
+            && wait_for_worker_socket(&socket_path, Duration::from_millis(200))
+                .await
+                .is_ok()
+        {
+            let _ = store.touch_seen(&scope_key).await;
+            return Ok(session);
+        }
+        if let Some(container_name) = session.container_name.as_deref() {
+            let _ = remove_container_if_present(container_name);
+        }
+    }
+    start_scope_container(scope).await
+}
+
+pub(super) async fn stop_scope_session(scope: &ShepherdScope) -> Result<(), String> {
+    let scope_key = scope_key(scope);
+    let store = ShepherdSessionStore::open()
+        .await
+        .map_err(|error| format!("failed to open session store: {}", error))?;
+    if let Some(session) = store
+        .get_session(&scope_key)
+        .await
+        .map_err(|error| format!("failed to load session record: {}", error))?
+    {
+        if let Some(container_name) = session.container_name.as_deref() {
+            remove_container_if_present(container_name)?;
+        }
+        if Path::new(&session.socket_path).exists() {
+            let _ = std::fs::remove_file(&session.socket_path);
+        }
+        store
+            .delete_session(&scope_key)
+            .await
+            .map_err(|error| format!("failed to delete session record: {}", error))?;
+    }
+    Ok(())
+}
+
+pub(super) fn current_server_control_socket_path() -> PathBuf {
+    server_control_socket_path()
+}

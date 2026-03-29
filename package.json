@@ -4,8 +4,8 @@
   "description": "Herd your AI coding agents",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "vite build && tauri build",
+    "dev": "tauri dev --features gui",
+    "build": "vite build && tauri build --features gui",
     "vite:dev": "vite",
     "vite:build": "vite build",
     "tauri": "tauri",

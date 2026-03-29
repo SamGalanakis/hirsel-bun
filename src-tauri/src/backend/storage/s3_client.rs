@@ -14,7 +14,7 @@ use crate::backend::config::S3Config;
 
 /// Factory for creating S3 clients from configuration.
 ///
-/// Centralizes S3 client creation logic for `S3FileStorage` and `S3ArchiveStrategy`.
+/// Centralizes S3 client creation logic for `S3FileStorage`.
 pub struct S3ClientFactory;
 
 impl S3ClientFactory {

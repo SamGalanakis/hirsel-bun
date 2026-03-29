@@ -5,23 +5,33 @@
 #
 # Usage:
 #   ./dev.sh              - Backend-first dev mode (serve + GUI over localhost)
-#   ./dev.sh --mcp        - MCP mode for tauri-driver automation
+#   ./dev.sh --mcp        - Automation mode (serve + tauri-driver, launch app separately)
 #   ./dev.sh --profiling  - Backend-first dev mode with profiling
 #   ./dev.sh --remote     - Legacy alias for the default backend-first mode
-#   ./dev.sh --mcp --profiling  - MCP mode with profiling
+#   ./dev.sh --mcp --profiling  - Automation mode with profiling
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/dev.log"
 TAURI_DRIVER_PORT="${TAURI_DRIVER_PORT:-4444}"
-BINARY="$SCRIPT_DIR/src-tauri/target/debug/hirsel"
+SERVER_BIN="$SCRIPT_DIR/src-tauri/target/debug/hirsel-server"
+DESKTOP_BIN="$SCRIPT_DIR/src-tauri/target/debug/hirsel-desktop"
 REMOTE_PORT="${HIRSEL_DEV_REMOTE_PORT:-8080}"
 DEV_ROOT_DEFAULT="$SCRIPT_DIR/.hirsel-dev"
 
 mcp_mode=false
 profiling_mode=false
 server_pid=""
+tauri_driver_pid=""
 
 cleanup() {
+    if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+        kill "$server_pid" 2>/dev/null || true
+    fi
+
+    if [[ -n "$tauri_driver_pid" ]] && kill -0 "$tauri_driver_pid" 2>/dev/null; then
+        kill "$tauri_driver_pid" 2>/dev/null || true
+    fi
+
     if [[ "$profiling_mode" == true ]]; then
         echo ""
         echo "Profiling data saved to: $SESSION_DIR"
@@ -43,17 +53,10 @@ for arg in "$@"; do
     esac
 done
 
-if [[ "$mcp_mode" == true ]] && [[ "$*" == *"--remote"* ]]; then
-    echo "Error: --remote and --mcp are mutually exclusive" >&2
-    exit 1
-fi
-
 # Profiling mode
-CARGO_FEATURES=""
 if [[ "$profiling_mode" == true ]]; then
     export HIRSEL_PROFILING=1
     export RUST_LOG="${RUST_LOG:-hirsel=debug}"
-    CARGO_FEATURES="--features profiling"
     SESSION_DIR="$SCRIPT_DIR/.profiling/$(date +%Y-%m-%dT%H-%M-%S)"
     export HIRSEL_PROFILING_DIR="$SESSION_DIR"
     mkdir -p "$SESSION_DIR"
@@ -72,47 +75,86 @@ export PATH="$SCRIPT_DIR/src-tauri/target/debug:$PATH"
 echo "=== Dev server started at $(date) ===" > "$LOG_FILE"
 echo "Logging to: $LOG_FILE"
 
-if [[ "$*" == *"--mcp"* ]]; then
-    echo "MCP mode: Building and launching via tauri-driver..."
+build_target() {
+    local target="$1"
+    local features="$2"
+    local manifest="$SCRIPT_DIR/src-tauri/Cargo.toml"
+    local cmd=(cargo build --manifest-path "$manifest" --bin "$target")
 
-    # Build the app
-    echo "Building..."
-    cargo build --manifest-path "$SCRIPT_DIR/src-tauri/Cargo.toml" $CARGO_FEATURES 2>&1 | tee -a "$LOG_FILE"
+    if [[ -n "$features" ]]; then
+        cmd+=(--features "$features")
+    fi
+
+    echo "Building $target..."
+    "${cmd[@]}" 2>&1 | tee -a "$LOG_FILE"
     if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
-        echo "Build failed!"
+        echo "Build failed for $target!"
         exit 1
     fi
+}
 
-    # Start daemon
-    echo "Starting daemon..."
-    "$BINARY" __daemon &
-    sleep 1
+build_binaries() {
+    local server_features="server"
+    local desktop_features="gui"
 
-    # Check if tauri-driver is running
-    if ! curl -s "http://localhost:$TAURI_DRIVER_PORT/status" > /dev/null 2>&1; then
-        echo "Starting tauri-driver on port $TAURI_DRIVER_PORT..."
-        if command -v tauri-driver > /dev/null 2>&1; then
-            tauri-driver --port "$TAURI_DRIVER_PORT" &
-        elif [[ -x "$HOME/.cargo/bin/tauri-driver" ]]; then
-            "$HOME/.cargo/bin/tauri-driver" --port "$TAURI_DRIVER_PORT" &
-        else
-            echo "Error: tauri-driver not found. Install with: cargo install tauri-driver"
-            exit 1
-        fi
-        sleep 2
+    if [[ "$profiling_mode" == true ]]; then
+        server_features="server,profiling"
+        desktop_features="gui,profiling"
     fi
 
-    echo ""
-    echo "Ready for MCP automation!"
-    echo "  - tauri-driver running on port $TAURI_DRIVER_PORT"
-    echo "  - Binary: $BINARY"
-    echo ""
-    echo "Use mcp__tauri-automation__launch_app with appPath: $BINARY"
-    echo "Press Ctrl+C to stop"
+    build_target "hirsel-server" "$server_features"
+    build_target "hirsel-desktop" "$desktop_features"
+}
 
-    # Keep script running
-    wait
-else
+worker_image_build_label() {
+    local version
+    local sha
+
+    version=$(grep '^version = "' "$SCRIPT_DIR/src-tauri/Cargo.toml" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+    sha=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    if ! git -C "$SCRIPT_DIR" diff --quiet --ignore-submodules HEAD -- 2>/dev/null; then
+        sha="${sha}-dirty"
+    fi
+
+    printf "%s-%s" "$version" "$sha"
+}
+
+build_worker_image() {
+    local image="hirsel-worker:local"
+    local label_key="org.hirsel.worker-build"
+    local expected_label
+    local current_label
+
+    expected_label="$(worker_image_build_label)"
+    current_label="$(docker image inspect --format "{{index .Config.Labels \"$label_key\"}}" "$image" 2>/dev/null || true)"
+
+    if [[ "$current_label" == "$expected_label" ]]; then
+        echo "Worker image up to date: $image ($expected_label)"
+        return
+    fi
+
+    echo "Building worker image $image..."
+    docker build \
+        -f "$SCRIPT_DIR/deploy/worker.Dockerfile" \
+        --build-arg "HIRSEL_WORKER_BUILD_LABEL=$expected_label" \
+        -t "$image" \
+        "$SCRIPT_DIR" 2>&1 | tee -a "$LOG_FILE"
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        echo "Worker image build failed!"
+        exit 1
+    fi
+}
+
+build_shell_assets() {
+    echo "Building local shell assets..."
+    bun run vite:build 2>&1 | tee -a "$LOG_FILE"
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        echo "Frontend build failed!"
+        exit 1
+    fi
+}
+
+prepare_local_backend() {
     export HIRSEL_API_KEY="${HIRSEL_API_KEY:-${HIRSEL_DEV_API_KEY:-dev-test-key}}"
     export HIRSEL_ROOT="${HIRSEL_ROOT:-$DEV_ROOT_DEFAULT}"
 
@@ -128,21 +170,17 @@ EOF
     echo "  Backend URL: http://127.0.0.1:$REMOTE_PORT"
     echo "  API key: $HIRSEL_API_KEY"
     echo ""
-    echo "Building latest binary for local server..."
-    cargo build --manifest-path "$SCRIPT_DIR/src-tauri/Cargo.toml" $CARGO_FEATURES 2>&1 | tee -a "$LOG_FILE"
-    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
-        echo "Build failed!"
-        exit 1
-    fi
+}
 
+start_local_backend() {
     if curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
-        echo "Restarting existing local hirsel serve on port $REMOTE_PORT"
-        pkill -f "$BINARY serve --port $REMOTE_PORT" 2>/dev/null || true
+        echo "Restarting existing local hirsel-server on port $REMOTE_PORT"
+        pkill -f "$SERVER_BIN --port $REMOTE_PORT" 2>/dev/null || true
         sleep 0.5
     fi
 
-    echo "Starting local hirsel serve..."
-    "$BINARY" serve --port "$REMOTE_PORT" >> "$LOG_FILE" 2>&1 &
+    echo "Starting local hirsel-server..."
+    "$SERVER_BIN" --port "$REMOTE_PORT" >> "$LOG_FILE" 2>&1 &
     server_pid=$!
 
     for _ in $(seq 1 30); do
@@ -151,7 +189,7 @@ EOF
         fi
 
         if ! kill -0 "$server_pid" 2>/dev/null; then
-            echo "hirsel serve exited early; tailing dev log:" >&2
+            echo "hirsel-server exited early; tailing dev log:" >&2
             tail -n 50 "$LOG_FILE" >&2 || true
             exit 1
         fi
@@ -160,17 +198,50 @@ EOF
     done
 
     if ! curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
-        echo "hirsel serve did not become healthy on port $REMOTE_PORT" >&2
+        echo "hirsel-server did not become healthy on port $REMOTE_PORT" >&2
         exit 1
     fi
+}
 
-    echo "Building local shell assets..."
-    bun run vite:build 2>&1 | tee -a "$LOG_FILE"
-    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
-        echo "Frontend build failed!"
-        exit 1
+ensure_tauri_driver() {
+    if ! curl -s "http://localhost:$TAURI_DRIVER_PORT/status" > /dev/null 2>&1; then
+        echo "Starting tauri-driver on port $TAURI_DRIVER_PORT..."
+        if command -v tauri-driver > /dev/null 2>&1; then
+            tauri-driver --port "$TAURI_DRIVER_PORT" &
+            tauri_driver_pid=$!
+        elif [[ -x "$HOME/.cargo/bin/tauri-driver" ]]; then
+            "$HOME/.cargo/bin/tauri-driver" --port "$TAURI_DRIVER_PORT" &
+            tauri_driver_pid=$!
+        else
+            echo "Error: tauri-driver not found. Install with: cargo install tauri-driver"
+            exit 1
+        fi
+        sleep 2
     fi
+}
 
-    echo "Running desktop shell against local hirsel serve..."
-    GDK_BACKEND=x11 "$BINARY" 2>&1 | tee -a "$LOG_FILE"
+prepare_local_backend
+build_binaries
+build_worker_image
+start_local_backend
+build_shell_assets
+
+if [[ "$mcp_mode" == true ]]; then
+    echo "Automation mode: local backend plus tauri-driver..."
+    ensure_tauri_driver
+
+    echo ""
+    echo "Ready for MCP automation!"
+    echo "  - backend: http://127.0.0.1:$REMOTE_PORT"
+    echo "  - tauri-driver running on port $TAURI_DRIVER_PORT"
+    echo "  - Desktop binary: $DESKTOP_BIN"
+    echo "  - Server binary: $SERVER_BIN"
+    echo ""
+    echo "Use mcp__tauri-automation__launch_app with appPath: $DESKTOP_BIN"
+    echo "Press Ctrl+C to stop"
+
+    wait
+else
+    echo "Running hirsel-desktop against local hirsel-server..."
+    GDK_BACKEND=x11 "$DESKTOP_BIN" 2>&1 | tee -a "$LOG_FILE"
 fi

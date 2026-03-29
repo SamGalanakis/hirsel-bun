@@ -1,23 +1,35 @@
 use std::path::{Path, PathBuf};
 
-use crate::backend::app::{delivery, routes};
-use crate::backend::db::{global_pool, utc_now};
-use crate::backend::delta::DeltaState;
+use crate::backend::prepare_thread_checkout;
 use crate::backend::project::{validate_project_focus_view_html, ProjectStore};
-use crate::backend::route::{CreateRouteRequest, Route, RouteStore};
-use crate::backend::shepherd_threads::prepare_thread_workspace;
 use crate::backend::{ShepherdChatMessage, ShepherdThread, ShepherdThreadStore};
 use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
 use super::commands::{
-    enqueue_shepherd_message_for_scope, get_thread_conversation, get_thread_queue,
+    archive_thread, delete_thread, get_thread_activity, get_thread_conversation, send_scope_message,
 };
 use super::types::{ShepherdMessageChunk, ShepherdScope};
 
 const NODE_READ_DEFAULT_LIMIT: usize = 2000;
 const NODE_READ_MAX_LINE_LEN: usize = 2000;
+
+#[cfg(feature = "gui")]
+pub(super) type DesktopAppHandle = tauri::AppHandle;
+
+#[cfg(not(feature = "gui"))]
+#[derive(Clone, Debug)]
+pub(super) struct DesktopAppHandle;
+
+#[cfg(feature = "gui")]
+fn emit_app_event(app: &DesktopAppHandle, event: &str, payload: Value) {
+    let _ = tauri::Emitter::emit(app, event, payload);
+}
+
+#[cfg(not(feature = "gui"))]
+fn emit_app_event(_app: &DesktopAppHandle, _event: &str, _payload: Value) {}
+
 fn truncate_copy(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
     if trimmed.chars().count() <= max_chars {
@@ -29,13 +41,6 @@ fn truncate_copy(text: &str, max_chars: usize) -> String {
 }
 
 macro_rules! tool_definition {
-    ($($field:tt)* input_schema_override: $input:expr, output_schema_override: $output:expr $(,)?) => {
-        ToolDefinition {
-            $($field)*
-            input_schema_override: $input,
-            output_schema_override: $output,
-        }
-    };
     ($($field:tt)*) => {
         ToolDefinition {
             $($field)*
@@ -46,14 +51,14 @@ macro_rules! tool_definition {
 }
 
 pub(super) struct ShepherdToolProvider {
-    app: Option<tauri::AppHandle>,
+    app: Option<DesktopAppHandle>,
     default_project_id: Option<i64>,
     workspace_root: Option<PathBuf>,
 }
 
 impl ShepherdToolProvider {
     pub(super) fn new(
-        app: Option<tauri::AppHandle>,
+        app: Option<DesktopAppHandle>,
         default_project_id: Option<i64>,
         workspace_root: Option<PathBuf>,
     ) -> Self {
@@ -110,34 +115,26 @@ impl ShepherdToolProvider {
                     if s.eq_ignore_ascii_case("none") {
                         return Ok(None);
                     }
-                    return Err(ToolResult::err_fmt(format_args!(
-                        "Invalid limit: expected int, null, or \"none\""
-                    )));
+                    return Err(ToolResult::err_fmt(
+                        "Invalid limit: expected int, null, or \"none\"",
+                    ));
                 }
                 let n = match v.as_u64() {
                     Some(n) => n,
                     None => {
-                        return Err(ToolResult::err_fmt(format_args!(
-                            "Invalid limit: expected int, null, or \"none\""
-                        )));
+                        return Err(ToolResult::err_fmt(
+                            "Invalid limit: expected int, null, or \"none\"",
+                        ));
                     }
                 };
-
                 if n == 0 {
-                    return Err(ToolResult::err_fmt(format_args!(
-                        "Invalid limit: must be >= 1, or use null/\"none\" for no cap"
-                    )));
+                    return Err(ToolResult::err_fmt(
+                        "Invalid limit: must be >= 1, or use null/\"none\" for no cap",
+                    ));
                 }
                 Ok(Some(n as usize))
             }
         }
-    }
-
-    fn route_param_defs() -> Vec<ToolParam> {
-        vec![
-            ToolParam::optional("project_id", "int"),
-            ToolParam::optional("route_name", "str"),
-        ]
     }
 
     fn workspace_root(&self) -> Result<&Path, ToolResult> {
@@ -153,13 +150,13 @@ impl ShepherdToolProvider {
             let rel = Path::new(value);
             if rel.is_absolute() {
                 return Err(ToolResult::err_fmt(
-                    "Workspace paths must be relative to the attached route workspace",
+                    "Workspace paths must be relative to the attached workspace",
                 ));
             }
             for component in rel.components() {
                 if matches!(component, std::path::Component::ParentDir) {
                     return Err(ToolResult::err_fmt(
-                        "Workspace paths may not escape the attached route workspace",
+                        "Workspace paths may not escape the attached workspace",
                     ));
                 }
             }
@@ -258,7 +255,7 @@ impl ShepherdToolProvider {
                 .take(limit)
                 .map(|line| {
                     if line.len() > NODE_READ_MAX_LINE_LEN {
-                        format!("{}…", &line[..NODE_READ_MAX_LINE_LEN])
+                        format!("{}...", &line[..NODE_READ_MAX_LINE_LEN])
                     } else {
                         line.to_string()
                     }
@@ -339,63 +336,6 @@ impl ShepherdToolProvider {
         }))
     }
 
-    async fn selected_route(&self, project_id: i64) -> Result<Route, ToolResult> {
-        let project_store = match ProjectStore::open().await {
-            Ok(store) => store,
-            Err(error) => return Err(ToolResult::err(json!({ "error": error.to_string() }))),
-        };
-        let route_store = match RouteStore::new(project_id).await {
-            Ok(store) => store,
-            Err(error) => return Err(ToolResult::err(json!({ "error": error.to_string() }))),
-        };
-
-        let project = match project_store.get_project(project_id).await {
-            Ok(project) => project,
-            Err(error) => return Err(ToolResult::err(json!({ "error": error.to_string() }))),
-        };
-
-        if let Some(route_id) = project.active_route_id {
-            if let Ok(route) = route_store.get_route(route_id).await {
-                return Ok(route);
-            }
-        }
-
-        match route_store.list_routes().await {
-            Ok(routes) => routes.into_iter().next().ok_or_else(|| {
-                ToolResult::err(json!({
-                    "error": "No routes exist for this project"
-                }))
-            }),
-            Err(error) => Err(ToolResult::err(json!({ "error": error.to_string() }))),
-        }
-    }
-
-    async fn resolve_route(&self, project_id: i64, args: &Value) -> Result<Route, ToolResult> {
-        let route_store = match RouteStore::new(project_id).await {
-            Ok(store) => store,
-            Err(error) => return Err(ToolResult::err(json!({ "error": error.to_string() }))),
-        };
-
-        if let Some(route_name) = Self::trimmed_string(args, "route_name") {
-            return match route_store.get_route_by_name(route_name).await {
-                Ok(Some(route)) => Ok(route),
-                Ok(None) => Err(ToolResult::err(json!({
-                    "error": format!("Route '{}' not found", route_name)
-                }))),
-                Err(error) => Err(ToolResult::err(json!({ "error": error.to_string() }))),
-            };
-        }
-
-        if let Some(route_id) = Self::arg_i64(args, "route_id") {
-            return match route_store.get_route(route_id).await {
-                Ok(route) => Ok(route),
-                Err(error) => Err(ToolResult::err(json!({ "error": error.to_string() }))),
-            };
-        }
-
-        self.selected_route(project_id).await
-    }
-
     fn normalize_thread_status(status: &str) -> Option<&'static str> {
         match status.trim().to_ascii_lowercase().as_str() {
             "running" | "active" => Some("running"),
@@ -446,23 +386,25 @@ impl ShepherdToolProvider {
     async fn resolve_thread(
         &self,
         project_id: i64,
-        route_id: i64,
         args: &Value,
     ) -> Result<ShepherdThread, ToolResult> {
         let store = self.thread_store().await?;
         if let Some(thread_id) = Self::trimmed_string(args, "thread_id") {
-            return store
+            let thread = store
                 .get_thread(thread_id)
                 .await
-                .map_err(|error| ToolResult::err(json!({ "error": error.to_string() })));
+                .map_err(|error| ToolResult::err(json!({ "error": error.to_string() })))?;
+            if thread.project_id != project_id {
+                return Err(ToolResult::err(json!({
+                    "error": format!("Thread {} does not belong to project {}", thread_id, project_id)
+                })));
+            }
+            return Ok(thread);
         }
         let Some(title) = Self::trimmed_string(args, "title") else {
             return Err(ToolResult::err_fmt("Missing required parameter: thread_id"));
         };
-        match store
-            .find_route_thread_by_title(project_id, route_id, title)
-            .await
-        {
+        match store.find_project_thread_by_title(project_id, title).await {
             Ok(Some(thread)) => Ok(thread),
             Ok(None) => Err(ToolResult::err(json!({
                 "error": format!("Thread '{}' not found", title)
@@ -471,86 +413,29 @@ impl ShepherdToolProvider {
         }
     }
 
-    async fn list_routes(&self, project_id: i64) -> ToolResult {
-        let project_store = match ProjectStore::open().await {
-            Ok(store) => store,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-        let route_store = match RouteStore::new(project_id).await {
-            Ok(store) => store,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-
-        let project = match project_store.get_project(project_id).await {
-            Ok(project) => project,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-        let selected_route_id = project.active_route_id;
-
-        match route_store.list_routes().await {
-            Ok(routes) => {
-                let routes = routes
-                    .into_iter()
-                    .map(|route| {
-                        let mut value = json!({
-                            "id": route.id,
-                            "name": route.name,
-                            "created_at": route.created_at,
-                            "selected": selected_route_id == Some(route.id),
-                        });
-                        if let Some(parent_route_id) = route.parent_route_id {
-                            value["parent_route_id"] = json!(parent_route_id);
-                        }
-                        if let Some(parent_version_id) = route.parent_version_id {
-                            value["forked_from_version"] = json!(parent_version_id);
-                        }
-                        value
-                    })
-                    .collect::<Vec<_>>();
-
-                ToolResult::ok(json!({
-                    "routes": routes,
-                    "selected_route_id": selected_route_id,
-                }))
-            }
-            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
-        }
-    }
-
-    async fn list_threads_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
+    async fn list_threads_tool(&self, project_id: i64) -> ToolResult {
         let store = match self.thread_store().await {
             Ok(store) => store,
             Err(error) => return error,
         };
-        match store.list_route_threads(project_id, route.id).await {
-            Ok(threads) => ToolResult::ok(json!({
-                "route": { "id": route.id, "name": route.name },
-                "threads": threads,
-            })),
+        match store.list_project_threads(project_id).await {
+            Ok(threads) => ToolResult::ok(json!({ "threads": threads })),
             Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
         }
     }
 
     async fn create_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
         let title = match Self::trimmed_string(args, "title") {
             Some(title) => title,
             None => return ToolResult::err_fmt("Missing required parameter: title"),
         };
         let objective = Self::trimmed_string(args, "objective").unwrap_or(title);
         let summary = truncate_copy(objective, 180);
-        let (workspace_path, checkout_name) =
-            match prepare_thread_workspace(project_id, route.id, title).await {
-                Ok(result) => result,
-                Err(error) => return ToolResult::err(json!({ "error": error })),
-            };
+        let (workspace_path, checkout_name) = match prepare_thread_checkout(project_id, title).await
+        {
+            Ok(result) => result,
+            Err(error) => return ToolResult::err(json!({ "error": error })),
+        };
         let store = match self.thread_store().await {
             Ok(store) => store,
             Err(error) => return error,
@@ -558,7 +443,6 @@ impl ShepherdToolProvider {
         let mut thread = match store
             .create_thread(
                 project_id,
-                route.id,
                 title,
                 objective,
                 &summary,
@@ -589,11 +473,7 @@ impl ShepherdToolProvider {
     }
 
     async fn rename_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
-        let thread = match self.resolve_thread(project_id, route.id, args).await {
+        let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
         };
@@ -618,11 +498,7 @@ impl ShepherdToolProvider {
     }
 
     async fn set_thread_status_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
-        let thread = match self.resolve_thread(project_id, route.id, args).await {
+        let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
         };
@@ -649,74 +525,29 @@ impl ShepherdToolProvider {
     }
 
     async fn archive_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
-        let thread = match self.resolve_thread(project_id, route.id, args).await {
+        let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
         };
-        let store = match self.thread_store().await {
-            Ok(store) => store,
-            Err(error) => return error,
-        };
-        match store.archive_thread(&thread.id).await {
+        match archive_thread(project_id, &thread.id).await {
             Ok(()) => ToolResult::ok(json!({ "success": true, "thread_id": thread.id })),
-            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+            Err(error) => ToolResult::err(json!({ "error": error })),
         }
     }
 
     async fn delete_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
-        let thread = match self.resolve_thread(project_id, route.id, args).await {
+        let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
         };
-        let store = match self.thread_store().await {
-            Ok(store) => store,
-            Err(error) => return error,
-        };
-        if let Ok(chat_store) = crate::backend::ShepherdChatStore::open().await {
-            let _ = chat_store
-                .delete_run_messages(&ShepherdThreadStore::runtime_name(&thread.id))
-                .await;
-            let _ = chat_store
-                .clear_scope_state(project_id, &ShepherdThreadStore::runtime_name(&thread.id))
-                .await;
-        }
-        if let Some(workspace_path) = thread
-            .workspace_path
-            .as_deref()
-            .filter(|path| !path.trim().is_empty())
-        {
-            let workspace = PathBuf::from(workspace_path);
-            if workspace.exists() {
-                if let Err(error) = std::fs::remove_dir_all(&workspace) {
-                    tracing::warn!(
-                        %error,
-                        thread_id = %thread.id,
-                        workspace = %workspace.display(),
-                        "failed to remove thread workspace"
-                    );
-                }
-            }
-        }
-        match store.delete_thread(&thread.id).await {
+        match delete_thread(project_id, &thread.id).await {
             Ok(()) => ToolResult::ok(json!({ "success": true, "thread_id": thread.id })),
-            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+            Err(error) => ToolResult::err(json!({ "error": error })),
         }
     }
 
     async fn send_thread_message_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
-        let thread = match self.resolve_thread(project_id, route.id, args).await {
+        let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
         };
@@ -737,10 +568,9 @@ impl ShepherdToolProvider {
                 )
                 .await;
         }
-        match enqueue_shepherd_message_for_scope(
+        match send_scope_message(
             ShepherdScope::Thread {
                 project_id,
-                route_id: route.id,
                 thread_id: thread.id.clone(),
                 title: thread.title.clone(),
                 workspace_path: thread.workspace_path.clone(),
@@ -754,324 +584,33 @@ impl ShepherdToolProvider {
         {
             Ok(response) => ToolResult::ok(json!({
                 "thread": thread,
-                "queue": response,
+                "dispatch": response,
             })),
             Err(error) => ToolResult::err(json!({ "error": error })),
         }
     }
 
     async fn read_thread_updates_tool(&self, project_id: i64, args: &Value) -> ToolResult {
-        let route = match self.resolve_route(project_id, args).await {
-            Ok(route) => route,
-            Err(error) => return error,
-        };
-        let thread = match self.resolve_thread(project_id, route.id, args).await {
+        let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
         };
         let limit = Self::arg_i64(args, "limit").unwrap_or(24).max(1) as usize;
         let history =
-            match get_thread_conversation(project_id, route.id, &thread.id, &thread.title, limit)
-                .await
-            {
+            match get_thread_conversation(project_id, &thread.id, &thread.title, limit).await {
                 Ok(history) => history,
                 Err(error) => return ToolResult::err(json!({ "error": error })),
             };
-        let queue = match get_thread_queue(project_id, route.id, &thread.id, &thread.title).await {
-            Ok(queue) => queue,
+        let activity = match get_thread_activity(project_id, &thread.id, &thread.title).await {
+            Ok(activity) => activity,
             Err(error) => return ToolResult::err(json!({ "error": error })),
         };
         ToolResult::ok(json!({
             "thread": thread,
             "plan": Self::latest_thread_plan(&history),
             "history": history,
-            "queue": queue,
+            "activity": activity,
         }))
-    }
-
-    async fn create_route(&self, project_id: i64, args: &Value) -> ToolResult {
-        let name = match Self::trimmed_string(args, "name") {
-            Some(name) => name,
-            None => return ToolResult::err_fmt("Missing required parameter: name"),
-        };
-        let route_store = match RouteStore::new(project_id).await {
-            Ok(store) => store,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-
-        let parent_route_id =
-            if let Some(parent_name) = Self::trimmed_string(args, "parent_route_name") {
-                match route_store.get_route_by_name(parent_name).await {
-                    Ok(Some(route)) => Some(route.id),
-                    Ok(None) => {
-                        return ToolResult::err(json!({
-                            "error": format!("Parent route '{}' not found", parent_name)
-                        }));
-                    }
-                    Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-                }
-            } else {
-                Some(match self.selected_route(project_id).await {
-                    Ok(route) => route.id,
-                    Err(error) => return error,
-                })
-            };
-
-        let req = CreateRouteRequest {
-            name: name.to_string(),
-            parent_route_id,
-            parent_version_id: None,
-        };
-
-        match route_store.create_route(&req).await {
-            Ok(route) => ToolResult::ok(json!({
-                "success": true,
-                "route": {
-                    "id": route.id,
-                    "name": route.name,
-                    "parent_route_id": route.parent_route_id,
-                },
-                "message": format!("Created route '{}'.", route.name),
-            })),
-            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
-        }
-    }
-
-    async fn select_route(&self, project_id: i64, args: &Value) -> ToolResult {
-        let name = match Self::trimmed_string(args, "name") {
-            Some(name) => name,
-            None => return ToolResult::err_fmt("Missing required parameter: name"),
-        };
-
-        let route_store = match RouteStore::new(project_id).await {
-            Ok(store) => store,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-        let route = match route_store.get_route_by_name(name).await {
-            Ok(Some(route)) => route,
-            Ok(None) => {
-                return ToolResult::err(json!({
-                    "error": format!("Route '{}' not found", name)
-                }));
-            }
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-
-        let pool = global_pool().await;
-        match sqlx::query("UPDATE projects SET active_route_id = ?, updated_at = ? WHERE id = ?")
-            .bind(route.id)
-            .bind(utc_now())
-            .bind(project_id)
-            .execute(pool)
-            .await
-        {
-            Ok(_) => ToolResult::ok(json!({
-                "success": true,
-                "route": {
-                    "id": route.id,
-                    "name": route.name,
-                },
-                "message": format!("Selected route '{}'.", route.name),
-            })),
-            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
-        }
-    }
-
-    async fn archive_route(&self, project_id: i64, args: &Value) -> ToolResult {
-        let name = match Self::trimmed_string(args, "name") {
-            Some(name) => name,
-            None => return ToolResult::err_fmt("Missing required parameter: name"),
-        };
-
-        let route_store = match RouteStore::new(project_id).await {
-            Ok(store) => store,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-        let route = match route_store.get_route_by_name(name).await {
-            Ok(Some(route)) => route,
-            Ok(None) => {
-                return ToolResult::err(json!({
-                    "error": format!("Route '{}' not found", name)
-                }));
-            }
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-
-        match routes::archive_route(project_id, route.id).await {
-            Ok(archived) => {
-                let selected_route = routes::get_active_route(project_id).await.ok();
-                ToolResult::ok(json!({
-                    "success": true,
-                    "archived_route": {
-                        "id": archived.id,
-                        "name": archived.name,
-                    },
-                    "selected_route": selected_route.map(|selected| json!({
-                        "id": selected.id,
-                        "name": selected.name,
-                    })),
-                    "message": format!("Archived route '{}'.", route.name),
-                }))
-            }
-            Err(error) => ToolResult::err(json!({ "error": error })),
-        }
-    }
-
-    async fn latest_version_id(&self, project_id: i64, route_id: i64) -> Result<i64, ToolResult> {
-        match delivery::get_latest_board_version(project_id, route_id).await {
-            Ok(Some(version)) => Ok(version.id),
-            Ok(None) => Err(ToolResult::err(json!({
-                "error": "No board version exists for this route yet"
-            }))),
-            Err(error) => Err(ToolResult::err(json!({ "error": error }))),
-        }
-    }
-
-    async fn resolve_existing_delivery_id(
-        &self,
-        project_id: i64,
-        route_id: i64,
-        args: &Value,
-    ) -> Result<i64, ToolResult> {
-        if let Some(delivery_id) = Self::arg_i64(args, "delivery_id") {
-            let state = DeltaState::with_route(project_id, route_id);
-            return match state.get_delivery(delivery_id).await {
-                Ok(delivery) => Ok(delivery.id),
-                Err(error) => Err(ToolResult::err(json!({ "error": error.to_string() }))),
-            };
-        }
-
-        match delivery::get_current_board_delivery(project_id, route_id).await {
-            Ok(Some(current)) => Ok(current.id),
-            Ok(None) => Err(ToolResult::err(json!({
-                "error": "No active delivery exists for this route"
-            }))),
-            Err(error) => Err(ToolResult::err(json!({ "error": error }))),
-        }
-    }
-
-    async fn start_delivery(&self, project_id: i64, route_id: i64, args: &Value) -> ToolResult {
-        let target_branch = match Self::trimmed_string(args, "target_branch") {
-            Some(branch) => branch.to_string(),
-            None => return ToolResult::err_fmt("Missing required parameter: target_branch"),
-        };
-        let version_id = match Self::arg_i64(args, "version_id") {
-            Some(version_id) => version_id,
-            None => match self.latest_version_id(project_id, route_id).await {
-                Ok(version_id) => version_id,
-                Err(error) => return error,
-            },
-        };
-        let remote_url = Self::trimmed_string(args, "remote_url").map(ToOwned::to_owned);
-
-        match delivery::start_board_delivery(
-            project_id,
-            route_id,
-            version_id,
-            target_branch,
-            false,
-            remote_url,
-        )
-        .await
-        {
-            Ok(delivery) => ToolResult::ok(json!({ "delivery": delivery })),
-            Err(error) => ToolResult::err(json!({ "error": error })),
-        }
-    }
-
-    async fn publish_delivery(&self, project_id: i64, route_id: i64, args: &Value) -> ToolResult {
-        let publish_as = Self::trimmed_string(args, "publish_as").unwrap_or("push");
-        if !matches!(publish_as, "push" | "pr") {
-            return ToolResult::err(json!({
-                "error": "publish_as must be either 'push' or 'pr'"
-            }));
-        }
-
-        let delivery_id = match self
-            .resolve_existing_delivery_id(project_id, route_id, args)
-            .await
-        {
-            Ok(delivery_id) => delivery_id,
-            Err(_) => {
-                let started = self.start_delivery(project_id, route_id, args).await;
-                if !started.success {
-                    return started;
-                }
-                match started
-                    .result
-                    .get("delivery")
-                    .and_then(|value| value.get("id"))
-                    .and_then(|value| value.as_i64())
-                {
-                    Some(delivery_id) => delivery_id,
-                    None => {
-                        return ToolResult::err(json!({
-                            "error": "Failed to resolve delivery after starting it"
-                        }));
-                    }
-                }
-            }
-        };
-        let summary = Self::trimmed_string(args, "summary").map(ToOwned::to_owned);
-        let remote_url = Self::trimmed_string(args, "remote_url").map(ToOwned::to_owned);
-
-        match delivery::complete_board_delivery(
-            project_id,
-            route_id,
-            delivery_id,
-            publish_as.to_string(),
-            summary,
-            remote_url,
-        )
-        .await
-        {
-            Ok(delivery) => ToolResult::ok(json!({ "delivery": delivery })),
-            Err(error) => ToolResult::err(json!({ "error": error })),
-        }
-    }
-
-    async fn merge_delivery(&self, project_id: i64, route_id: i64, args: &Value) -> ToolResult {
-        let delivery_id = match self
-            .resolve_existing_delivery_id(project_id, route_id, args)
-            .await
-        {
-            Ok(delivery_id) => delivery_id,
-            Err(_) => {
-                let started = self.start_delivery(project_id, route_id, args).await;
-                if !started.success {
-                    return started;
-                }
-                match started
-                    .result
-                    .get("delivery")
-                    .and_then(|value| value.get("id"))
-                    .and_then(|value| value.as_i64())
-                {
-                    Some(delivery_id) => delivery_id,
-                    None => {
-                        return ToolResult::err(json!({
-                            "error": "Failed to resolve delivery after starting it"
-                        }));
-                    }
-                }
-            }
-        };
-        let summary = Self::trimmed_string(args, "summary").map(ToOwned::to_owned);
-        let remote_url = Self::trimmed_string(args, "remote_url").map(ToOwned::to_owned);
-
-        match delivery::complete_board_delivery(
-            project_id,
-            route_id,
-            delivery_id,
-            "merge".to_string(),
-            summary,
-            remote_url,
-        )
-        .await
-        {
-            Ok(delivery) => ToolResult::ok(json!({ "delivery": delivery })),
-            Err(error) => ToolResult::err(json!({ "error": error })),
-        }
     }
 
     async fn read_project_focus_view(&self, project_id: i64) -> ToolResult {
@@ -1116,7 +655,7 @@ impl ShepherdToolProvider {
         {
             Ok(view) => {
                 if let Some(app) = &self.app {
-                    let _ = tauri::Emitter::emit(
+                    emit_app_event(
                         app,
                         "project-focus-view-updated",
                         json!({
@@ -1127,7 +666,7 @@ impl ShepherdToolProvider {
                 }
                 ToolResult::ok(json!({
                     "__type__": "edit_result",
-                    "summary": format!("Updated project focus view for project {}", project_id),
+                    "summary": format!("Updated project canvas for project {}", project_id),
                     "updated_at": view.updated_at,
                     "source": view.source,
                 }))
@@ -1174,7 +713,7 @@ impl ShepherdToolProvider {
         {
             Ok(context) => {
                 if let Some(app) = &self.app {
-                    let _ = tauri::Emitter::emit(
+                    emit_app_event(
                         app,
                         "project-retained-context-updated",
                         json!({
@@ -1200,8 +739,8 @@ impl ToolProvider for ShepherdToolProvider {
     fn definitions(&self) -> Vec<ToolDefinition> {
         let mut definitions = vec![
             tool_definition! {
-                name: "list_routes".to_string(),
-                description: "List active routes for the project and show which route is currently selected.".to_string(),
+                name: "list_threads".to_string(),
+                description: "List visible execution threads for the project.".to_string(),
                 params: vec![ToolParam::optional("project_id", "int")],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1209,60 +748,13 @@ impl ToolProvider for ShepherdToolProvider {
                 injected: true,
             },
             tool_definition! {
-                name: "fork_route".to_string(),
-                description: "Fork a new route by name. Uses parent_route_name when provided; otherwise forks from the selected route.".to_string(),
-                params: vec![
-                    ToolParam::typed("name", "str"),
-                    ToolParam::optional("parent_route_name", "str"),
-                    ToolParam::optional("project_id", "int"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "select_route".to_string(),
-                description: "Select the project's route by unique name. Route-scoped tools default to this route when route_name is omitted.".to_string(),
-                params: vec![
-                    ToolParam::typed("name", "str"),
-                    ToolParam::optional("project_id", "int"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "archive_route".to_string(),
-                description: "Archive a route by unique name. Archived routes drop out of normal active route flows.".to_string(),
-                params: vec![
-                    ToolParam::typed("name", "str"),
-                    ToolParam::optional("project_id", "int"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "list_threads".to_string(),
-                description: "List visible execution threads for a route.".to_string(),
-                params: Self::route_param_defs(),
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
                 name: "create_thread".to_string(),
-                description: "Create a new execution thread with its own checkout. Use this when parallel work should become a visible durable thread.".to_string(),
+                description: "Create a new execution thread with its own container and workspace.".to_string(),
                 params: vec![
                     ToolParam::typed("title", "str"),
                     ToolParam::optional("objective", "str"),
                     ToolParam::optional("status", "str"),
                     ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
                 ],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1277,7 +769,6 @@ impl ToolProvider for ShepherdToolProvider {
                     ToolParam::optional("title", "str"),
                     ToolParam::typed("new_title", "str"),
                     ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
                 ],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1293,7 +784,6 @@ impl ToolProvider for ShepherdToolProvider {
                     ToolParam::typed("status", "str"),
                     ToolParam::optional("summary", "str"),
                     ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
                 ],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1307,7 +797,6 @@ impl ToolProvider for ShepherdToolProvider {
                     ToolParam::optional("thread_id", "str"),
                     ToolParam::optional("title", "str"),
                     ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
                 ],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1321,7 +810,6 @@ impl ToolProvider for ShepherdToolProvider {
                     ToolParam::optional("thread_id", "str"),
                     ToolParam::optional("title", "str"),
                     ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
                 ],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1336,7 +824,6 @@ impl ToolProvider for ShepherdToolProvider {
                     ToolParam::optional("title", "str"),
                     ToolParam::typed("content", "str"),
                     ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
                 ],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1345,13 +832,12 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "read_thread_updates".to_string(),
-                description: "Read a thread transcript, queue state, and latest captured plan.".to_string(),
+                description: "Read a thread transcript, live activity, and latest captured plan.".to_string(),
                 params: vec![
                     ToolParam::optional("thread_id", "str"),
                     ToolParam::optional("title", "str"),
                     ToolParam::optional("limit", "int"),
                     ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
                 ],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -1364,7 +850,7 @@ impl ToolProvider for ShepherdToolProvider {
             definitions.extend([
                 tool_definition! {
                     name: "list_workspace".to_string(),
-                    description: "List files and directories inside the attached route workspace. Paths must stay relative to that workspace.".to_string(),
+                    description: "List files and directories inside the attached workspace. Paths must stay relative to that workspace.".to_string(),
                     params: vec![
                         ToolParam::optional("path", "str"),
                         ToolParam::optional("max_depth", "int"),
@@ -1377,7 +863,7 @@ impl ToolProvider for ShepherdToolProvider {
                 },
                 tool_definition! {
                     name: "read_workspace_file".to_string(),
-                    description: "Read a text file from the attached route workspace. The path must be relative to that workspace.".to_string(),
+                    description: "Read a text file from the attached workspace. The path must be relative to that workspace.".to_string(),
                     params: vec![
                         ToolParam::typed("path", "str"),
                         ToolParam::optional("offset", "int"),
@@ -1391,7 +877,7 @@ impl ToolProvider for ShepherdToolProvider {
                 },
                 tool_definition! {
                     name: "grep_workspace".to_string(),
-                    description: "Search text files inside the attached route workspace using a regex pattern.".to_string(),
+                    description: "Search text files inside the attached workspace using a regex pattern.".to_string(),
                     params: vec![
                         ToolParam::typed("pattern", "str"),
                         ToolParam::optional("path", "str"),
@@ -1406,152 +892,6 @@ impl ToolProvider for ShepherdToolProvider {
         }
 
         definitions.extend([
-            tool_definition! {
-                name: "delivery_validate_target".to_string(),
-                description: "Validate whether a route can be delivered to a target branch. Uses the selected route when route_name is omitted.".to_string(),
-                params: vec![
-                    ToolParam::typed("target_branch", "str"),
-                    ToolParam::optional("remote_url", "str"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_get_versions".to_string(),
-                description: "List published board versions available for delivery on a route. Uses the selected route when route_name is omitted.".to_string(),
-                params: Self::route_param_defs(),
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_get_latest_version".to_string(),
-                description: "Get the latest board version for a route. Uses the selected route when route_name is omitted.".to_string(),
-                params: Self::route_param_defs(),
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_get_current".to_string(),
-                description: "Get the current non-terminal delivery for a route. Uses the selected route when route_name is omitted.".to_string(),
-                params: Self::route_param_defs(),
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_start".to_string(),
-                description: "Start a new delivery for a route. Uses the latest board version when version_id is omitted.".to_string(),
-                params: vec![
-                    ToolParam::typed("target_branch", "str"),
-                    ToolParam::optional("version_id", "int"),
-                    ToolParam::optional("remote_url", "str"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_publish".to_string(),
-                description: "Publish a route delivery by pushing a branch or opening a PR. Reuses the current delivery when available, or starts one if needed.".to_string(),
-                params: vec![
-                    ToolParam::optional("delivery_id", "int"),
-                    ToolParam::optional("target_branch", "str"),
-                    ToolParam::optional("version_id", "int"),
-                    ToolParam::optional("publish_as", "str"),
-                    ToolParam::optional("summary", "str"),
-                    ToolParam::optional("remote_url", "str"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_merge".to_string(),
-                description: "Merge a route delivery. Reuses the current delivery when available, or starts one if needed.".to_string(),
-                params: vec![
-                    ToolParam::optional("delivery_id", "int"),
-                    ToolParam::optional("target_branch", "str"),
-                    ToolParam::optional("version_id", "int"),
-                    ToolParam::optional("summary", "str"),
-                    ToolParam::optional("remote_url", "str"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_get_attempts".to_string(),
-                description: "Get retry history for a delivery on a route.".to_string(),
-                params: vec![
-                    ToolParam::typed("delivery_id", "int"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_retry".to_string(),
-                description: "Retry a failed delivery on a route.".to_string(),
-                params: vec![
-                    ToolParam::typed("delivery_id", "int"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_complete".to_string(),
-                description: "Complete an existing delivery using action 'push', 'pr', or 'merge'.".to_string(),
-                params: vec![
-                    ToolParam::typed("delivery_id", "int"),
-                    ToolParam::typed("action", "str"),
-                    ToolParam::optional("summary", "str"),
-                    ToolParam::optional("remote_url", "str"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "delivery_abandon".to_string(),
-                description: "Abandon the current or specified delivery on a route.".to_string(),
-                params: vec![
-                    ToolParam::optional("delivery_id", "int"),
-                    ToolParam::optional("project_id", "int"),
-                    ToolParam::optional("route_name", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
             tool_definition! {
                 name: "read_project_focus_view".to_string(),
                 description: "Read the current project-focus HTML artifact for this project.".to_string(),
@@ -1572,7 +912,7 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "update_project_focus_view".to_string(),
-                description: "Replace the project-focus HTML artifact for this project with a full HTML document. Inline Mermaid setup is allowed.".to_string(),
+                description: "Replace the project-focus HTML artifact for this project with a full HTML document.".to_string(),
                 params: vec![
                     ToolParam::typed("html", "str"),
                     ToolParam::optional("source", "str"),
@@ -1630,10 +970,14 @@ impl ToolProvider for ShepherdToolProvider {
         };
 
         match name {
-            "list_routes" => self.list_routes(project_id).await,
-            "fork_route" => self.create_route(project_id, args).await,
-            "select_route" => self.select_route(project_id, args).await,
-            "archive_route" => self.archive_route(project_id, args).await,
+            "list_threads" => self.list_threads_tool(project_id).await,
+            "create_thread" => self.create_thread_tool(project_id, args).await,
+            "rename_thread" => self.rename_thread_tool(project_id, args).await,
+            "set_thread_status" => self.set_thread_status_tool(project_id, args).await,
+            "archive_thread" => self.archive_thread_tool(project_id, args).await,
+            "delete_thread" => self.delete_thread_tool(project_id, args).await,
+            "send_thread_message" => self.send_thread_message_tool(project_id, args).await,
+            "read_thread_updates" => self.read_thread_updates_tool(project_id, args).await,
             "read_project_focus_view" | "read_canvas" => {
                 self.read_project_focus_view(project_id).await
             }
@@ -1647,163 +991,7 @@ impl ToolProvider for ShepherdToolProvider {
             "list_workspace" => self.list_workspace(args).await,
             "read_workspace_file" => self.read_workspace_file(args).await,
             "grep_workspace" => self.grep_workspace(args).await,
-            _ => {
-                let route = match self.resolve_route(project_id, args).await {
-                    Ok(route) => route,
-                    Err(error) => return error,
-                };
-                let route_id = route.id;
-
-                match name {
-                    "list_threads" => self.list_threads_tool(project_id, args).await,
-                    "create_thread" => self.create_thread_tool(project_id, args).await,
-                    "rename_thread" => self.rename_thread_tool(project_id, args).await,
-                    "set_thread_status" => self.set_thread_status_tool(project_id, args).await,
-                    "archive_thread" => self.archive_thread_tool(project_id, args).await,
-                    "delete_thread" => self.delete_thread_tool(project_id, args).await,
-                    "send_thread_message" => self.send_thread_message_tool(project_id, args).await,
-                    "read_thread_updates" => self.read_thread_updates_tool(project_id, args).await,
-                    "delivery_validate_target" => {
-                        let target_branch = match Self::trimmed_string(args, "target_branch") {
-                            Some(branch) => branch.to_string(),
-                            None => {
-                                return ToolResult::err_fmt(
-                                    "Missing required parameter: target_branch",
-                                );
-                            }
-                        };
-                        let remote_url =
-                            Self::trimmed_string(args, "remote_url").map(ToOwned::to_owned);
-                        match delivery::validate_delivery_target(
-                            project_id,
-                            route_id,
-                            target_branch,
-                            remote_url,
-                        )
-                        .await
-                        {
-                            Ok(validation) => ToolResult::ok(json!({
-                                "route": { "id": route.id, "name": route.name },
-                                "validation": validation,
-                            })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    "delivery_get_versions" => {
-                        match delivery::get_board_versions(project_id, route_id).await {
-                            Ok(versions) => ToolResult::ok(json!({
-                                "route": { "id": route.id, "name": route.name },
-                                "versions": versions,
-                            })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    "delivery_get_latest_version" => {
-                        match delivery::get_latest_board_version(project_id, route_id).await {
-                            Ok(version) => ToolResult::ok(json!({
-                                "route": { "id": route.id, "name": route.name },
-                                "version": version,
-                            })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    "delivery_get_current" => {
-                        match delivery::get_current_board_delivery(project_id, route_id).await {
-                            Ok(current) => ToolResult::ok(json!({
-                                "route": { "id": route.id, "name": route.name },
-                                "delivery": current,
-                            })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    "delivery_start" => self.start_delivery(project_id, route_id, args).await,
-                    "delivery_publish" => self.publish_delivery(project_id, route_id, args).await,
-                    "delivery_merge" => self.merge_delivery(project_id, route_id, args).await,
-                    "delivery_get_attempts" => {
-                        let delivery_id = match Self::arg_i64(args, "delivery_id") {
-                            Some(delivery_id) => delivery_id,
-                            None => {
-                                return ToolResult::err_fmt(
-                                    "Missing required parameter: delivery_id",
-                                );
-                            }
-                        };
-                        match delivery::get_delivery_attempts(project_id, route_id, delivery_id)
-                            .await
-                        {
-                            Ok(attempts) => ToolResult::ok(json!({ "attempts": attempts })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    "delivery_retry" => {
-                        let delivery_id = match Self::arg_i64(args, "delivery_id") {
-                            Some(delivery_id) => delivery_id,
-                            None => {
-                                return ToolResult::err_fmt(
-                                    "Missing required parameter: delivery_id",
-                                );
-                            }
-                        };
-                        match delivery::retry_board_delivery(project_id, route_id, delivery_id)
-                            .await
-                        {
-                            Ok(attempt) => ToolResult::ok(json!({ "attempt": attempt })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    "delivery_complete" => {
-                        let delivery_id = match Self::arg_i64(args, "delivery_id") {
-                            Some(delivery_id) => delivery_id,
-                            None => {
-                                return ToolResult::err_fmt(
-                                    "Missing required parameter: delivery_id",
-                                );
-                            }
-                        };
-                        let action = match Self::trimmed_string(args, "action") {
-                            Some(action) => action.to_string(),
-                            None => {
-                                return ToolResult::err_fmt("Missing required parameter: action");
-                            }
-                        };
-                        let summary = Self::trimmed_string(args, "summary").map(ToOwned::to_owned);
-                        let remote_url =
-                            Self::trimmed_string(args, "remote_url").map(ToOwned::to_owned);
-                        match delivery::complete_board_delivery(
-                            project_id,
-                            route_id,
-                            delivery_id,
-                            action,
-                            summary,
-                            remote_url,
-                        )
-                        .await
-                        {
-                            Ok(current) => ToolResult::ok(json!({ "delivery": current })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    "delivery_abandon" => {
-                        let delivery_id = match self
-                            .resolve_existing_delivery_id(project_id, route_id, args)
-                            .await
-                        {
-                            Ok(delivery_id) => delivery_id,
-                            Err(error) => return error,
-                        };
-                        match delivery::abandon_board_delivery(project_id, route_id, delivery_id)
-                            .await
-                        {
-                            Ok(()) => ToolResult::ok(json!({
-                                "success": true,
-                                "delivery_id": delivery_id,
-                            })),
-                            Err(error) => ToolResult::err(json!({ "error": error })),
-                        }
-                    }
-                    _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
-                }
-            }
+            _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
         }
     }
 }

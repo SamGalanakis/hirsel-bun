@@ -43,32 +43,11 @@ pub fn active_features() -> Vec<&'static str> {
     #[cfg(feature = "server")]
     features.push("server");
 
-    #[cfg(feature = "worker")]
-    features.push("worker");
-
     if features.is_empty() {
         features.push("minimal");
     }
 
     features
-}
-
-/// Check if this is a worker-only build
-pub fn is_worker_build() -> bool {
-    #[cfg(all(feature = "worker", not(feature = "server"), not(feature = "gui")))]
-    return true;
-
-    #[cfg(not(all(feature = "worker", not(feature = "server"), not(feature = "gui"))))]
-    return false;
-}
-
-/// Check if this is a server build
-pub fn is_server_build() -> bool {
-    #[cfg(feature = "server")]
-    return true;
-
-    #[cfg(not(feature = "server"))]
-    return false;
 }
 
 #[cfg(test)]

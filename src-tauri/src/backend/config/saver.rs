@@ -23,23 +23,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
         .collect();
     output.push_str(&format!("command = [{}]\n\n", cmd_parts.join(", ")));
 
-    // Top-level settings
-    output.push_str(&format!("eval_timeout = {}\n", config.eval_timeout));
-    output.push_str(&format!(
-        "human_in_the_loop = {}\n",
-        config.human_in_the_loop
-    ));
-    output.push_str(&format!(
-        "context_warning_threshold = {}\n",
-        config.context_warning_threshold
-    ));
-    output.push_str(&format!("coordinator_port = {}\n", config.coordinator_port));
-    output.push_str(&format!(
-        "scribe_batch_window_seconds = {}\n",
-        config.scribe_batch_window_seconds
-    ));
-    output.push('\n');
-
     // Backend connection
     write_backend_section(&mut output, config);
 
@@ -126,10 +109,8 @@ fn write_mcp_section(output: &mut String, config: &Config) -> Result<(), ConfigE
 }
 
 fn write_sandbox_section(output: &mut String, config: &Config) {
-    if let Some(ref container) = config.sandbox.container {
-        output.push_str("[sandbox.container]\n");
-        output.push_str(&format!("image = \"{}\"\n\n", container.image));
-    }
+    output.push_str("[sandbox]\n");
+    output.push_str(&format!("image = \"{}\"\n\n", config.sandbox.image));
 }
 
 fn write_s3_config(output: &mut String, s3: &S3Config) {

@@ -3,7 +3,7 @@ use lash::{Message, MessageRole, Part, PartKind, PruneState};
 
 use super::types::{ShepherdMessageChunk, ShepherdScope};
 use crate::backend::app::ResultExt;
-use crate::backend::{ShepherdChatMessage, ShepherdChatStore, ShepherdQueuedTurn};
+use crate::backend::{ShepherdChatMessage, ShepherdChatStore, ShepherdLiveTurn};
 
 pub(super) const MAX_IMAGE_COUNT: usize = 8;
 pub(super) const MAX_IMAGE_BASE64_CHARS: usize = 12 * 1024 * 1024;
@@ -246,14 +246,10 @@ pub(super) async fn load_scope_messages(
 
     let mut messages = match scope {
         ShepherdScope::General => store.get_messages(None).await.str_err()?,
-        ShepherdScope::Project {
-            project_id,
-            route_id,
-            ..
-        } => store
+        ShepherdScope::Project { project_id, .. } => store
             .get_scope_messages(
                 Some(*project_id),
-                Some(&ShepherdChatStore::project_runtime_name(*route_id)),
+                Some(&ShepherdChatStore::project_scope_key(*project_id)),
                 limit,
             )
             .await
@@ -265,7 +261,7 @@ pub(super) async fn load_scope_messages(
         } => store
             .get_scope_messages(
                 Some(*project_id),
-                Some(&ShepherdChatStore::thread_runtime_name(thread_id)),
+                Some(&ShepherdChatStore::thread_scope_key(thread_id)),
                 limit,
             )
             .await
@@ -292,14 +288,10 @@ pub(super) async fn save_message(
     let store = ShepherdChatStore::open().await.str_err()?;
     match scope {
         ShepherdScope::General => store.save_message(None, role, chunks_json).await.str_err(),
-        ShepherdScope::Project {
-            project_id,
-            route_id,
-            ..
-        } => store
+        ShepherdScope::Project { project_id, .. } => store
             .save_scope_message(
                 Some(*project_id),
-                Some(&ShepherdChatStore::project_runtime_name(*route_id)),
+                Some(&ShepherdChatStore::project_scope_key(*project_id)),
                 role,
                 chunks_json,
             )
@@ -312,7 +304,7 @@ pub(super) async fn save_message(
         } => store
             .save_scope_message(
                 Some(*project_id),
-                Some(&ShepherdChatStore::thread_runtime_name(thread_id)),
+                Some(&ShepherdChatStore::thread_scope_key(thread_id)),
                 role,
                 chunks_json,
             )
@@ -321,20 +313,16 @@ pub(super) async fn save_message(
     }
 }
 
-pub(super) async fn load_scope_queue(
+pub(super) async fn load_scope_live_turn(
     scope: &ShepherdScope,
-) -> Result<Vec<ShepherdQueuedTurn>, String> {
+) -> Result<Option<ShepherdLiveTurn>, String> {
     let store = ShepherdChatStore::open().await.str_err()?;
     match scope {
-        ShepherdScope::General => store.list_queue(None, None).await.str_err(),
-        ShepherdScope::Project {
-            project_id,
-            route_id,
-            ..
-        } => store
-            .list_queue(
+        ShepherdScope::General => store.get_live_turn(None, "general").await.str_err(),
+        ShepherdScope::Project { project_id, .. } => store
+            .get_live_turn(
                 Some(*project_id),
-                Some(&ShepherdChatStore::project_runtime_name(*route_id)),
+                &ShepherdChatStore::project_scope_key(*project_id),
             )
             .await
             .str_err(),
@@ -343,9 +331,9 @@ pub(super) async fn load_scope_queue(
             thread_id,
             ..
         } => store
-            .list_queue(
+            .get_live_turn(
                 Some(*project_id),
-                Some(&ShepherdChatStore::thread_runtime_name(thread_id)),
+                &ShepherdChatStore::thread_scope_key(thread_id),
             )
             .await
             .str_err(),

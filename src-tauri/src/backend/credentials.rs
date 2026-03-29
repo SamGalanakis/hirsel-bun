@@ -70,10 +70,7 @@ pub struct CodexOAuthCredentials {
     pub account_id: Option<String>,
 }
 
-/// Credentials to forward to agent processes
-///
-/// These are passed from the GUI client to the orchestrator (local or remote)
-/// and then applied as environment variables when spawning agent processes.
+/// Credentials to forward into shepherd and thread container sessions.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ForwardedCredentials {
@@ -137,7 +134,7 @@ impl ForwardedCredentials {
     }
 }
 
-/// Best-effort load of credentials that should be forwarded to worker runtimes.
+/// Best-effort load of credentials that should be forwarded to coding sessions.
 ///
 /// Credential-store values win over ambient environment values.
 pub async fn load_forwarded_credentials() -> ForwardedCredentials {

@@ -1,127 +1,68 @@
 # Hirsel Server Deployment
 
-Deploy Hirsel as a headless backend server.
+Run `hirsel-server` on a Linux host and let it launch containerized workers for shepherd and threads.
 
-## What this container does
+## Requirements
 
-This image runs the backend only:
+- Linux host
+- Docker daemon reachable from the server process
+- A project `flake.nix` for normal thread execution
+- `HIRSEL_API_KEY` set for client authentication
 
-- `hirsel serve`
-- Hirsel state under `/data`
-- backend-served Datastar web UI
-- worker execution on the same host/container environment
+## Quick Start
 
-It does **not** bundle the desktop wrapper. Desktop or mobile clients connect to this backend over HTTP.
-
-## Network architecture
-
-Hirsel expects the backend to be reachable at a stable URL from client devices:
-
-```text
-Desktop / phone app ──┐
-                      │ your network / VPN / reverse proxy
-Backend host ─────────┘  backend.example.internal:8080
-```
-
-Clients connect to whatever URL you provide. Hirsel does not manage VPNs, tunnels, reverse proxies, or DNS.
-
-## Quick start with Docker Compose
+From the repo checkout:
 
 ```bash
-git clone https://github.com/SamGalanakis/hirsel.git
-cd hirsel/deploy
-
-cp .env.example .env
-# Edit .env and set HIRSEL_API_KEY (generate with: openssl rand -hex 32)
-
-docker compose up -d --build
+HIRSEL_API_KEY=replace-me cargo run \
+  --manifest-path src-tauri/Cargo.toml \
+  --no-default-features \
+  --features server \
+  --bin hirsel-server \
+  -- --port 8080
 ```
 
-First build compiles the Rust server binary, so it takes a few minutes.
-
-## Direct `docker run`
-
-If you do not want Compose:
+Or build a release binary first:
 
 ```bash
-docker build -f deploy/Dockerfile -t hirsel-server .
-
-docker volume create hirsel-data
-
-docker run -d \
-  --name hirsel \
-  --restart unless-stopped \
-  -p 8080:8080 \
-  -e HIRSEL_API_KEY=replace-me \
-  -e HIRSEL_ROOT=/data \
-  -v hirsel-data:/data \
-  hirsel-server
+cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features --features server --bin hirsel-server
+HIRSEL_API_KEY=replace-me ./src-tauri/target/release/hirsel-server --port 8080
 ```
+
+## Worker Image
+
+The default worker image is `hirsel-worker:local`.
+
+When `hirsel-server` is running from this repo, it can build that image automatically from [worker.Dockerfile](/home/sam/code/hirsel/deploy/worker.Dockerfile) on first use.
+
+You can also build it yourself:
+
+```bash
+docker build -f deploy/worker.Dockerfile -t hirsel-worker:local .
+```
+
+If you want a different worker image, set it in `~/.hirsel/config.toml`:
+
+```toml
+[sandbox]
+image = "your-worker-image:tag"
+```
+
+Project creation and project settings also let you override the worker image per project.
 
 ## Verify
 
 ```bash
-curl http://backend.example.internal:8080/health
+curl http://127.0.0.1:8080/health
+docker info >/dev/null && echo ok
 ```
 
-## Client setup
+## Client Setup
 
-On each desktop or mobile client, point Hirsel at this backend URL and API key. The thin desktop shell stores:
+Point the desktop shell at the backend URL and API key:
 
 ```toml
 [backend]
 url = "http://backend.example.internal:8080"
 api_key = "your-api-key"
 ```
-
-## Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `HIRSEL_API_KEY` | API key for authenticating client requests. Required. |
-| `HIRSEL_ROOT` | Server data directory inside the container. Defaults to `/data`. |
-
-## Data and backups
-
-This deployment stores Hirsel state in the `hirsel-data` Docker volume mounted at `/data`.
-
-### Backup
-
-```bash
-docker run --rm \
-  -v hirsel-data:/data \
-  -v $(pwd):/backup \
-  alpine tar czf /backup/hirsel-backup.tar.gz -C /data .
-```
-
-### Restore
-
-```bash
-docker run --rm \
-  -v hirsel-data:/data \
-  -v $(pwd):/backup \
-  alpine tar xzf /backup/hirsel-backup.tar.gz -C /data
-```
-
-## Operations
-
-```bash
-# View logs
-docker compose logs -f
-
-# Restart
-docker compose restart
-
-# Rebuild after updating the repo
-git pull
-docker compose up -d --build
-
-# Stop
-docker compose down
-```
-
-## Runtime note
-
-Workers run on the backend side, not on the client device.
-
-For this Docker deployment that means workers run inside this container unless you build a different host/runtime story around it. If your projects need a broader toolchain or nested sandboxing, prefer a host deployment where you control the worker environment directly.

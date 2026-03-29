@@ -2,41 +2,45 @@
 
 ## Logs
 
-Hirsel now writes rotated tracing logs under `HIRSEL_ROOT/logs/<role>/`.
+Hirsel writes rotated tracing logs under `HIRSEL_ROOT/logs/<role>/`.
 
 Common locations:
 
 | Log | Location | Contents |
 |-----|----------|----------|
-| Server log | `~/.hirsel/logs/server/server.log.YYYY-MM-DD` | Backend HTTP routes, orchestration, worker lifecycle, SSE/UI activity |
+| Server log | `~/.hirsel/logs/server/server.log.YYYY-MM-DD` | HTTP routes, project loading, queue processing, SSE/UI activity |
 | GUI shell log | `~/.hirsel/logs/gui/gui.log.YYYY-MM-DD` | Thin desktop wrapper startup and local shell issues |
-| Worker log | `~/.hirsel/logs/worker/worker.log.YYYY-MM-DD` | Worker runtime boot, MCP/tool execution, sandbox activity |
-| Daemon log | `~/.hirsel/logs/daemon/daemon.log.YYYY-MM-DD` | Background lifecycle helpers if used |
-| Scribe log | `~/.hirsel/logs/scribe/scribe.log.YYYY-MM-DD` | Retained-context / artifact condensation |
+| Scope log | `~/.hirsel/logs/scope/scope.log.YYYY-MM-DD` | Hidden shepherd/thread scope runtime launched inside coding containers |
 | Profiling traces | `~/.hirsel/profiling/<timestamp>/` | Optional Perfetto-compatible trace output |
 
-## Common checks
+## Common Checks
 
 ```bash
 # Tail the backend server log
 tail -f ~/.hirsel/logs/server/server.log.$(date +%F)
 
-# Tail the desktop shell log
-tail -f ~/.hirsel/logs/gui/gui.log.$(date +%F)
+# Tail the hidden scope runtime log
+tail -f ~/.hirsel/logs/scope/scope.log.$(date +%F)
 
 # Show recent backend errors
 grep -i error ~/.hirsel/logs/server/server.log.$(date +%F) | tail -40
 
-# Inspect active worker subprocesses
-ps aux | grep '__worker-runtime' | grep -v grep
+# Check backend health
+curl http://127.0.0.1:8080/health -H 'x-api-key: replace-me'
+
+# Inspect project workspaces and thread checkouts
+find ~/.hirsel/workspaces -maxdepth 3 -type d | sort
+
+# Check whether Docker is reachable from the backend host
+docker info >/dev/null && echo ok
 ```
 
-## Server startup
+## Server Startup
 
 The standalone backend requires an API key:
 
 ```bash
-HIRSEL_API_KEY=replace-me cargo run --manifest-path src-tauri/Cargo.toml -- serve --port 8080
+HIRSEL_API_KEY=replace-me cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features server --bin hirsel-server -- --port 8080
 ```
 
 Health check:
@@ -45,34 +49,53 @@ Health check:
 curl http://127.0.0.1:8080/health -H 'x-api-key: replace-me'
 ```
 
-## Desktop shell
+## Desktop Shell
 
 The Tauri app is only a thin wrapper now. It stores:
 
 - backend URL
 - backend API key
 
-Then it loads the backend-served web UI. If the wrapper opens but the product UI does not, check:
+Then it loads the backend-served UI. If the wrapper opens but the project UI does not, check:
 
 1. backend URL
 2. API key
 3. backend health
 4. server logs
 
-## Rust logging
+## Docker + Nix Session Failures
+
+Normal coding threads require:
+
+- Docker available to the backend host
+- a project `flake.nix` in the central checkout
+
+Useful checks:
+
+```bash
+# Inspect the central checkout
+find ~/.hirsel/workspaces -path '*/work/central' -type d
+
+# Confirm whether the current project checkout has a flake
+find ~/.hirsel/workspaces -path '*/work/central/flake.nix' -type f
+```
+
+If a project has no `flake.nix`, shepherd can still answer directly and can bootstrap the flake from project scope, but thread scopes will fail until that file exists.
+
+## Rust Logging
 
 ```bash
 # Full debug logging
-RUST_LOG=debug ./dev.sh
+RUST_LOG=hirsel=debug ./dev.sh
 
 # Focus on the backend UI / HTTP path
 RUST_LOG=hirsel_lib::backend::server=debug,hirsel_lib::backend::webui=debug ./dev.sh
 
-# Focus on worker execution
-RUST_LOG=hirsel_lib::worker=debug,hirsel_lib::backend::workers=debug ./dev.sh
+# Focus on shepherd queueing and container launch
+RUST_LOG=hirsel_lib::backend::shepherd_runtime=debug,hirsel_lib::backend::sandbox=debug ./dev.sh
 ```
 
-## Resetting local state
+## Resetting Local State
 
 ```bash
 # Remove local Hirsel state

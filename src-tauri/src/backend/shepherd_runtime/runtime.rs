@@ -4,78 +4,7 @@ use lash::{PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 
 use super::history::{chunk_image_count, chunk_text};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
-use crate::backend::{ensure_route_runtime, ShepherdThreadStore};
-
-pub(super) struct ShepherdLashSink;
-
-impl ShepherdLashSink {
-    pub(super) fn tool_title_kind(name: &str) -> (String, Option<String>) {
-        match name {
-            "list_routes" => ("Routes".to_string(), Some("search".to_string())),
-            "fork_route" => ("Fork Route".to_string(), Some("execute".to_string())),
-            "select_route" => ("Select Route".to_string(), Some("execute".to_string())),
-            "archive_route" => ("Archive Route".to_string(), Some("execute".to_string())),
-            "list_threads" => ("Threads".to_string(), Some("search".to_string())),
-            "create_thread" => ("Create Thread".to_string(), Some("execute".to_string())),
-            "rename_thread" => ("Rename Thread".to_string(), Some("edit".to_string())),
-            "set_thread_status" => ("Thread Status".to_string(), Some("edit".to_string())),
-            "archive_thread" => ("Archive Thread".to_string(), Some("execute".to_string())),
-            "delete_thread" => ("Delete Thread".to_string(), Some("execute".to_string())),
-            "send_thread_message" => ("Message Thread".to_string(), Some("execute".to_string())),
-            "read_thread_updates" => ("Thread Updates".to_string(), Some("search".to_string())),
-            "read_canvas" => ("Canvas".to_string(), Some("read".to_string())),
-            "update_canvas" => ("Canvas Update".to_string(), Some("edit".to_string())),
-            "read_project_retained_context" => {
-                ("Retained Context".to_string(), Some("read".to_string()))
-            }
-            "update_project_retained_context" => (
-                "Retained Context Update".to_string(),
-                Some("edit".to_string()),
-            ),
-            "delivery_validate_target" => {
-                ("Delivery Check".to_string(), Some("search".to_string()))
-            }
-            "delivery_get_versions" | "delivery_get_latest_version" => {
-                ("Delivery Versions".to_string(), Some("search".to_string()))
-            }
-            "delivery_get_current" => ("Delivery Status".to_string(), Some("search".to_string())),
-            "delivery_start" => ("Start Delivery".to_string(), Some("execute".to_string())),
-            "delivery_publish" => ("Publish Route".to_string(), Some("execute".to_string())),
-            "delivery_merge" => ("Merge Route".to_string(), Some("execute".to_string())),
-            "delivery_get_attempts" => {
-                ("Delivery Attempts".to_string(), Some("search".to_string()))
-            }
-            "delivery_retry" => ("Retry Delivery".to_string(), Some("execute".to_string())),
-            "delivery_complete" => ("Complete Delivery".to_string(), Some("execute".to_string())),
-            "delivery_abandon" => ("Abandon Delivery".to_string(), Some("execute".to_string())),
-            "update_plan" => ("Plan Update".to_string(), Some("edit".to_string())),
-            _ => (name.to_string(), None),
-        }
-    }
-
-    fn is_repl_fragment_only(text: &str) -> bool {
-        let trimmed = text.trim();
-        if trimmed.is_empty() || !trimmed.contains('<') {
-            return false;
-        }
-
-        trimmed.chars().all(|c| {
-            matches!(
-                c.to_ascii_lowercase(),
-                '<' | '>' | '/' | 'r' | 'e' | 'p' | 'l' | ' '
-            )
-        })
-    }
-
-    pub(super) fn sanitize_assistant_text(text: &str) -> String {
-        let out = text.replace("</repl>", "").replace("<repl>", "");
-        if Self::is_repl_fragment_only(&out) {
-            String::new()
-        } else {
-            out
-        }
-    }
-}
+use crate::backend::{ensure_project_workspace, ShepherdThreadStore};
 
 fn scope_label(scope: &ShepherdScope) -> String {
     match scope {
@@ -94,6 +23,7 @@ fn build_scope_guidance(
     focus: Option<&ShepherdTaskFocus>,
     cwd: &Path,
 ) -> String {
+    let bootstrap_flake = std::env::var("HIRSEL_BOOTSTRAP_FLAKE").as_deref() == Ok("1");
     let focus_line = match focus {
         Some(f) => format!("Focus item: {} ({})", f.task_name, f.task_id),
         None => "Focus item: none".to_string(),
@@ -130,11 +60,12 @@ fn build_scope_guidance(
             - Talk plainly, decide when to answer directly, and delegate aggressively with threads when real parallel work is needed.\n\
             - Use `create_thread`, `send_thread_message`, and `read_thread_updates` to orchestrate separate lines of work.\n\
             - For simple conversational questions, answer directly in plain language without REPL code.\n\
+            - If the project central checkout has no `flake.nix` yet, create one before starting normal coding work. Until that exists, do not delegate coding threads.\n\
             - The canvas is a maintained artifact. Use `read_canvas` before editing it.\n\
             - Only call `update_canvas` when project meaning materially changed.\n\
             - Canvas updates must replace the full HTML document and preserve stable structure when possible.\n\
             - The canvas is for illustrating the current situation to the user, not reiterating obvious shell context.\n\
-            - Do not waste canvas space repeating the project title, route picker state, or generic chrome the user can already see.\n\
+            - Do not waste canvas space repeating the project title or generic chrome the user can already see.\n\
             - Prefer synthesis, comparisons, diagrams, and “what matters now” framing over dashboard filler.\n\
             - Inline Mermaid setup is allowed in the canvas. Do not add arbitrary third-party assets beyond Mermaid.\n\
             - Never claim work happened unless you actually executed tools.\n\
@@ -147,7 +78,14 @@ fn build_scope_guidance(
         ),
     };
 
-    scope_header
+    if bootstrap_flake {
+        format!(
+            "{}\n\n## Bootstrap Mode\n\n- This project central checkout has no project flake yet.\n- Create a valid `flake.nix` in the workspace before doing normal coding work.\n- Do not create or start coding threads until the project flake exists.\n",
+            scope_header
+        )
+    } else {
+        scope_header
+    }
 }
 
 pub(super) fn shepherd_prompt_overrides(
@@ -188,27 +126,13 @@ pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i6
     }
 }
 
-async fn resolve_route_runtime_workspace(
-    project_id: i64,
-    route_id: i64,
-) -> Result<PathBuf, String> {
-    let handle = ensure_route_runtime(project_id, route_id).await?;
-    let project_path = handle
-        .state
-        .get_project_path()
-        .await
-        .map_err(|error| format!("failed to read runtime workspace path: {}", error))?
-        .ok_or_else(|| {
-            format!(
-                "Route runtime '{}' has no project path recorded",
-                handle.runtime_name
-            )
-        })?;
-    let path = PathBuf::from(project_path);
+async fn resolve_project_workspace(project_id: i64) -> Result<PathBuf, String> {
+    let handle = ensure_project_workspace(project_id).await?;
+    let path = handle.central_dir;
     if !path.exists() || !path.is_dir() {
         return Err(format!(
-            "Route runtime '{}' points at missing workspace '{}'",
-            handle.runtime_name,
+            "Project workspace '{}' points at missing checkout '{}'",
+            handle.workspace_name,
             path.display()
         ));
     }
@@ -220,7 +144,6 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Result<Pat
         ShepherdScope::General => Err("general scope has no workspace".to_string()),
         ShepherdScope::Project {
             project_id,
-            route_id,
             workspace_path,
             ..
         } => {
@@ -234,11 +157,10 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Result<Pat
                     path.display()
                 ));
             }
-            resolve_route_runtime_workspace(*project_id, *route_id).await
+            resolve_project_workspace(*project_id).await
         }
         ShepherdScope::Thread {
             project_id,
-            route_id,
             thread_id,
             workspace_path,
             ..
@@ -267,7 +189,7 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Result<Pat
                     }
                 }
             }
-            resolve_route_runtime_workspace(*project_id, *route_id).await
+            resolve_project_workspace(*project_id).await
         }
     }
 }

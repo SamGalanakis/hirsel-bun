@@ -225,6 +225,35 @@ pub fn remote_default_branch(url: &str) -> Result<Option<String>> {
     Ok(None)
 }
 
+/// Check whether a remote branch contains a specific file at the repository root.
+pub fn remote_branch_has_file(url: &str, branch: &str, path: &str) -> Result<bool> {
+    let temp =
+        TempDir::new().map_err(|e| GitError::Other(format!("Failed to create temp dir: {}", e)))?;
+    let auth_url = get_authenticated_url(url);
+
+    run_git_command(
+        temp.path(),
+        &[
+            "clone",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            "--branch",
+            branch,
+            "--single-branch",
+            &auth_url,
+            ".",
+        ],
+    )?;
+
+    Ok(temp.path().join(path).is_file())
+}
+
+/// Check whether a remote branch contains a root `flake.nix`.
+pub fn remote_branch_has_flake(url: &str, branch: &str) -> Result<bool> {
+    remote_branch_has_file(url, branch, "flake.nix")
+}
+
 fn run_git_command(current_dir: &Path, args: &[&str]) -> Result<()> {
     let output = Command::new("git")
         .args(args)
@@ -444,138 +473,6 @@ pub fn clone_remote_with_branch(
     Ok(work_dir)
 }
 
-/// Push staging branch to a remote repository
-///
-/// Creates or updates a branch on the remote.
-/// Uses GitHub token from CredentialStore for authentication if available.
-pub fn push_to_remote(
-    work_dir: &Path,
-    remote_url: &str,
-    branch_name: &str,
-) -> Result<(bool, String)> {
-    let repo = get_repo(Some(work_dir))?;
-
-    // Make sure we're on staging
-    checkout_branch(&repo, "staging")?;
-
-    // Add or update the remote with authenticated URL
-    let remote_name = "hirsel_delivery";
-    let auth_url = get_authenticated_url(remote_url);
-
-    // Remove existing remote if present
-    let _ = repo.remote_delete(remote_name);
-
-    repo.remote(remote_name, &auth_url)?;
-
-    // Push staging as the target branch
-    let mut remote = repo.find_remote(remote_name)?;
-
-    let refspec = format!("refs/heads/staging:refs/heads/{}", branch_name);
-
-    // Use default push options
-    let mut push_opts = git2::PushOptions::new();
-
-    // Set up credentials callback for SSH/HTTPS auth
-    let mut callbacks = git2::RemoteCallbacks::new();
-    callbacks.credentials(|_url, username_from_url, allowed_types| {
-        tracing::debug!(
-            "Git credentials requested for URL: {:?}, username: {:?}, allowed_types: {:?}",
-            _url,
-            username_from_url,
-            allowed_types
-        );
-
-        // Try SSH agent first
-        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-            if let Some(username) = username_from_url {
-                tracing::debug!("Trying SSH agent for user '{}'", username);
-                match git2::Cred::ssh_key_from_agent(username) {
-                    Ok(cred) => return Ok(cred),
-                    Err(e) => tracing::debug!("SSH agent failed: {}", e),
-                }
-            }
-        }
-
-        // Try default SSH key
-        if allowed_types.contains(git2::CredentialType::SSH_KEY) {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            let ssh_key = std::path::PathBuf::from(&home).join(".ssh/id_rsa");
-            let ssh_key_ed = std::path::PathBuf::from(&home).join(".ssh/id_ed25519");
-
-            let key_path = if ssh_key_ed.exists() {
-                ssh_key_ed
-            } else {
-                ssh_key
-            };
-
-            if key_path.exists() {
-                let username = username_from_url.unwrap_or("git");
-                tracing::debug!("Trying SSH key at {:?} for user '{}'", key_path, username);
-                match git2::Cred::ssh_key(username, None, &key_path, None) {
-                    Ok(cred) => return Ok(cred),
-                    Err(e) => tracing::debug!("SSH key failed: {}", e),
-                }
-            } else {
-                tracing::debug!("No SSH key found at {:?}", key_path);
-            }
-        }
-
-        // Try git credential helper for HTTPS
-        if allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
-            tracing::debug!("Trying git credential helper");
-            match git2::Cred::credential_helper(&repo.config()?, _url, username_from_url) {
-                Ok(cred) => return Ok(cred),
-                Err(e) => tracing::debug!("Credential helper failed: {}", e),
-            }
-        }
-
-        tracing::warn!("No git credentials available - authentication will fail");
-        Err(git2::Error::from_str(
-            "no credentials available - check SSH keys or git credential helper",
-        ))
-    });
-
-    push_opts.remote_callbacks(callbacks);
-
-    match remote.push(&[&refspec], Some(&mut push_opts)) {
-        Ok(()) => {
-            // Clean up remote
-            let _ = repo.remote_delete(remote_name);
-            info!("Pushed to remote {} as branch {}", remote_url, branch_name);
-            Ok((
-                true,
-                format!("Pushed to branch '{}' on remote", branch_name),
-            ))
-        }
-        Err(e) => {
-            let _ = repo.remote_delete(remote_name);
-            // Parse error to provide better user feedback
-            let error_str = e.to_string();
-            let user_message = if error_str.contains("authentication")
-                || error_str.contains("credential")
-                || error_str.contains("permission denied")
-                || error_str.contains("publickey")
-            {
-                format!(
-                    "Git authentication failed: {}. Check your SSH keys or git credentials.",
-                    error_str
-                )
-            } else if error_str.contains("could not read")
-                || error_str.contains("network")
-                || error_str.contains("connection")
-            {
-                format!(
-                    "Git network error: {}. Check your internet connection.",
-                    error_str
-                )
-            } else {
-                format!("Git push failed: {}", error_str)
-            };
-            Err(GitError::PushFailed(user_message))
-        }
-    }
-}
-
 // =============================================================================
 // Repository Operations
 // =============================================================================
@@ -587,13 +484,6 @@ pub fn get_repo(cwd: Option<&Path>) -> Result<Repository> {
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
     Repository::discover(&path).map_err(|_| GitError::NotARepository(path))
-}
-
-/// Check if a branch exists in the repository
-pub fn branch_exists(branch: &str, cwd: Option<&Path>) -> Result<bool> {
-    let repo = get_repo(cwd)?;
-    let exists = repo.find_branch(branch, BranchType::Local).is_ok();
-    Ok(exists)
 }
 
 /// Get the current branch name
@@ -610,79 +500,30 @@ pub fn get_current_branch(work_dir: &Path) -> Result<String> {
     }
 }
 
-/// List all local branches
-pub fn list_branches(work_dir: &Path) -> Result<Vec<String>> {
-    let repo = get_repo(Some(work_dir))?;
-    let branches = repo.branches(Some(BranchType::Local))?;
-
-    let mut names = Vec::new();
-    for branch_result in branches {
-        let (branch, _) = branch_result?;
-        if let Some(name) = branch.name()? {
-            names.push(name.to_string());
-        }
-    }
-    Ok(names)
-}
-
-/// List branches that are not yet merged into staging
-pub fn list_unmerged_branches(work_dir: &Path) -> Result<Vec<String>> {
-    let repo = get_repo(Some(work_dir))?;
-    let branches = repo.branches(Some(BranchType::Local))?;
-
-    // Get staging commit
-    let staging_branch = repo
-        .find_branch("staging", BranchType::Local)
-        .map_err(|_| GitError::BranchNotFound("staging".to_string()))?;
-    let staging_commit = staging_branch.get().peel_to_commit()?;
-
-    let mut unmerged = Vec::new();
-    for branch_result in branches {
-        let (branch, _) = branch_result?;
-        if let Some(name) = branch.name()? {
-            // Only check task/ branches
-            if !name.starts_with("task/") {
-                continue;
-            }
-
-            let branch_commit = branch.get().peel_to_commit()?;
-
-            // Check if branch is merged: merge-base equals branch head means merged
-            let merge_base = repo.merge_base(staging_commit.id(), branch_commit.id())?;
-
-            if merge_base != branch_commit.id() {
-                unmerged.push(name.to_string());
-            }
-        }
-    }
-
-    Ok(unmerged)
-}
-
-/// Create the main workspace directory with staging branch
+/// Create the main workspace directory with the central checkout.
 ///
-/// Copies the project to `runtimes/<runtime_name>/work/staging/` with full git history,
-/// creates "staging" branch, and sets up receive.denyCurrentBranch for worker pushes.
+/// Copies the project to `workspaces/<workspace_name>/work/central/` with full git history,
+/// creates the `central` branch, and allows thread checkouts to fetch from it.
 pub fn create_workspace(
-    runtime_name: &str,
+    workspace_name: &str,
     project_path: &Path,
-    runtimes_dir: &Path,
+    workspaces_dir: &Path,
 ) -> Result<PathBuf> {
-    let runtime_dir = runtimes_dir.join(runtime_name);
-    let staging_dir = runtime_dir.join("work").join("staging");
+    let workspace_dir = workspaces_dir.join(workspace_name);
+    let central_dir = workspace_dir.join("work").join("central");
 
-    if staging_dir.exists() {
-        info!("Workspace already exists: {:?}", staging_dir);
-        return Ok(staging_dir);
+    if central_dir.exists() {
+        info!("Workspace already exists: {:?}", central_dir);
+        return Ok(central_dir);
     }
 
-    fs::create_dir_all(&runtime_dir)?;
+    fs::create_dir_all(&workspace_dir)?;
 
     // Copy entire project including .git
-    copy_dir_recursive(project_path, &staging_dir)?;
-    info!("Copied project to: {:?}", staging_dir);
+    copy_dir_recursive(project_path, &central_dir)?;
+    info!("Copied project to: {:?}", central_dir);
 
-    let repo = Repository::open(&staging_dir)?;
+    let repo = Repository::open(&central_dir)?;
 
     // Commit any uncommitted changes first
     if is_dirty(&repo)? {
@@ -690,7 +531,7 @@ pub fn create_workspace(
         commit(&repo, "hirsel: snapshot uncommitted changes")?;
     }
 
-    // Force create "staging" branch from current HEAD (whatever branch we're on)
+    // Force create "central" branch from current HEAD (whatever branch we're on)
     // This ensures we capture the current state regardless of source branch name
     let head_commit = repo.head()?.peel_to_commit()?;
 
@@ -700,30 +541,30 @@ pub fn create_workspace(
         .ok()
         .and_then(|h| h.shorthand().map(|s| s.to_string()));
 
-    // Delete existing staging branch if present (it might have different content)
-    if let Ok(mut branch) = repo.find_branch("staging", BranchType::Local) {
+    // Delete existing central branch if present (it might have different content)
+    if let Ok(mut branch) = repo.find_branch("central", BranchType::Local) {
         // Can't delete current branch, so only delete if we're not on it
-        if current_branch.as_deref() != Some("staging") {
+        if current_branch.as_deref() != Some("central") {
             let _ = branch.delete();
         }
     }
 
-    // Create staging branch from HEAD (skip if we're already on staging)
-    if current_branch.as_deref() != Some("staging") {
-        repo.branch("staging", &head_commit, false)?;
+    // Create central branch from HEAD (skip if we're already on central)
+    if current_branch.as_deref() != Some("central") {
+        repo.branch("central", &head_commit, false)?;
     }
 
-    // Checkout staging branch
-    let obj = repo.revparse_single("staging")?;
+    // Checkout central branch
+    let obj = repo.revparse_single("central")?;
     repo.checkout_tree(&obj, None)?;
-    repo.set_head("refs/heads/staging")?;
+    repo.set_head("refs/heads/central")?;
 
-    // Delete all other branches except staging
+    // Delete all other branches except central
     let branches: Vec<String> = repo
         .branches(Some(BranchType::Local))?
         .filter_map(|b| b.ok())
         .filter_map(|(b, _)| b.name().ok().flatten().map(|s| s.to_string()))
-        .filter(|n| n != "staging")
+        .filter(|n| n != "central")
         .collect();
 
     for branch_name in branches {
@@ -732,49 +573,53 @@ pub fn create_workspace(
         }
     }
 
-    // Allow workers to push to this repo
+    // Allow thread checkouts to update from this repo if they use it as a local remote.
     let mut config = repo.config()?;
     config.set_str("receive.denyCurrentBranch", "updateInstead")?;
 
-    info!("Created workspace on 'staging' branch: {:?}", staging_dir);
-    Ok(staging_dir)
+    info!("Created workspace on 'central' branch: {:?}", central_dir);
+    Ok(central_dir)
 }
 
-/// Create a worker clone that tracks staging
+/// Create a thread checkout that tracks the central checkout.
 ///
-/// Copies project files to `runtimes/<runtime_name>/work/<worker_name>/`, initializes
-/// a fresh git repo, and sets up origin pointing to staging_dir.
-pub fn create_worker_clone(
-    runtime_name: &str,
+/// Copies project files to `workspaces/<workspace_name>/work/<checkout_name>/`,
+/// initializes a fresh git repo, and sets up `origin` pointing to the
+/// central checkout.
+pub fn create_thread_checkout(
+    workspace_name: &str,
     project_path: &Path,
-    worker_name: &str,
-    staging_dir: Option<&Path>,
-    runtimes_dir: &Path,
+    checkout_name: &str,
+    central_dir: Option<&Path>,
+    workspaces_dir: &Path,
 ) -> Result<PathBuf> {
-    let runtime_dir = runtimes_dir.join(runtime_name);
-    let staging = staging_dir
+    let workspace_dir = workspaces_dir.join(workspace_name);
+    let central = central_dir
         .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| runtime_dir.join("work").join("staging"));
-    let worker_dir = runtime_dir.join("work").join(worker_name);
+        .unwrap_or_else(|| workspace_dir.join("work").join("central"));
+    let checkout_dir = workspace_dir.join("work").join(checkout_name);
 
-    if worker_dir.exists() {
-        info!("Worker clone already exists: {:?}", worker_dir);
-        return Ok(worker_dir);
+    if checkout_dir.exists() {
+        info!("Thread checkout already exists: {:?}", checkout_dir);
+        return Ok(checkout_dir);
     }
 
-    if !staging.join(".git").is_dir() {
+    if !central.join(".git").is_dir() {
         return Err(GitError::Other(format!(
             "Main workspace not initialized: {:?}",
-            staging
+            central
         )));
     }
 
     // Copy ALL project files (including untracked)
-    copy_dir_recursive(project_path, &worker_dir)?;
-    info!("Copied project files to worker dir: {:?}", worker_dir);
+    copy_dir_recursive(project_path, &checkout_dir)?;
+    info!(
+        "Copied project files to thread checkout: {:?}",
+        checkout_dir
+    );
 
     // Remove .git from copied directory
-    let copied_git = worker_dir.join(".git");
+    let copied_git = checkout_dir.join(".git");
     if copied_git.is_dir() {
         fs::remove_dir_all(&copied_git)?;
     } else if copied_git.exists() {
@@ -782,7 +627,7 @@ pub fn create_worker_clone(
     }
 
     // Initialize fresh git repo
-    let repo = Repository::init(&worker_dir)?;
+    let repo = Repository::init(&checkout_dir)?;
 
     // Create initial commit on a temporary branch
     {
@@ -797,11 +642,11 @@ pub fn create_worker_clone(
         repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])?;
     }
 
-    // Rename the default branch to 'staging'
-    // git2 doesn't have a rename API, so we create staging and delete the old branch
+    // Rename the default branch to 'central'
+    // git2 doesn't have a rename API, so we create central and delete the old branch
     let head_commit = repo.head()?.peel_to_commit()?;
-    repo.branch("staging", &head_commit, false)?;
-    repo.set_head("refs/heads/staging")?;
+    repo.branch("central", &head_commit, false)?;
+    repo.set_head("refs/heads/central")?;
 
     // Delete the old default branch (master/main)
     if let Ok(mut head_ref) = repo.find_reference("refs/heads/master") {
@@ -811,99 +656,40 @@ pub fn create_worker_clone(
         let _ = head_ref.delete();
     }
 
-    // Add staging as origin remote
-    let staging_url = staging.canonicalize()?.display().to_string();
-    repo.remote("origin", &staging_url)?;
+    // Add central checkout as origin remote
+    let central_url = central.canonicalize()?.display().to_string();
+    repo.remote("origin", &central_url)?;
 
     // Fetch from origin
     let mut remote = repo.find_remote("origin")?;
-    remote.fetch(&["staging"], None, None)?;
+    remote.fetch(&["central"], None, None)?;
 
-    // Reset to origin/staging
-    let origin_staging = repo.find_reference("refs/remotes/origin/staging")?;
-    let commit = origin_staging.peel_to_commit()?;
+    // Reset to origin/central
+    let origin_central = repo.find_reference("refs/remotes/origin/central")?;
+    let commit = origin_central.peel_to_commit()?;
     repo.reset(commit.as_object(), git2::ResetType::Hard, None)?;
 
     // Set upstream tracking
-    let mut branch = repo.find_branch("staging", BranchType::Local)?;
-    branch.set_upstream(Some("origin/staging"))?;
+    let mut branch = repo.find_branch("central", BranchType::Local)?;
+    branch.set_upstream(Some("origin/central"))?;
 
-    // Copy git config from staging (user.name, user.email)
-    if let Ok(staging_repo) = Repository::open(&staging) {
-        if let Ok(staging_config) = staging_repo.config() {
-            let mut worker_config = repo.config()?;
+    // Copy git config from the central checkout (user.name, user.email)
+    if let Ok(central_repo) = Repository::open(&central) {
+        if let Ok(central_config) = central_repo.config() {
+            let mut checkout_config = repo.config()?;
             for key in ["user.name", "user.email"] {
-                if let Ok(value) = staging_config.get_string(key) {
-                    let _ = worker_config.set_str(key, &value);
+                if let Ok(value) = central_config.get_string(key) {
+                    let _ = checkout_config.set_str(key, &value);
                 }
             }
         }
     }
 
     info!(
-        "Created worker clone: {:?} (origin → {:?})",
-        worker_dir, staging
+        "Created thread checkout: {:?} (origin → {:?})",
+        checkout_dir, central
     );
-    Ok(worker_dir)
-}
-
-/// Get diff stat between project and work directory
-pub fn get_diff_stat(project_path: &Path, work_dir: &Path) -> Result<Option<String>> {
-    diff_between_repos(project_path, work_dir, true)
-}
-
-/// Get full diff between project and work directory
-pub fn get_diff(project_path: &Path, work_dir: &Path) -> Result<Option<String>> {
-    diff_between_repos(project_path, work_dir, false)
-}
-
-/// Push staging branch as a new branch to project repo
-pub fn push_staging_as_branch(
-    work_dir: &Path,
-    project_path: &Path,
-    branch_name: &str,
-) -> Result<(bool, String)> {
-    let work_repo = get_repo(Some(work_dir))?;
-    let project_repo = get_repo(Some(project_path))?;
-
-    // Make sure we're on staging
-    checkout_branch(&work_repo, "staging")?;
-
-    // Add work_dir as temporary remote
-    let remote_name = "hirsel_work";
-    let work_url = work_dir.canonicalize()?.display().to_string();
-
-    // Remove existing remote if present
-    let _ = project_repo.remote_delete(remote_name);
-
-    project_repo.remote(remote_name, &work_url)?;
-
-    // Fetch from work dir
-    let mut remote = project_repo.find_remote(remote_name)?;
-    remote.fetch(&["staging"], None, None)?;
-
-    // Delete branch if it exists
-    if let Ok(mut branch) = project_repo.find_branch(branch_name, BranchType::Local) {
-        branch.delete()?;
-    }
-
-    // Create the new branch from fetched staging
-    let remote_ref =
-        project_repo.find_reference(&format!("refs/remotes/{}/staging", remote_name))?;
-    let commit = remote_ref.peel_to_commit()?;
-    project_repo.branch(branch_name, &commit, false)?;
-
-    // Clean up remote
-    project_repo.remote_delete(remote_name)?;
-
-    info!("Created branch '{}' in project repo", branch_name);
-    Ok((
-        true,
-        format!(
-            "Created branch '{}'. Review and merge when ready.",
-            branch_name
-        ),
-    ))
+    Ok(checkout_dir)
 }
 
 // =============================================================================
@@ -996,82 +782,6 @@ fn get_signature(repo: &Repository) -> Result<Signature<'static>> {
     Ok(Signature::now("hirsel", "hirsel@localhost")?)
 }
 
-/// Checkout a branch
-fn checkout_branch(repo: &Repository, branch_name: &str) -> Result<()> {
-    let obj = repo.revparse_single(&format!("refs/heads/{}", branch_name))?;
-    repo.checkout_tree(&obj, None)?;
-    repo.set_head(&format!("refs/heads/{}", branch_name))?;
-    Ok(())
-}
-
-/// Generate diff between two repositories
-fn diff_between_repos(
-    project_path: &Path,
-    work_dir: &Path,
-    stat_only: bool,
-) -> Result<Option<String>> {
-    let project_repo = get_repo(Some(project_path))?;
-    let work_branch = get_current_branch(work_dir)?;
-
-    // Add work_dir as temporary remote
-    let remote_name = "hirsel_work";
-    let work_url = work_dir.canonicalize()?.display().to_string();
-
-    // Remove existing remote if present
-    let _ = project_repo.remote_delete(remote_name);
-
-    project_repo.remote(remote_name, &work_url)?;
-
-    // Fetch from work dir
-    let mut remote = project_repo.find_remote(remote_name)?;
-    remote.fetch(&[&work_branch], None, None)?;
-
-    // Get trees for diff
-    let head_tree = project_repo.head()?.peel_to_tree()?;
-    let remote_ref =
-        project_repo.find_reference(&format!("refs/remotes/{}/{}", remote_name, work_branch))?;
-    let remote_tree = remote_ref.peel_to_tree()?;
-
-    // Generate diff
-    let diff = project_repo.diff_tree_to_tree(Some(&head_tree), Some(&remote_tree), None)?;
-
-    let result = if stat_only {
-        let stats = diff.stats()?;
-        Some(format!(
-            "{} files changed, {} insertions(+), {} deletions(-)",
-            stats.files_changed(),
-            stats.insertions(),
-            stats.deletions()
-        ))
-    } else {
-        let mut diff_str = String::new();
-        diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
-            let prefix = match line.origin() {
-                '+' => "+",
-                '-' => "-",
-                ' ' => " ",
-                _ => "",
-            };
-            if let Ok(content) = std::str::from_utf8(line.content()) {
-                diff_str.push_str(prefix);
-                diff_str.push_str(content);
-            }
-            true
-        })?;
-
-        if diff_str.is_empty() {
-            None
-        } else {
-            Some(diff_str)
-        }
-    };
-
-    // Clean up remote
-    project_repo.remote_delete(remote_name)?;
-
-    Ok(result)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1109,32 +819,5 @@ mod tests {
         let (dir, _repo) = create_test_repo();
         let result = get_repo(Some(dir.path()));
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_branch_exists() {
-        let (dir, repo) = create_test_repo();
-
-        // Create a test branch
-        let head = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.branch("test-branch", &head, false).unwrap();
-
-        assert!(branch_exists("test-branch", Some(dir.path())).unwrap());
-        assert!(!branch_exists("nonexistent", Some(dir.path())).unwrap());
-    }
-
-    #[test]
-    fn test_list_branches() {
-        let (dir, repo) = create_test_repo();
-
-        // Create some branches
-        let head = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.branch("feature-1", &head, false).unwrap();
-        repo.branch("feature-2", &head, false).unwrap();
-
-        let branches = list_branches(dir.path()).unwrap();
-        assert!(branches.contains(&"master".to_string()) || branches.contains(&"main".to_string()));
-        assert!(branches.contains(&"feature-1".to_string()));
-        assert!(branches.contains(&"feature-2".to_string()));
     }
 }

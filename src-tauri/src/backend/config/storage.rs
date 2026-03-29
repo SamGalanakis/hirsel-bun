@@ -73,7 +73,7 @@ pub struct StorageConfig {
     /// Named storage configurations
     #[serde(default)]
     pub storages: HashMap<String, S3Config>,
-    /// Default storage name for snapshots (if not specified per-runner)
+    /// Default named storage configuration for backend-managed files.
     #[serde(default)]
     pub default_storage: Option<String>,
 }

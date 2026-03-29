@@ -1,13 +1,20 @@
 pub mod commands;
 mod history;
+mod rpc;
 mod runtime;
+mod sandbox;
+mod session;
 mod tools;
 pub mod types;
+mod worker;
 
 pub use commands::{
-    enqueue_project_message, enqueue_shepherd_message_for_scope, get_route_conversation,
-    get_route_queue, get_route_threads, get_shepherd_history, get_shepherd_queue,
-    get_thread_conversation, get_thread_queue, launch_project_survey_thread,
-    EnqueueShepherdMessageResponse, ShepherdQueueState,
+    archive_thread, delete_thread, get_project_activity, get_project_conversation,
+    get_project_threads, get_scope_activity, get_shepherd_history, get_thread_activity,
+    get_thread_conversation, launch_project_survey_thread, send_project_message,
+    send_scope_message, send_thread_message, start_server_control_listener, stop_scope_activity,
+    SendShepherdMessageResponse, ShepherdScopeActivity,
 };
+pub use session::ShepherdScopeSession;
 pub use types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
+pub use worker::serve_worker_session;

@@ -19,7 +19,7 @@ impl AgentType {
         }
 
         let full_cmd = command.join(" ").to_lowercase();
-        if full_cmd.contains("codex") || full_cmd.contains("__worker-runtime") {
+        if full_cmd.contains("codex") {
             Self::Codex
         } else {
             Self::Unknown
@@ -47,10 +47,6 @@ mod tests {
 
     #[test]
     fn test_agent_type_from_command() {
-        assert_eq!(
-            AgentType::from_command(&["hirsel".to_string(), "__worker-runtime".to_string()]),
-            AgentType::Codex
-        );
         assert_eq!(
             AgentType::from_command(&["codex".to_string()]),
             AgentType::Codex

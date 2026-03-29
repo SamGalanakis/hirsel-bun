@@ -2,9 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::route::CreateRouteRepoRequest;
+use crate::backend::draft::StartingPoint;
 
-/// Project - a lightweight configuration container for route-based work
+/// Project - one shepherd, one canvas, many threads.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -18,12 +18,16 @@ pub struct Project {
     #[serde(default)]
     pub icon: Option<String>,
 
-    // Canvas position (for OneBoard portfolio view)
+    /// Source used to materialize the central checkout.
+    pub starting_point: StartingPoint,
+
+    /// Optional project-specific container image override.
+    #[serde(default)]
+    pub sandbox_image: Option<String>,
+
+    // Canvas position (for portfolio view)
     pub x: Option<f64>,
     pub y: Option<f64>,
-
-    // Active route ID for this project
-    pub active_route_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,19 +52,8 @@ pub struct ProjectRetainedContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RouteSummary {
-    pub route_id: i64,
-    pub name: String,
-    pub selected: bool,
-    pub status: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProjectSurfaceSnapshot {
     pub focus_view: ProjectFocusView,
-    pub routes: Vec<RouteSummary>,
 }
 
 /// Request to create a new project
@@ -68,11 +61,11 @@ pub struct ProjectSurfaceSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct CreateProjectRequest {
     pub name: String,
-    pub repos: Vec<CreateRouteRepoRequest>,
-    #[serde(default)]
-    pub default_repo_index: Option<usize>,
+    pub starting_point: StartingPoint,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub sandbox_image: Option<String>,
     #[serde(default)]
     pub x: Option<f64>,
     #[serde(default)]
@@ -87,6 +80,8 @@ pub struct UpdateProjectRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub sandbox_image: Option<String>,
     #[serde(default)]
     pub x: Option<f64>,
     #[serde(default)]

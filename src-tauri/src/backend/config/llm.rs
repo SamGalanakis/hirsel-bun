@@ -30,13 +30,13 @@ pub struct AgentModelOverrides {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmConfig {
-    /// Active provider used for Shepherd and worker runtimes.
+    /// Active provider used for shepherd and thread sessions.
     #[serde(default)]
     pub provider: LlmProvider,
     /// Optional OpenRouter-compatible base URL.
     #[serde(default)]
     pub openrouter_base_url: Option<String>,
-    /// Override the main model (Shepherd + route workers).
+    /// Override the main model used by shepherd.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     /// Model reasoning variant (e.g. "low", "medium", "high", "xhigh").

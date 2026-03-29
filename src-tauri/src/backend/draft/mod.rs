@@ -1,6 +1,6 @@
-//! Draft workspace management
+//! Project bootstrap workspace management
 //!
-//! This module provides abstractions for managing draft workspaces on the local host.
+//! This module provides abstractions for materializing project workspaces on the local host.
 //!
 //! # Architecture
 //!

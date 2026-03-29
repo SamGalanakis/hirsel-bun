@@ -5,7 +5,7 @@
 # Environment variables:
 #   HIRSEL_TAG          - Git tag (e.g., "v0.1.0"). If not set, uses latest release.
 #   HIRSEL_BINARY_URL   - Custom URL to download binary from (skips GitHub releases)
-#   HIRSEL_BINARY_TYPE  - Binary type: worker, server, cli (default: worker)
+#   HIRSEL_BINARY_TYPE  - Binary type: worker, server, desktop (default: worker)
 #   HIRSEL_INSTALL_DIR  - Install directory (default: /usr/local/bin)
 #
 # Usage:
@@ -72,6 +72,7 @@ download_binary() {
 main() {
     local tag="${HIRSEL_TAG:-}"
     local tmp_binary="/tmp/hirsel-download-$$"
+    local install_name="hirsel-${BINARY_TYPE}"
 
     # Skip if HIRSEL_BINARY_URL is set (tag not needed)
     if [ -z "${HIRSEL_BINARY_URL:-}" ]; then
@@ -94,16 +95,16 @@ main() {
     fi
 
     # Install
-    info "Installing to ${INSTALL_DIR}/hirsel..."
+    info "Installing to ${INSTALL_DIR}/${install_name}..."
 
     if [ -w "$INSTALL_DIR" ]; then
-        mv "$tmp_binary" "${INSTALL_DIR}/hirsel"
+        mv "$tmp_binary" "${INSTALL_DIR}/${install_name}"
     else
-        sudo mv "$tmp_binary" "${INSTALL_DIR}/hirsel"
-        sudo chmod +x "${INSTALL_DIR}/hirsel"
+        sudo mv "$tmp_binary" "${INSTALL_DIR}/${install_name}"
+        sudo chmod +x "${INSTALL_DIR}/${install_name}"
     fi
 
-    info "Done: $("${INSTALL_DIR}/hirsel" --version 2>&1 || echo 'installed')"
+    info "Done: $("${INSTALL_DIR}/${install_name}" --version 2>&1 || echo 'installed')"
 }
 
 main "$@"

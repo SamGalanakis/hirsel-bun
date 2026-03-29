@@ -12,8 +12,7 @@ pub struct AgentConfig {
 }
 
 fn default_agent_command() -> Vec<String> {
-    // Single supported runtime path: embedded lash worker runtime.
-    vec!["hirsel".to_string(), "__worker-runtime".to_string()]
+    vec!["codex".to_string()]
 }
 
 impl Default for AgentConfig {

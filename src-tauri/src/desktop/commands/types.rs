@@ -1,41 +1,11 @@
 //! GUI-specific types for Tauri commands
 //!
-//! Types that are only needed by the GUI frontend, not shared with
-//! the orchestrator or server.
+//! Types that are only needed by the thin desktop shell.
 
 use serde::{Deserialize, Serialize};
 
 use crate::backend::api_types::LlmProviderResponse;
 use crate::backend::config;
-
-// =============================================================================
-// GUI-Specific Types (not needed by orchestrator/server)
-// =============================================================================
-
-/// Unread worker concern notification aggregated across projects/routes
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnreadNotification {
-    pub id: String,
-    pub concern_id: i64,
-    pub project_id: i64,
-    pub project_name: String,
-    pub route_id: i64,
-    pub route_name: String,
-    pub worker_name: String,
-    pub kind: String,
-    pub severity: String,
-    pub summary: String,
-    pub timestamp: String,
-}
-
-/// Response for get_all_unread_notifications
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UnreadNotificationsResponse {
-    pub notifications: Vec<UnreadNotification>,
-    pub total_runs_with_unread: u32,
-}
 
 /// Agent model overrides for update requests
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -144,39 +114,4 @@ pub struct ConfigUpdateRequest {
     pub llm: Option<LlmConfigUpdate>,
     pub backend: Option<BackendConfigUpdate>,
     pub mcp_servers: Option<std::collections::BTreeMap<String, config::McpServerConfig>>,
-}
-
-/// Result of validating a repository path/URL
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoValidation {
-    pub valid: bool,
-    pub error: Option<String>,
-    pub is_remote: bool,
-    pub branches: Vec<String>,
-    pub current_branch: Option<String>,
-    pub repo_url: String,
-    pub url_branch: Option<String>,
-    pub url_branch_valid: bool,
-    pub needs_dir_create: bool,
-    pub needs_git_init: bool,
-}
-
-/// Parsed log line
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ParsedLogLine {
-    pub line_type: String,
-    pub content: String,
-    pub tool_name: Option<String>,
-    pub tool_input: Option<String>,
-}
-
-/// Shepherd chat message
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShepherdChatMessage {
-    pub role: String,
-    pub content: String,
-    pub timestamp: String,
 }

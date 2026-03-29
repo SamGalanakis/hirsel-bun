@@ -12,13 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 fn validate_top_level_keys(table: &toml::Table) -> Result<(), ConfigError> {
     let allowed: BTreeSet<&str> = [
         "root",
-        "run",
         "agent",
-        "eval_timeout",
-        "human_in_the_loop",
-        "context_warning_threshold",
-        "coordinator_port",
-        "scribe_batch_window_seconds",
         "llm",
         "sandbox",
         "backend",
@@ -123,13 +117,6 @@ pub fn load_config_file(
         }
     }
 
-    if let Some(run) = table.get("run").and_then(|value| value.as_str()) {
-        let trimmed = run.trim();
-        if !trimmed.is_empty() {
-            config.run = Some(trimmed.to_string());
-        }
-    }
-
     // Load agent config
     if let Some(agent_data) = table.get("agent") {
         if let Some(agent_table) = agent_data.as_table() {
@@ -157,103 +144,13 @@ pub fn load_config_file(
         }
     }
 
-    // Load eval_timeout
-    if let Some(val) = table.get("eval_timeout") {
-        if let Some(timeout) = val.as_integer() {
-            let timeout = timeout as u32;
-            if timeout < 60 {
-                warnings.push(format!(
-                    "Config warning: eval_timeout={} is below minimum (60s), using 60s",
-                    timeout
-                ));
-                config.eval_timeout = 60;
-            } else if timeout > 7200 {
-                warnings.push(format!(
-                    "Config warning: eval_timeout={} exceeds maximum (7200s), using 7200s",
-                    timeout
-                ));
-                config.eval_timeout = 7200;
-            } else {
-                config.eval_timeout = timeout;
-            }
-        } else {
-            warnings.push(format!(
-                "Config warning: invalid eval_timeout value: {}",
-                val
-            ));
-        }
-    }
-
-    // Load human_in_the_loop
-    if let Some(val) = table.get("human_in_the_loop") {
-        if let Some(b) = val.as_bool() {
-            config.human_in_the_loop = b;
-        } else {
-            warnings.push(format!(
-                "Config warning: human_in_the_loop should be a boolean, got {}",
-                val.type_str()
-            ));
-        }
-    }
-
-    // Load coordinator_port
-    if let Some(val) = table.get("coordinator_port") {
-        if let Some(n) = val.as_integer() {
-            if n > 0 {
-                config.coordinator_port = n as u16;
-            } else {
-                warnings.push(format!(
-                    "Config warning: coordinator_port must be a positive integer, got {}",
-                    n
-                ));
-            }
-        }
-    }
-
-    if let Some(val) = table.get("scribe_batch_window_seconds") {
-        if let Some(n) = val.as_integer() {
-            if n > 0 {
-                config.scribe_batch_window_seconds = n as u32;
-            } else {
-                warnings.push(format!(
-                    "Config warning: scribe_batch_window_seconds must be a positive integer, got {}",
-                    n
-                ));
-            }
-        } else {
-            warnings.push(format!(
-                "Config warning: scribe_batch_window_seconds should be an integer, got {}",
-                val.type_str()
-            ));
-        }
-    }
-
-    // Load context_warning_threshold
-    if let Some(val) = table.get("context_warning_threshold") {
-        if let Some(n) = val.as_float() {
-            if (0.0..=1.0).contains(&n) {
-                config.context_warning_threshold = n;
-            } else {
-                warnings.push(format!(
-                    "Config warning: context_warning_threshold must be between 0.0 and 1.0, got {}",
-                    n
-                ));
-            }
-        } else if let Some(n) = val.as_integer() {
-            let n = n as f64;
-            if (0.0..=1.0).contains(&n) {
-                config.context_warning_threshold = n;
-            }
-        }
-    }
-
     // Load LLM configuration
     load_llm_config(&table, &mut config.llm);
 
     // Load sandbox configuration
     if let Some(sandbox_data) = table.get("sandbox") {
         let toml_str = toml::to_string(sandbox_data).unwrap_or_default();
-        match toml::from_str::<crate::backend::runner::RunnerConfig>(&toml_str) {
+        match toml::from_str::<crate::backend::sandbox::SandboxConfig>(&toml_str) {
             Ok(sandbox) => {
                 config.sandbox = sandbox;
             }

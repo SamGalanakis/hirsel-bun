@@ -110,35 +110,15 @@ impl fmt::Display for ErrorKind {
 
 /// Unified error type for Hirsel operations.
 ///
-/// This enum consolidates error types from across the codebase:
-/// - State errors (database, sqlite)
-/// - Config errors
-/// - Ops errors
-/// - Lifecycle errors
-/// - Runner errors
-/// - Orchestrator errors
-/// - IO errors
-/// - Git errors
-/// - Network errors
+/// This enum consolidates backend errors that remain relevant in the
+/// project/shepherd/thread model.
 #[derive(Debug, Error)]
 pub enum HirselError {
     // =========================================================================
     // NotFound variants
     // =========================================================================
-    #[error("Run '{0}' not found")]
-    RunNotFound(String),
-
-    #[error("Worker '{0}' not found")]
-    WorkerNotFound(String),
-
-    #[error("Task '{0}' not found")]
-    TaskNotFound(String),
-
     #[error("Thread '{0}' not found")]
     ThreadNotFound(String),
-
-    #[error("Eval '{0}' not found")]
-    EvalNotFound(String),
 
     #[error("Config key '{0}' not found")]
     ConfigKeyNotFound(String),
@@ -149,15 +129,6 @@ pub enum HirselError {
     // =========================================================================
     // AlreadyExists variants
     // =========================================================================
-    #[error("Run '{0}' already exists")]
-    RunAlreadyExists(String),
-
-    #[error("Task '{0}' already exists")]
-    TaskAlreadyExists(String),
-
-    #[error("Worker '{0}' already exists")]
-    WorkerAlreadyExists(String),
-
     #[error("{0}")]
     AlreadyExists(String),
 
@@ -166,12 +137,6 @@ pub enum HirselError {
     // =========================================================================
     #[error("Invalid state transition: {from} -> {to}")]
     InvalidTransition { from: String, to: String },
-
-    #[error("Run is not active")]
-    RunNotActive,
-
-    #[error("Worker is not in expected state: {expected}, got {actual}")]
-    WorkerNotInState { expected: String, actual: String },
 
     #[error("{0}")]
     InvalidState(String),
@@ -272,26 +237,18 @@ impl HirselError {
     pub fn kind(&self) -> ErrorKind {
         match self {
             // NotFound
-            HirselError::RunNotFound(_)
-            | HirselError::WorkerNotFound(_)
-            | HirselError::TaskNotFound(_)
-            | HirselError::ThreadNotFound(_)
-            | HirselError::EvalNotFound(_)
+            HirselError::ThreadNotFound(_)
             | HirselError::ConfigKeyNotFound(_)
             | HirselError::NotFound(_)
             | HirselError::FileNotFound(_) => ErrorKind::NotFound,
 
             // AlreadyExists
-            HirselError::RunAlreadyExists(_)
-            | HirselError::TaskAlreadyExists(_)
-            | HirselError::WorkerAlreadyExists(_)
-            | HirselError::AlreadyExists(_) => ErrorKind::AlreadyExists,
+            HirselError::AlreadyExists(_) => ErrorKind::AlreadyExists,
 
             // InvalidState
-            HirselError::InvalidTransition { .. }
-            | HirselError::RunNotActive
-            | HirselError::WorkerNotInState { .. }
-            | HirselError::InvalidState(_) => ErrorKind::InvalidState,
+            HirselError::InvalidTransition { .. } | HirselError::InvalidState(_) => {
+                ErrorKind::InvalidState
+            }
 
             // InvalidInput
             HirselError::InvalidInput(_) | HirselError::MissingField(_) => ErrorKind::InvalidInput,
@@ -342,49 +299,9 @@ impl HirselError {
 // From impls for existing error types
 // =============================================================================
 
-impl From<crate::backend::state::StateError> for HirselError {
-    fn from(err: crate::backend::state::StateError) -> Self {
-        match err {
-            crate::backend::state::StateError::Database(e) => HirselError::Database(e),
-            crate::backend::state::StateError::NotFound(msg) => {
-                // Try to parse the message to determine specific type
-                if msg.contains("Task") {
-                    let task_id = msg
-                        .strip_prefix("Task '")
-                        .and_then(|s| s.strip_suffix("'"))
-                        .unwrap_or(&msg);
-                    HirselError::TaskNotFound(task_id.to_string())
-                } else if msg.contains("Worker") {
-                    let worker_name = msg
-                        .strip_prefix("Worker '")
-                        .and_then(|s| s.strip_suffix("'"))
-                        .unwrap_or(&msg);
-                    HirselError::WorkerNotFound(worker_name.to_string())
-                } else {
-                    HirselError::NotFound(msg)
-                }
-            }
-            crate::backend::state::StateError::InvalidState(msg) => HirselError::InvalidState(msg),
-            crate::backend::state::StateError::AlreadyExists(msg) => {
-                HirselError::AlreadyExists(msg)
-            }
-            crate::backend::state::StateError::Blocked(msg) => HirselError::InvalidState(msg),
-            crate::backend::state::StateError::InvalidTransition(from, to) => {
-                HirselError::InvalidTransition {
-                    from: from.to_string(),
-                    to: to.to_string(),
-                }
-            }
-        }
-    }
-}
-
 impl From<crate::backend::config::ConfigError> for HirselError {
     fn from(err: crate::backend::config::ConfigError) -> Self {
         match err {
-            crate::backend::config::ConfigError::NoRunSelected => {
-                HirselError::InvalidState("No run selected".to_string())
-            }
             crate::backend::config::ConfigError::InvalidToml { path, message } => {
                 HirselError::InvalidInput(format!(
                     "Invalid TOML in {}: {}",
@@ -398,42 +315,10 @@ impl From<crate::backend::config::ConfigError> for HirselError {
             crate::backend::config::ConfigError::ReadError { path, message } => {
                 HirselError::FileNotFound(format!("{}: {}", path.display(), message))
             }
-            crate::backend::config::ConfigError::EmptyRunName => {
-                HirselError::InvalidInput("Run name cannot be empty".to_string())
-            }
-            crate::backend::config::ConfigError::RunNameHasPathSeparators => {
-                HirselError::InvalidInput("Run name cannot contain path separators".to_string())
-            }
             crate::backend::config::ConfigError::ValidationError(msg) => {
                 HirselError::InvalidInput(msg)
             }
-            crate::backend::config::ConfigError::Store(e) => {
-                HirselError::State(format!("Config store error: {}", e))
-            }
         }
-    }
-}
-
-impl From<crate::backend::lifecycle::LifecycleError> for HirselError {
-    fn from(err: crate::backend::lifecycle::LifecycleError) -> Self {
-        match err {
-            crate::backend::lifecycle::LifecycleError::State(msg) => HirselError::State(msg),
-            crate::backend::lifecycle::LifecycleError::InvalidTransition { from, to } => {
-                HirselError::InvalidTransition { from, to }
-            }
-            crate::backend::lifecycle::LifecycleError::Worker(msg) => HirselError::Process(msg),
-            crate::backend::lifecycle::LifecycleError::Io(e) => HirselError::Io(e),
-            crate::backend::lifecycle::LifecycleError::RunNotActive => HirselError::RunNotActive,
-            crate::backend::lifecycle::LifecycleError::Config(msg) => {
-                HirselError::InvalidInput(msg)
-            }
-        }
-    }
-}
-
-impl From<crate::backend::orchestrator::OrchestratorError> for HirselError {
-    fn from(err: crate::backend::orchestrator::OrchestratorError) -> Self {
-        HirselError::Internal(err.to_string())
     }
 }
 
@@ -465,42 +350,12 @@ impl From<crate::backend::storage::StorageError> for HirselError {
     }
 }
 
-impl From<crate::backend::runner::RunnerError> for HirselError {
-    fn from(err: crate::backend::runner::RunnerError) -> Self {
+impl From<crate::backend::sandbox::SandboxError> for HirselError {
+    fn from(err: crate::backend::sandbox::SandboxError) -> Self {
         match err {
-            crate::backend::runner::RunnerError::SpawnFailed(msg) => HirselError::Process(msg),
-            crate::backend::runner::RunnerError::StopFailed(msg) => HirselError::Process(msg),
-            crate::backend::runner::RunnerError::WorkerNotFound(name) => {
-                HirselError::WorkerNotFound(name)
-            }
-            crate::backend::runner::RunnerError::SetupFailed(msg) => HirselError::Process(msg),
-            crate::backend::runner::RunnerError::Io(e) => HirselError::Io(e),
-            crate::backend::runner::RunnerError::Config(msg) => HirselError::InvalidInput(msg),
-            crate::backend::runner::RunnerError::State(msg) => HirselError::State(msg),
-            crate::backend::runner::RunnerError::RunPaused => {
-                HirselError::InvalidState("Run is paused".to_string())
-            }
-            crate::backend::runner::RunnerError::Timeout(msg) => HirselError::Timeout(msg),
-        }
-    }
-}
-
-impl From<crate::backend::state_access::StateAccessError> for HirselError {
-    fn from(err: crate::backend::state_access::StateAccessError) -> Self {
-        match err {
-            crate::backend::state_access::StateAccessError::Database(msg) => {
-                HirselError::State(msg)
-            }
-            crate::backend::state_access::StateAccessError::Http(msg) => HirselError::Http(msg),
-            crate::backend::state_access::StateAccessError::Connection(msg) => {
-                HirselError::Connection(msg)
-            }
-            crate::backend::state_access::StateAccessError::NotFound(msg) => {
-                HirselError::NotFound(msg)
-            }
-            crate::backend::state_access::StateAccessError::InvalidOperation(msg) => {
-                HirselError::InvalidState(msg)
-            }
+            crate::backend::sandbox::SandboxError::Container(msg) => HirselError::Process(msg),
+            crate::backend::sandbox::SandboxError::Io(e) => HirselError::Io(e),
+            crate::backend::sandbox::SandboxError::Config(msg) => HirselError::InvalidInput(msg),
         }
     }
 }
@@ -538,7 +393,7 @@ mod tests {
 
     #[test]
     fn test_hirsel_error_kind() {
-        let err = HirselError::RunNotFound("test".to_string());
+        let err = HirselError::ThreadNotFound("test".to_string());
         assert_eq!(err.kind(), ErrorKind::NotFound);
 
         let err = HirselError::InvalidTransition {

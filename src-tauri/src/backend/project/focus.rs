@@ -149,7 +149,7 @@ pub fn default_project_focus_html(project_name: &str) -> String {
         <h1>Ready when you are.</h1>
         <p class="lede">
           This surface starts intentionally empty. Once it has been edited, it should illustrate
-          what matters now with concise status, route comparisons, diagrams, and decisions.
+          what matters now with concise status, thread comparisons, diagrams, and decisions.
         </p>
         <div class="meta">
           <span class="pill">Primary surface</span>
@@ -162,8 +162,8 @@ pub fn default_project_focus_html(project_name: &str) -> String {
             project has real context worth presenting.
           </p>
           <ul>
-            <li>Prefer current goal, route differences, decisions, and open questions.</li>
-            <li>Skip obvious shell context like the project title or route picker.</li>
+            <li>Prefer current goal, thread comparisons, decisions, and open questions.</li>
+            <li>Skip obvious shell context like the project title or thread count.</li>
             <li>Use Mermaid only when a diagram clarifies something materially.</li>
           </ul>
         </section>

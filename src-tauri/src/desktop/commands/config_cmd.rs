@@ -6,8 +6,27 @@ use super::types::ConfigUpdateRequest;
 use super::ResultExt;
 use crate::backend::api_types::ConfigResponse;
 use crate::backend::config;
-use crate::backend::orchestrator::{LocalOrchestrator, Orchestrator, RemoteOrchestrator};
 use tauri::Manager;
+
+async fn backend_health(url: &str, api_key: Option<&str>) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let mut request = client.get(format!("{}/health", url.trim_end_matches('/')));
+    if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(api_key);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("Backend request failed: {}", e))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Backend health check returned HTTP {}",
+            response.status()
+        ))
+    }
+}
 
 /// Get application configuration stored on this client.
 #[tracing::instrument]
@@ -15,7 +34,11 @@ use tauri::Manager;
 pub async fn get_config() -> Result<ConfigResponse, String> {
     let (config, _) =
         config::Config::load().unwrap_or_else(|_| (config::Config::default(), vec![]));
-    LocalOrchestrator::new(config).get_config().await.str_err()
+    Ok(ConfigResponse {
+        llm: config.llm.into(),
+        backend: config.backend.into(),
+        mcp_servers: config.mcp_servers,
+    })
 }
 
 /// Save application configuration
@@ -50,9 +73,7 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
 #[tracing::instrument(skip(api_key))]
 #[tauri::command]
 pub async fn check_backend_health(url: String, api_key: Option<String>) -> Result<(), String> {
-    let orchestrator = RemoteOrchestrator::new(url, api_key.unwrap_or_default());
-    orchestrator.health().await.str_err()?;
-    Ok(())
+    backend_health(&url, api_key.as_deref()).await
 }
 
 /// Navigate the main desktop window directly to the configured backend UI.
@@ -73,8 +94,7 @@ pub async fn open_backend_window(app: tauri::AppHandle) -> Result<(), String> {
         .filter(|value: &String| !value.trim().is_empty())
         .ok_or_else(|| "Backend API key is not configured".to_string())?;
 
-    let orchestrator = RemoteOrchestrator::new(base_url.clone(), api_key.clone());
-    orchestrator.health().await.str_err()?;
+    backend_health(&base_url, Some(&api_key)).await?;
 
     let mut url = base_url.trim_end_matches('/').to_string();
     url.push_str("/connect/bootstrap");

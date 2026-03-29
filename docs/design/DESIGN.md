@@ -1,5 +1,7 @@
 # Design System Specification: The Alchemical Ledger
 
+> Historical and exploratory note: this document captures a visual direction, not the exact live product model. The current implementation centers `project + shepherd + canvas + threads`, even when some older design metaphors below use legacy orchestration language.
+
 ## 1. Overview & Creative North Star
 
 ### The Creative North Star: "The Architect’s Forensic Record"

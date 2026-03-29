@@ -53,10 +53,10 @@ install_hirsel() {
     step "Installing hirsel worker binary..."
 
     # Check if already installed (e.g., mounted from host in docker)
-    if command -v hirsel &>/dev/null; then
+    if command -v hirsel-worker &>/dev/null; then
         local current_version
-        current_version=$(hirsel --version 2>&1 || echo "unknown")
-        info "Found existing hirsel: ${current_version}, skipping download"
+        current_version=$(hirsel-worker --version 2>&1 || echo "unknown")
+        info "Found existing hirsel-worker: ${current_version}, skipping download"
         return 0
     fi
 
@@ -115,11 +115,11 @@ verify_setup() {
 
     local errors=0
 
-    # Check hirsel
-    if command -v hirsel &>/dev/null; then
-        info "hirsel: $(hirsel --version 2>&1)"
+    # Check hirsel-worker
+    if command -v hirsel-worker &>/dev/null; then
+        info "hirsel-worker: $(hirsel-worker --version 2>&1)"
     else
-        warn "hirsel not in PATH"
+        warn "hirsel-worker not in PATH"
         errors=$((errors + 1))
     fi
 

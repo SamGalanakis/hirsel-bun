@@ -1,7 +1,7 @@
 //! Hirsel - Herd your AI coding agents
 //!
-//! This library provides Hirsel's backend services, worker runtime,
-//! CLI entrypoints, and the thin Tauri desktop host.
+//! This library provides Hirsel's shared backend/runtime code and the
+//! thin Tauri desktop host.
 
 // Allow these clippy warnings crate-wide
 #![allow(clippy::should_implement_trait)] // from_str methods are intentional
@@ -9,40 +9,27 @@
 #![allow(clippy::ptr_arg)] // &PathBuf is fine for owned paths
 
 pub mod backend;
-pub mod cli;
 #[cfg(feature = "gui")]
 pub mod desktop;
 pub mod version;
-pub mod worker;
 
-#[cfg(feature = "gui")]
-use crate::backend::orchestrator::Orchestrator;
 #[cfg(feature = "gui")]
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
 /// Initialize tracing subscriber with profiling support.
 /// When built with `--features profiling` AND HIRSEL_PROFILING=1, outputs Chrome Trace Format
 /// JSON to `~/.hirsel/profiling/trace-{timestamp}.json` for viewing in Perfetto UI.
-fn init_tracing() {
+pub fn init_process_tracing(process_role: &str) {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
+    #[cfg(feature = "profiling")]
+    use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
     use tracing_subscriber::prelude::*;
     use tracing_subscriber::EnvFilter;
 
     static FILE_GUARD: OnceLock<Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>> =
         OnceLock::new();
-
-    fn process_role() -> &'static str {
-        match std::env::args().nth(1).as_deref() {
-            Some("serve") => "server",
-            Some("__daemon") | Some("daemon") => "daemon",
-            Some("__worker-runtime") | Some("worker-runtime") => "worker",
-            Some("worker-mcp") | Some("eval-mcp") => "worker",
-            Some("scribe") => "scribe",
-            _ => "gui",
-        }
-    }
 
     fn cleanup_old_logs(dir: &Path, keep_files: usize) {
         let Ok(read_dir) = fs::read_dir(dir) else {
@@ -74,8 +61,7 @@ fn init_tracing() {
         })
     }
 
-    let role = process_role();
-    let logs_dir = backend::hirsel_dir().join("logs").join(role);
+    let logs_dir = backend::hirsel_dir().join("logs").join(process_role);
     if let Err(error) = fs::create_dir_all(&logs_dir) {
         eprintln!(
             "[hirsel] failed to create log directory {}: {}",
@@ -90,7 +76,7 @@ fn init_tracing() {
         .unwrap_or(14);
     cleanup_old_logs(&logs_dir, keep_files);
 
-    let log_prefix = format!("{}.log", role);
+    let log_prefix = format!("{}.log", process_role);
     let file_appender = tracing_appender::rolling::daily(&logs_dir, log_prefix);
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     *FILE_GUARD.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(guard);
@@ -128,7 +114,7 @@ fn init_tracing() {
                 std::env::var("HIRSEL_TRACE_FILENAME").unwrap_or_else(|_| "trace.json".to_string());
             let trace_file = profiling_dir.join(trace_filename);
             eprintln!("[profiling] Writing trace to {}", trace_file.display());
-            eprintln!("[hirsel] {} logs -> {}", role, logs_dir.display());
+            eprintln!("[hirsel] {} logs -> {}", process_role, logs_dir.display());
 
             let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
                 .file(trace_file)
@@ -147,196 +133,18 @@ fn init_tracing() {
         }
     }
 
-    eprintln!("[hirsel] {} logs -> {}", role, logs_dir.display());
+    eprintln!("[hirsel] {} logs -> {}", process_role, logs_dir.display());
     let _ = tracing_subscriber::registry()
         .with(stdout_layer)
         .with(file_layer)
         .try_init();
 }
 
-// Re-export commonly used types
-pub use backend::state;
-pub use backend::Files;
-pub use cli::{
-    parse_cli, parse_worker_cli, Cli, Commands, TaskSubcommands, WorkerCli, WorkerCommands,
-};
-pub use worker::{WorkerConfig, WorkerError, WorkerRunner};
-
-/// Run the CLI commands (called when invoked with arguments)
-pub fn run_cli() -> i32 {
-    init_tracing();
-
-    use clap::Parser;
-
-    let cli = Cli::parse();
-
-    // Handle --build-info flag
-    if cli.build_info {
-        println!("{}", version::build_info());
-        return 0;
-    }
-
-    let result = match cli.command {
-        None => {
-            // No command - show help
-            use clap::CommandFactory;
-            Cli::command().print_help().ok();
-            println!();
-            Ok(())
-        }
-        Some(cmd) => run_command(cmd),
-    };
-
-    match result {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            1
-        }
-    }
-}
-
-/// Execute a CLI command
-fn run_command(cmd: Commands) -> Result<(), Box<dyn std::error::Error>> {
-    match cmd {
-        Commands::WorkerRuntime(args) => {
-            // Internal command for worker subprocess
-            use std::path::PathBuf;
-
-            // Set env vars for child processes (MCP server, agent)
-            // These are passed as CLI args to avoid duplication, but child processes need env vars
-            std::env::set_var("HIRSEL_RUNTIME", &args.runtime);
-            std::env::set_var("HIRSEL_WORKER", &args.worker);
-            std::env::set_var("HIRSEL_RUNTIME_DIR", &args.runtime_dir);
-
-            let agent_command: Vec<String> = serde_json::from_str(&args.agent_command)
-                .map_err(|e| format!("Invalid agent_command JSON: {}", e))?;
-            let teammates = args.teammates.map(|t| {
-                t.split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            });
-
-            let config = worker::WorkerRunConfig {
-                runtime_name: args.runtime,
-                worker_name: args.worker,
-                work_dir: PathBuf::from(args.work_dir),
-                runtime_dir: PathBuf::from(args.runtime_dir),
-                agent_command,
-                is_leader: args.is_leader,
-                leader_name: args.leader_name,
-                teammates,
-                resume_session_id: args.resume_session_id,
-                assigned_task_id: args.assigned_task_id,
-                is_plan_task: args.plan_task,
-            };
-
-            // Run the async worker in a tokio runtime with signal handling
-            let worker_name = config.worker_name.clone();
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async {
-                tokio::task::LocalSet::new()
-                    .run_until(async {
-                        #[cfg(unix)]
-                        {
-                            use tokio::signal::unix::{signal, SignalKind};
-                            let mut sigterm = signal(SignalKind::terminate())
-                                .expect("Failed to register SIGTERM handler");
-
-                            tokio::select! {
-                                result = worker::run_worker(config) => {
-                                    // Normal completion - cleanup already happens in run_worker
-                                    result
-                                }
-                                _ = sigterm.recv() => {
-                                    // Received SIGTERM from GUI - ensure cleanup
-                                    tracing::info!("[{}] Received SIGTERM, cleaning up process group", worker_name);
-                                    backend::process::cleanup_process_group(&worker_name);
-                                    Ok(())
-                                }
-                            }
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            worker::run_worker(config).await
-                        }
-                    })
-                    .await
-            })
-            .map_err(|e| format!("Worker error: {}", e))?;
-        }
-        Commands::EvalMcp => {
-            // Internal command for eval MCP server
-            worker::run_eval_mcp_server();
-        }
-        Commands::WorkerMcp => {
-            // Internal command for worker MCP server
-            worker::run_mcp_server().map_err(|e| format!("Worker MCP error: {}", e))?;
-        }
-        Commands::EvalRuntime(args) => {
-            // Internal command to run eval agent
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async {
-                tokio::task::LocalSet::new()
-                    .run_until(async {
-                        backend::eval::run_eval_from_args(
-                            &args.runtime,
-                            &args.runtime_dir,
-                            &args.agent_command,
-                        )
-                        .await
-                    })
-                    .await
-            })
-            .map_err(|e| format!("Eval error: {}", e))?;
-        }
-        Commands::Scribe(args) => {
-            // Internal command to run scribe processing
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async {
-                tokio::task::LocalSet::new()
-                    .run_until(async { cli::scribe::execute(&args.runtime_name).await })
-                    .await
-            })
-            .map_err(|e| format!("Scribe error: {}", e))?;
-        }
-        #[cfg(feature = "server")]
-        Commands::Serve(args) => {
-            // Server mode - run the backend HTTP server
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async { backend::server::start_server(args.port).await })
-                .map_err(|e| format!("Server error: {}", e))?;
-        }
-        #[cfg(feature = "server")]
-        Commands::Daemon(args) => {
-            // Internal daemon command - runs the daemon server
-            use backend::daemon::{start_daemon, DaemonConfig};
-
-            let config = DaemonConfig {
-                idle_timeout_secs: args.idle_timeout,
-                tcp_port: args.tcp_port,
-            };
-
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| format!("Failed to create runtime: {}", e))?;
-            rt.block_on(async { start_daemon(config).await })
-                .map_err(|e| format!("Daemon error: {}", e))?;
-        }
-    }
-
-    Ok(())
-}
-
 /// Run the GUI (Tauri application)
 #[cfg(feature = "gui")]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    init_tracing();
+pub fn run_desktop() {
+    init_process_tracing("desktop");
 
     let builder =
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -353,29 +161,16 @@ pub fn run() {
     builder
         .invoke_handler(desktop::get_handlers())
         .setup(|app| {
-            // In dev mode, clean up orphaned processes from previous hot-reload sessions
             #[cfg(debug_assertions)]
             {
                 cleanup_orphaned_dev_processes();
-            }
-
-            // Reconcile stale workers on startup (both dev and release)
-            // Workers that appear "Working" but have dead PIDs are marked as Paused
-            // Create a runtime since we're in a sync context (tauri setup, no runtime yet)
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            let stale = rt.block_on(backend::workers::reconcile_stale_workers());
-            if !stale.is_empty() {
-                tracing::info!(
-                    "[GUI] Startup reconciliation: marked {} stale worker(s) as Paused",
-                    stale.len()
-                );
             }
 
             create_main_window(app.handle())?;
             Ok(())
         })
         .on_window_event(move |window, event| {
-            // Workers continue running when the UI closes - they are daemon-managed.
+            // Scope sessions are backend-owned and may outlive the desktop window.
             if let tauri::WindowEvent::Destroyed = event {
                 if window.label() == "main" {
                     tracing::info!("[GUI] Main window closed");
@@ -406,9 +201,16 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
             let rt = tokio::runtime::Runtime::new()
                 .expect("Failed to create tokio runtime for backend bootstrap");
             let should_open = rt.block_on(async {
-                let orchestrator =
-                    backend::orchestrator::RemoteOrchestrator::new(url.clone(), api_key.clone());
-                orchestrator.health().await.is_ok()
+                let client = reqwest::Client::new();
+                match client
+                    .get(format!("{}/health", url.trim_end_matches('/')))
+                    .bearer_auth(&api_key)
+                    .send()
+                    .await
+                {
+                    Ok(response) => response.status().is_success(),
+                    Err(_) => false,
+                }
             });
 
             if should_open {
@@ -432,37 +234,13 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
 
 /// Clean up GUI-specific processes on exit.
 ///
-/// Workers are not killed when the UI closes - they continue running and are
-/// managed by the daemon.
 #[cfg(feature = "gui")]
 fn cleanup_all_processes() {
     tracing::info!("[GUI] Main window closing, cleaning up GUI processes");
-    tracing::info!("[GUI] Cleanup complete (workers continue running)");
+    tracing::info!("[GUI] Cleanup complete");
 }
 
-/// Clean up leftover worker helper processes from previous dev sessions.
-/// This is only compiled in debug builds to handle hot-reload orphans.
 #[cfg(all(feature = "gui", debug_assertions))]
 fn cleanup_orphaned_dev_processes() {
-    use std::process::Command;
-
-    tracing::info!("[DEV] Cleaning up orphaned worker helper processes from previous sessions");
-
-    // Kill old hidden helper commands from previous hot-reload sessions.
-    match Command::new("pkill")
-        .args(["-f", "__worker-runtime"])
-        .output()
-    {
-        Ok(output) => {
-            if output.status.success() {
-                tracing::info!("[DEV] Killed orphaned worker helper processes");
-            } else {
-                // Exit code 1 means no processes matched - that's fine
-                tracing::debug!("[DEV] No orphaned worker helper processes found");
-            }
-        }
-        Err(e) => {
-            tracing::warn!("[DEV] Failed to run pkill: {}", e);
-        }
-    }
+    tracing::debug!("[DEV] No legacy helper cleanup needed");
 }
