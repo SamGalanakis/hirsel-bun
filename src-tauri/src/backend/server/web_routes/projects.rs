@@ -358,7 +358,7 @@ pub async fn project_preparation_stream(Path(project_id): Path<i64>) -> impl Int
                 }
             }
 
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_millis(250)).await;
         }
     };
 

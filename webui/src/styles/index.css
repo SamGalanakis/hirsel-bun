@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════
+   Hirsel Themes — HSL CSS Variables
+   ═══════════════════════════════════════ */
+
+/* ── Hirsel Light (default) ── */
+:root,
+[data-theme="hirsel"] {
+  --background: 42 20% 95%;
+  --foreground: 30 8% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 30 8% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 30 8% 10%;
+  --primary: 30 8% 10%;
+  --primary-foreground: 42 20% 95%;
+  --secondary: 40 10% 90%;
+  --secondary-foreground: 30 8% 18%;
+  --muted: 40 8% 92%;
+  --muted-foreground: 30 5% 45%;
+  --accent: 40 10% 90%;
+  --accent-foreground: 30 8% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 35 10% 85%;
+  --input: 35 10% 85%;
+  --ring: 36 80% 50%;
+  --ink-2: 30 5% 30%;
+  --signal-red: 0 84% 60%;
+  --signal-blue: 217 91% 60%;
+  --signal-amber: 36 90% 50%;
+  --signal-green: 142 72% 29%;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+/* ── Hirsel Dark ── */
+[data-theme="hirsel-dark"] {
+  --background: 40 8% 6%;
+  --foreground: 40 10% 88%;
+  --card: 40 6% 9%;
+  --card-foreground: 40 10% 88%;
+  --popover: 40 6% 9%;
+  --popover-foreground: 40 10% 88%;
+  --primary: 40 10% 88%;
+  --primary-foreground: 40 8% 6%;
+  --secondary: 40 5% 14%;
+  --secondary-foreground: 40 8% 72%;
+  --muted: 40 4% 14%;
+  --muted-foreground: 40 5% 50%;
+  --accent: 40 5% 14%;
+  --accent-foreground: 40 10% 88%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 40 5% 16%;
+  --input: 40 5% 16%;
+  --ring: 36 80% 50%;
+  --ink-2: 40 6% 62%;
+  --signal-red: 0 72% 51%;
+  --signal-blue: 217 80% 60%;
+  --signal-amber: 36 85% 55%;
+  --signal-green: 142 55% 42%;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 8px 28px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Midnight (deep indigo) ── */
+[data-theme="midnight"] {
+  --background: 230 25% 7%;
+  --foreground: 210 15% 88%;
+  --card: 230 20% 10%;
+  --card-foreground: 210 15% 88%;
+  --popover: 230 20% 10%;
+  --popover-foreground: 210 15% 88%;
+  --primary: 185 80% 55%;
+  --primary-foreground: 230 25% 7%;
+  --secondary: 230 15% 15%;
+  --secondary-foreground: 210 10% 70%;
+  --muted: 230 12% 14%;
+  --muted-foreground: 220 8% 48%;
+  --accent: 230 15% 15%;
+  --accent-foreground: 210 15% 88%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 230 12% 18%;
+  --input: 230 12% 18%;
+  --ring: 185 80% 55%;
+  --ink-2: 220 10% 60%;
+  --signal-red: 0 72% 55%;
+  --signal-blue: 217 80% 60%;
+  --signal-amber: 36 85% 55%;
+  --signal-green: 160 60% 45%;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lift: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+/* ── Bone (cream + ink) ── */
+[data-theme="bone"] {
+  --background: 38 40% 95%;
+  --foreground: 20 8% 10%;
+  --card: 38 30% 98%;
+  --card-foreground: 20 8% 10%;
+  --popover: 38 30% 98%;
+  --popover-foreground: 20 8% 10%;
+  --primary: 20 8% 10%;
+  --primary-foreground: 38 40% 95%;
+  --secondary: 35 18% 88%;
+  --secondary-foreground: 20 8% 22%;
+  --muted: 35 15% 90%;
+  --muted-foreground: 20 5% 45%;
+  --accent: 35 18% 88%;
+  --accent-foreground: 20 8% 10%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 35 15% 82%;
+  --input: 35 15% 82%;
+  --ring: 20 60% 40%;
+  --ink-2: 20 5% 30%;
+  --signal-red: 0 70% 50%;
+  --signal-blue: 217 80% 55%;
+  --signal-amber: 30 80% 45%;
+  --signal-green: 142 60% 30%;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.07);
+  --shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* ═══════════════════════════════════════
+   Base Reset
+   ═══════════════════════════════════════ */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-body text-sm antialiased;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--muted-foreground) / 0.3); }
+::selection { background: hsl(var(--signal-amber) / 0.3); }
+
+/* ═══════════════════════════════════════
+   Utility Classes
+   ═══════════════════════════════════════ */
+
+.chassis-label {
+  @apply font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground;
+}
+
+/* Markdown body inside chat messages */
+.markdown-body p { margin: 0 0 0.5em; }
+.markdown-body p:last-child { margin-bottom: 0; }
+.markdown-body ul, .markdown-body ol { margin: 0.3em 0; padding-left: 1.4em; }
+.markdown-body li { margin: 0.15em 0; }
+.markdown-body code {
+  @apply font-mono text-[0.9em] px-1 py-px bg-muted;
+}
+.markdown-body pre {
+  @apply my-1 p-2 bg-muted overflow-x-auto;
+}
+.markdown-body pre code {
+  padding: 0;
+  background: none;
+}
+.markdown-body strong { @apply text-foreground; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+  @apply mt-3 mb-1 text-foreground font-semibold;
+}
+.markdown-body h1 { font-size: 1.15em; }
+.markdown-body h2 { font-size: 1.08em; }
+.markdown-body h3 { font-size: 1em; }
+.markdown-body blockquote {
+  @apply my-1 pl-3 border-l-2 border-border text-muted-foreground;
+}
+.markdown-body table {
+  @apply border-collapse my-1 text-[0.92em];
+}
+.markdown-body th, .markdown-body td {
+  @apply px-2 py-1 border border-border;
+}
+.markdown-body th { @apply font-semibold text-foreground; }

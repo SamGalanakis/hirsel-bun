@@ -241,7 +241,7 @@ async fn prepare_scope_runtime(
         );
     }
     let sandbox = load_sandbox_config(scope).await?;
-    ensure_sandbox_image_available(&sandbox.image)?;
+    ensure_sandbox_image_available(&sandbox.image).await?;
     Ok((work_dir, allow_bootstrap, sandbox))
 }
 

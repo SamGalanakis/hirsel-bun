@@ -294,15 +294,45 @@ fn preparation_status_label(status: &str) -> &'static str {
 pub fn render_project_preparation_panel(
     project: &Project,
     preparation: &ProjectRuntimePreparation,
-    _effective_sandbox_image: &str,
+    effective_sandbox_image: &str,
 ) -> Markup {
     let progress_percent = (preparation.progress * 100.0).round().clamp(0.0, 100.0) as i32;
     let ready = preparation.status == "done";
     let failed = preparation.status == "failed";
+    let active_step = preparation
+        .steps
+        .iter()
+        .find(|step| step.status == "working")
+        .or_else(|| {
+            preparation
+                .steps
+                .iter()
+                .find(|step| step.status == "failed")
+        });
 
     html! {
         article class="project-prep-card" {
+            div class="project-prep-topline" {
+                p class="eyebrow" { "Runtime preparation" }
+                span class=(format!("pill {}", preparation_status_class(&preparation.status))) {
+                    (preparation_status_label(&preparation.status))
+                }
+            }
             h1 class="project-prep-title" { "Setting up " (&project.name) }
+            p class="project-prep-copy" {
+                (&preparation.headline)
+            }
+            @if let Some(detail) = preparation.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+                p class="project-prep-copy project-prep-copy-muted" { (detail) }
+            }
+            @if let Some(step) = active_step {
+                @if let Some(detail) = step.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+                    div class="project-prep-live-note" {
+                        span class="pill muted" { "Now" }
+                        p { (detail) }
+                    }
+                }
+            }
             div class="project-prep-progress-block" {
                 div class="project-prep-progress-track" {
                     div class="project-prep-progress-fill" style=(format!("width: {}%;", progress_percent)) {}
@@ -330,8 +360,26 @@ pub fn render_project_preparation_panel(
                                 (preparation_status_label(&step.status))
                             }
                         }
+                        @if let Some(detail) = step.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+                            p class="project-prep-step-copy" { (detail) }
+                        }
+                        @if let Some(step_progress) = step.progress {
+                            @if step.status != "pending" {
+                                div class="project-prep-step-progress" {
+                                    div class="project-prep-step-progress-track" {
+                                        div class="project-prep-step-progress-fill" style=(format!("width: {}%;", (step_progress * 100.0).round().clamp(0.0, 100.0) as i32)) {}
+                                    }
+                                    span class="project-prep-step-progress-text" { (format!("{}%", (step_progress * 100.0).round().clamp(0.0, 100.0) as i32)) }
+                                }
+                            }
+                        }
                     }
                 }
+            }
+
+            div class="project-prep-runtime-meta" {
+                span class="pill muted" { "worker image" }
+                code { (effective_sandbox_image) }
             }
 
             @if failed {

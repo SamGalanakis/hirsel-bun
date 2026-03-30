@@ -19,8 +19,8 @@
 
   /* Text (CHALK) */
   --text:            #e8e4d0;
-  --text-2:          #c8c4b8;
-  --text-muted:      #7a7a70;
+  --text-2:          #d4d0c4;
+  --text-muted:      #8a8a80;
   --text-dim:        #4a4a44;
   --text-faint:      #5a5a50;
 
@@ -41,7 +41,7 @@
   /* Type */
   --font-display:  "Azeret Mono", monospace;
   --font-ui:       "Chivo Mono", monospace;
-  --font-body:     "Chivo Mono", monospace;
+  --font-body:     "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
   --font-mono:     "Chivo Mono", monospace;
 
 }
@@ -718,10 +718,12 @@ h3 {
 .message-body {
   margin: 0;
   font-family: var(--font-body);
-  font-size: 13px;
-  line-height: 1.65;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.7;
   word-break: break-word;
   color: var(--text-2);
+  max-width: 72ch;
 }
 .markdown-body p { margin: 0 0 0.5em; }
 .markdown-body p:last-child { margin-bottom: 0; }
@@ -745,11 +747,11 @@ h3 {
   padding: 0;
   background: none;
 }
-.markdown-body strong { color: var(--text-1); }
+.markdown-body strong { color: var(--text); }
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
 .markdown-body h4, .markdown-body h5, .markdown-body h6 {
   margin: 0.6em 0 0.3em;
-  color: var(--text-1);
+  color: var(--text);
   font-weight: 600;
 }
 .markdown-body h1 { font-size: 1.15em; }
@@ -770,7 +772,7 @@ h3 {
   padding: 3px 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
-.markdown-body th { font-weight: 600; color: var(--text-1); }
+.markdown-body th { font-weight: 600; color: var(--text); }
 
 .message-tool {
   display: grid;
@@ -1094,6 +1096,21 @@ h3 {
   max-width: 56ch;
   font-size: 15px;
 }
+.project-prep-copy-muted {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+.project-prep-live-note {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid rgba(232,163,60,0.16);
+  background: linear-gradient(180deg, rgba(232,163,60,0.07), rgba(255,255,255,0.015));
+}
+.project-prep-live-note p {
+  margin: 0;
+  color: var(--text-2);
+}
 .project-prep-progress-block {
   display: grid;
   gap: var(--sp-2);
@@ -1142,6 +1159,41 @@ h3 {
 .project-prep-step-copy {
   margin-top: var(--sp-2);
   padding-left: 22px;
+  color: var(--text-dim);
+}
+.project-prep-step-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  padding-left: 22px;
+}
+.project-prep-step-progress-track {
+  height: 6px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  overflow: hidden;
+}
+.project-prep-step-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(232,163,60,0.32), rgba(232,228,208,0.88));
+  transition: width 220ms ease;
+}
+.project-prep-step-progress-text {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.project-prep-runtime-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.project-prep-runtime-meta code {
+  overflow-wrap: anywhere;
 }
 .project-prep-actions {
   display: flex;

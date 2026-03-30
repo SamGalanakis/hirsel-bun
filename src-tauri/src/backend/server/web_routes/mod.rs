@@ -1,3 +1,4 @@
+mod api;
 mod connect;
 mod projects;
 mod settings;
@@ -6,13 +7,39 @@ mod threads;
 
 use std::sync::Arc;
 
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 
 use super::AppState;
 
 pub fn build_web_routes() -> Router<Arc<AppState>> {
     Router::new()
+        // JSON API routes (consumed by SolidJS frontend)
+        .route("/api/projects", get(api::list_projects))
+        .route(
+            "/api/projects/{project_id}/page",
+            get(api::get_project_page),
+        )
+        .route(
+            "/api/projects/{project_id}/threads/{thread_id}/page",
+            get(api::get_thread_page),
+        )
+        .route(
+            "/api/projects/{project_id}/chat/send",
+            post(api::send_chat_message),
+        )
+        .route("/api/projects/{project_id}/chat/stop", post(api::stop_chat))
+        .route(
+            "/api/projects/{project_id}/threads/{thread_id}/chat/send",
+            post(api::send_thread_message),
+        )
+        .route(
+            "/api/projects/{project_id}/threads/{thread_id}/chat/stop",
+            post(api::stop_thread_chat),
+        )
+        .route("/api/connect", post(api::connect))
+        .route("/api/projects/{project_id}", delete(api::delete_project))
+        // Legacy HTML routes (kept until SPA fully replaces them)
         .route("/health", get(connect::health))
         .route("/", get(connect::app_root))
         .route("/connect", get(connect::connect_page))

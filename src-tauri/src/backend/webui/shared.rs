@@ -26,7 +26,7 @@ pub(crate) fn app_document(title: &str, description: &str, body: Markup) -> Mark
                 meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src https://fonts.gstatic.com; frame-src 'self'; connect-src 'self';";
                 link rel="preconnect" href="https://fonts.googleapis.com";
                 link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
-                link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&display=swap";
+                link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap";
                 link rel="stylesheet" href="/static/webui.css";
                 script type="module" src=(DATASTAR_BUNDLE) {}
             }

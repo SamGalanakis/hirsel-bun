@@ -5,7 +5,7 @@ use super::types::{ProjectPreparationStep, ProjectRuntimePreparation};
 use super::ProjectStore;
 use crate::backend::config::Config;
 use crate::backend::db::utc_now;
-use crate::backend::sandbox::ensure_sandbox_image_available;
+use crate::backend::sandbox::ensure_sandbox_image_available_with_progress;
 use crate::backend::shepherd_runtime::{
     launch_project_survey_thread, prepare_project_scope_session,
 };
@@ -43,8 +43,7 @@ fn compute_progress(steps: &[ProjectPreparationStep]) -> f64 {
         .iter()
         .map(|step| match step.status.as_str() {
             "done" => 1.0,
-            "working" => 0.55,
-            "failed" => 0.55,
+            "working" | "failed" => step.progress.unwrap_or(0.12).clamp(0.0, 1.0),
             _ => 0.0,
         })
         .sum::<f64>();
@@ -75,12 +74,14 @@ fn build_state(project_id: i64, image: &str) -> ProjectRuntimePreparation {
             label: "Resolve worker image".to_string(),
             status: "working".to_string(),
             detail: Some(format!("Preparing container substrate `{}`.", image)),
+            progress: Some(0.06),
         },
         ProjectPreparationStep {
             id: STEP_WORKSPACE.to_string(),
             label: "Materialize central checkout".to_string(),
             status: "pending".to_string(),
             detail: Some("Cloning the repository into the shared project workspace.".to_string()),
+            progress: Some(0.0),
         },
         ProjectPreparationStep {
             id: STEP_SHEPHERD.to_string(),
@@ -89,6 +90,7 @@ fn build_state(project_id: i64, image: &str) -> ProjectRuntimePreparation {
             detail: Some(
                 "Warming the project-scoped worker so chat is ready on arrival.".to_string(),
             ),
+            progress: Some(0.0),
         },
     ];
 
@@ -112,10 +114,16 @@ fn advance_step(
     id: &str,
     status: &str,
     detail: impl Into<Option<String>>,
+    progress: Option<f64>,
 ) {
     if let Some(step) = step_mut(state, id) {
         step.status = status.to_string();
         step.detail = detail.into();
+        step.progress = match status {
+            "done" => Some(1.0),
+            "pending" => Some(0.0),
+            _ => progress.or(step.progress),
+        };
     }
     state.progress = compute_progress(&state.steps);
     state.updated_at = utc_now();
@@ -160,18 +168,31 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
     save_state(&state).await?;
 
     let result = async {
-        ensure_sandbox_image_available(&image)?;
+        ensure_sandbox_image_available_with_progress(&image, |update| {
+            advance_step(
+                &mut state,
+                STEP_IMAGE,
+                "working",
+                Some(update.detail),
+                Some(update.progress),
+            );
+            let snapshot = state.clone();
+            async move { save_state(&snapshot).await.map(|_| ()) }
+        })
+        .await?;
         advance_step(
             &mut state,
             STEP_IMAGE,
             "done",
             Some(format!("Worker substrate `{}` is ready.", image)),
+            Some(1.0),
         );
         advance_step(
             &mut state,
             STEP_WORKSPACE,
             "working",
             Some("Opening the project central checkout.".to_string()),
+            Some(0.18),
         );
         save_state(&state).await?;
 
@@ -184,6 +205,7 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
                 "Central checkout ready at `{}`.",
                 workspace.central_dir.display()
             )),
+            Some(1.0),
         );
         let has_flake = workspace.central_dir.join("flake.nix").is_file();
         advance_step(
@@ -195,6 +217,7 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
             } else {
                 "No project flake yet. Starting shepherd with the bootstrap environment so it can author one.".to_string()
             }),
+            Some(0.18),
         );
         save_state(&state).await?;
 
@@ -204,6 +227,7 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
             STEP_SHEPHERD,
             "done",
             Some("Shepherd is warm and waiting in the project container.".to_string()),
+            Some(1.0),
         );
         state.status = "done".to_string();
         state.headline = "Runtime ready".to_string();
@@ -223,12 +247,24 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
 
     if let Err(error) = result {
         if step_mut(&mut state, STEP_SHEPHERD).is_some_and(|step| step.status == "working") {
-            advance_step(&mut state, STEP_SHEPHERD, "failed", Some(error.clone()));
+            advance_step(
+                &mut state,
+                STEP_SHEPHERD,
+                "failed",
+                Some(error.clone()),
+                None,
+            );
         } else if step_mut(&mut state, STEP_WORKSPACE).is_some_and(|step| step.status == "working")
         {
-            advance_step(&mut state, STEP_WORKSPACE, "failed", Some(error.clone()));
+            advance_step(
+                &mut state,
+                STEP_WORKSPACE,
+                "failed",
+                Some(error.clone()),
+                None,
+            );
         } else {
-            advance_step(&mut state, STEP_IMAGE, "failed", Some(error.clone()));
+            advance_step(&mut state, STEP_IMAGE, "failed", Some(error.clone()), None);
         }
         state.status = "failed".to_string();
         state.headline = "Runtime preparation failed".to_string();

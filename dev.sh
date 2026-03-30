@@ -187,7 +187,6 @@ stop_existing_local_runtime() {
 
         sqlite3 "$HIRSEL_ROOT/hirsel.db" <<'SQL' >/dev/null 2>&1 || true
 DELETE FROM shepherd_sessions;
-DELETE FROM project_runtime_preparations;
 SQL
     fi
 

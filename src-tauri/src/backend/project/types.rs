@@ -64,6 +64,8 @@ pub struct ProjectPreparationStep {
     pub status: String,
     #[serde(default)]
     pub detail: Option<String>,
+    #[serde(default)]
+    pub progress: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

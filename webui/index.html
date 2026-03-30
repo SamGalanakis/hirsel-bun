@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Hirsel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Outfit:wght@300..700&family=Chivo+Mono:wght@300..700&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Theme flash prevention — apply stored theme before first paint
+      (function () {
+        var stored = localStorage.getItem("hirsel-theme");
+        var modes = {
+          hirsel: "light",
+          "hirsel-dark": "dark",
+          midnight: "dark",
+          bone: "light",
+        };
+        var theme =
+          stored && stored in modes
+            ? stored
+            : window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "hirsel-dark"
+              : "hirsel";
+        var mode = modes[theme];
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.kbTheme = mode;
+        document.documentElement.style.colorScheme = mode;
+        if (mode === "dark") document.documentElement.classList.add("dark");
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
