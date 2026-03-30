@@ -32,8 +32,6 @@ export interface Project {
   id: number;
   name: string;
   description: string | null;
-  repo_url: string;
-  branch: string;
   sandbox_image: string | null;
   created_at: string;
 }

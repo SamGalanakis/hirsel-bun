@@ -25,8 +25,6 @@ struct ApiProject {
     id: i64,
     name: String,
     description: Option<String>,
-    repo_url: String,
-    branch: String,
     sandbox_image: Option<String>,
     created_at: String,
 }
@@ -107,8 +105,6 @@ fn to_api_project(p: &crate::backend::project::Project) -> ApiProject {
         id: p.id,
         name: p.name.clone(),
         description: p.description.clone(),
-        repo_url: p.repo_url.clone(),
-        branch: p.branch.clone(),
         sandbox_image: p.sandbox_image.clone(),
         created_at: p.created_at.clone(),
     }
