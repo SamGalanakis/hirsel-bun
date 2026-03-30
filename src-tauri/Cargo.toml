@@ -43,7 +43,7 @@ tauri-plugin-single-instance = { version = "2", optional = true }
 
 # === Server dependencies (feature-gated) ===
 axum = { version = "0.8", features = ["multipart"], optional = true }
-tower-http = { version = "0.6", features = ["cors"], optional = true }
+tower-http = { version = "0.6", features = ["cors", "fs"], optional = true }
 
 # === Core dependencies (always included) ===
 serde = { version = "1", features = ["derive"] }
@@ -68,10 +68,6 @@ async-trait = "0.1"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.9.2"
 reqwest = { version = "0.13", features = ["json", "stream"] }
-maud = { version = "0.27", features = ["axum"] }
-pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
-datastar = { version = "0.3.1", features = ["axum", "tracing"] }
-urlencoding = "2"
 walkdir = "2"
 aes-gcm = "0.10"
 hex = "0.4"

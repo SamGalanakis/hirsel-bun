@@ -6,10 +6,19 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::backend::config::LlmProvider;
+use crate::backend::credentials::CredentialStore;
 use crate::backend::{app, shepherd_runtime, ProjectStore, ShepherdThreadStore};
 
 use super::super::AppState;
-use super::support::{load_project_page_state, load_thread_page_state};
+use super::support::{
+    clear_cookie_header, cookie_headers, load_project_page_state, load_thread_page_state,
+    normalize_project_sandbox_image, persist_project_and_start_runtime_preparation,
+};
+
+pub async fn health() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
 
 #[derive(Serialize)]
 struct ApiProject {
@@ -317,4 +326,183 @@ pub async fn delete_project(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+// ── Settings & project creation API handlers ──
+
+#[derive(Serialize)]
+struct ApiSettingsResponse {
+    provider: String,
+    openrouter_key_masked: Option<String>,
+    openrouter_base_url: Option<String>,
+    codex_connected: bool,
+    tavily_key_masked: Option<String>,
+}
+
+pub async fn get_settings(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let config = state.config.read().await.clone();
+    let store = CredentialStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let openrouter_key_masked = store
+        .load("openrouter_api_key")
+        .await
+        .ok()
+        .map(|value| crate::backend::api_types::mask_credential(&value));
+    let tavily_key_masked = store
+        .load("tavily_api_key")
+        .await
+        .ok()
+        .map(|value| crate::backend::api_types::mask_credential(&value));
+    let codex_connected = store.load_codex_oauth().await.ok().flatten().is_some();
+
+    let provider = match config.llm.provider {
+        LlmProvider::Codex => "codex",
+        LlmProvider::Openrouter => "openrouter",
+    };
+
+    Ok(Json(ApiSettingsResponse {
+        provider: provider.to_string(),
+        openrouter_key_masked,
+        openrouter_base_url: config.llm.openrouter_base_url,
+        codex_connected,
+        tavily_key_masked,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct SaveLlmProviderBody {
+    provider: String,
+}
+
+pub async fn save_llm_provider(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SaveLlmProviderBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let provider = match body.provider.as_str() {
+        "openrouter" => LlmProvider::Openrouter,
+        _ => LlmProvider::Codex,
+    };
+
+    {
+        let mut config = state.config.write().await;
+        config.llm.provider = provider;
+        config
+            .save()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct SaveOpenrouterKeyBody {
+    api_key: String,
+    base_url: Option<String>,
+}
+
+pub async fn save_openrouter_key(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SaveOpenrouterKeyBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    {
+        let mut config = state.config.write().await;
+        config.llm.provider = LlmProvider::Openrouter;
+        config.llm.openrouter_base_url = body.base_url.filter(|v| !v.trim().is_empty());
+        config
+            .save()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    let store = CredentialStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !body.api_key.trim().is_empty() {
+        store
+            .store_openrouter_api_key(body.api_key.trim())
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct SaveTavilyKeyBody {
+    api_key: String,
+}
+
+pub async fn save_tavily_key(
+    Json(body): Json<SaveTavilyKeyBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let store = CredentialStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !body.api_key.trim().is_empty() {
+        store
+            .store("tavily_api_key", body.api_key.trim())
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct CreateProjectBody {
+    name: String,
+    repo_url: String,
+    branch: Option<String>,
+    sandbox_image: Option<String>,
+}
+
+pub async fn create_project_api(
+    Json(body): Json<CreateProjectBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let sandbox_image = normalize_project_sandbox_image(body.sandbox_image.as_deref())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    let project = persist_project_and_start_runtime_preparation(
+        body.name,
+        body.repo_url,
+        body.branch,
+        sandbox_image,
+    )
+    .await?;
+
+    Ok(Json(to_api_project(&project)))
+}
+
+#[derive(Deserialize)]
+pub struct SaveProjectSettingsBody {
+    name: String,
+    description: Option<String>,
+    sandbox_image: Option<String>,
+}
+
+pub async fn save_project_settings(
+    Path(project_id): Path<i64>,
+    Json(body): Json<SaveProjectSettingsBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let sandbox_image = normalize_project_sandbox_image(body.sandbox_image.as_deref())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    let project =
+        app::update_project_settings(project_id, body.name, body.description, sandbox_image)
+            .await
+            .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+
+    Ok(Json(to_api_project(&project)))
+}
+
+pub async fn logout() -> Result<impl IntoResponse, (StatusCode, String)> {
+    let cookie = clear_cookie_header();
+    let mut response = Json(serde_json::json!({ "ok": true })).into_response();
+    response
+        .headers_mut()
+        .insert(axum::http::header::SET_COOKIE, cookie);
+    Ok(response)
 }

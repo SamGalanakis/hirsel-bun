@@ -1,6 +1,9 @@
 import { type Component, createEffect, createSignal, on, onCleanup, Show } from "solid-js";
 import ConnectPage from "@/pages/ConnectPage";
 import ProjectPage from "@/pages/ProjectPage";
+import ThreadDetailPage from "@/pages/ThreadDetailPage";
+import SettingsPage from "@/pages/SettingsPage";
+import NewProjectPage from "@/pages/NewProjectPage";
 import { listProjects } from "@/lib/api";
 
 type Route =
@@ -72,28 +75,18 @@ const App: Component = () => {
       </Show>
 
       <Show when={route().page === "thread"}>
-        {/* ThreadDetailPage stub */}
-        <div class="flex items-center justify-center h-screen bg-background text-muted-foreground text-sm">
-          Thread detail page — coming soon
-        </div>
+        <ThreadDetailPage
+          projectId={(route() as { projectId: number }).projectId}
+          threadId={(route() as { threadId: string }).threadId}
+        />
       </Show>
 
       <Show when={route().page === "settings"}>
-        {/* SettingsPage stub */}
-        <div class="flex flex-col items-center justify-center h-screen bg-background gap-3">
-          <span class="text-muted-foreground text-sm">Settings — coming soon</span>
-          <a href="#" class="text-xs text-foreground hover:text-signal-amber transition-colors">
-            Back
-          </a>
-        </div>
+        <SettingsPage />
       </Show>
 
       <Show when={route().page === "new"}>
-        {/* NewProjectPage stub */}
-        <div class="flex flex-col items-center justify-center h-screen bg-background gap-3">
-          <span class="font-display text-xl text-foreground">Hirsel</span>
-          <span class="text-muted-foreground text-sm">Create a new project — coming soon</span>
-        </div>
+        <NewProjectPage />
       </Show>
 
       <Show when={route().page === "loading"}>

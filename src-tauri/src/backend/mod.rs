@@ -11,7 +11,6 @@ pub mod db;
 pub mod draft;
 pub mod error;
 pub mod git;
-pub(crate) mod icons;
 pub(crate) mod lash_tools;
 pub mod llm_provider;
 pub mod project;
@@ -23,7 +22,6 @@ pub mod shepherd_runtime;
 pub mod shepherd_threads;
 pub mod storage;
 pub mod system;
-pub mod webui;
 pub mod workspace;
 
 pub use config::*;
