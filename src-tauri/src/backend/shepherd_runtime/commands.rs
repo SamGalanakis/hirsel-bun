@@ -1,6 +1,6 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Mutex as StdMutex, OnceLock};
+use std::sync::{LazyLock, Mutex as StdMutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -36,10 +36,40 @@ fn active_scope_turns() -> &'static StdMutex<HashSet<String>> {
     ACTIVE_SCOPE_TURNS.get_or_init(|| StdMutex::new(HashSet::new()))
 }
 
+struct QueuedTurn {
+    scope: ShepherdScope,
+    user_chunks: Vec<ShepherdMessageChunk>,
+    focus: Option<ShepherdTaskFocus>,
+    user_message_id: i64,
+}
+
+static QUEUED_TURNS: LazyLock<StdMutex<HashMap<String, QueuedTurn>>> =
+    LazyLock::new(|| StdMutex::new(HashMap::new()));
+
+fn queue_turn(key: &str, turn: QueuedTurn) {
+    if let Ok(mut map) = QUEUED_TURNS.lock() {
+        map.insert(key.to_string(), turn);
+    }
+}
+
+fn take_queued_turn(key: &str) -> Option<QueuedTurn> {
+    QUEUED_TURNS.lock().ok()?.remove(key)
+}
+
+pub fn has_queued_turn(scope: &ShepherdScope) -> bool {
+    let key = scope_key(scope);
+    QUEUED_TURNS
+        .lock()
+        .ok()
+        .is_some_and(|map| map.contains_key(&key))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendShepherdMessageResponse {
     pub started: bool,
+    #[serde(default)]
+    pub queued: bool,
     #[serde(default)]
     pub thread_id: Option<String>,
 }
@@ -391,8 +421,23 @@ fn spawn_scope_turn(
             tracing::warn!(%error, scope = %scope_key(&scope), "shepherd scope turn failed");
         }
         clear_scope_active(&key);
+        dispatch_queued_turn(&key);
     });
     Ok(())
+}
+
+fn dispatch_queued_turn(key: &str) {
+    if let Some(queued) = take_queued_turn(key) {
+        let QueuedTurn {
+            scope,
+            user_chunks,
+            focus,
+            user_message_id,
+        } = queued;
+        if let Err(error) = spawn_scope_turn(scope.clone(), user_chunks, focus, user_message_id) {
+            tracing::warn!(%error, scope = %scope_key(&scope), "failed to dispatch queued turn");
+        }
+    }
 }
 
 async fn dispatch_scope_message_local(
@@ -402,21 +447,38 @@ async fn dispatch_scope_message_local(
 ) -> Result<SendShepherdMessageResponse, String> {
     validate_scope_runtime(&scope).await?;
     let key = scope_key(&scope);
-    let activity = scope_activity(&scope).await?;
-    if activity.has_active_turn
-        || active_scope_turns()
-            .lock()
-            .map_err(|_| "failed to lock active scope set".to_string())?
-            .contains(&key)
-    {
-        return Err(
-            "This conversation is already running. Wait for it to finish or open another thread."
-                .to_string(),
-        );
-    }
+    let is_active = {
+        let activity = scope_activity(&scope).await?;
+        activity.has_active_turn
+            || active_scope_turns()
+                .lock()
+                .map_err(|_| "failed to lock active scope set".to_string())?
+                .contains(&key)
+    };
 
     let chunks_json = chunks_to_json(&user_chunks)?;
     let message_id = save_message(&scope, "user", &chunks_json).await?;
+
+    if is_active {
+        queue_turn(
+            &key,
+            QueuedTurn {
+                scope: scope.clone(),
+                user_chunks,
+                focus,
+                user_message_id: message_id,
+            },
+        );
+        return Ok(SendShepherdMessageResponse {
+            started: false,
+            queued: true,
+            thread_id: match scope {
+                ShepherdScope::Thread { thread_id, .. } => Some(thread_id),
+                _ => None,
+            },
+        });
+    }
+
     if let ShepherdScope::Thread { thread_id, .. } = &scope {
         let summary = summary_from_chunks(&user_chunks);
         let _ = update_thread_after_turn(&scope, Some(&summary), Some("running")).await;
@@ -427,6 +489,7 @@ async fn dispatch_scope_message_local(
     spawn_scope_turn(scope.clone(), user_chunks, focus, message_id)?;
     Ok(SendShepherdMessageResponse {
         started: true,
+        queued: false,
         thread_id: match scope {
             ShepherdScope::Thread { thread_id, .. } => Some(thread_id),
             _ => None,
@@ -646,7 +709,7 @@ fn thread_scope(thread: &ShepherdThread) -> ShepherdScope {
         project_id: thread.project_id,
         thread_id: thread.id.clone(),
         title: thread.title.clone(),
-        workspace_path: thread.workspace_path.clone(),
+        workspace_path: None,
         focus: None,
     }
 }

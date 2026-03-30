@@ -91,16 +91,9 @@ pub fn render_new_project_page(projects: &[Project], draft: &ProjectCreateDraft)
                         section class="welcome-create new-project-stage" {
                             div class="new-project-hero" {
                                 @if review.is_some() {
-                                    p class="eyebrow" { "Project setup" }
-                                    h1 class="welcome-headline" { "Confirm the runtime contract" }
-                                    p class="muted" { "Hirsel will treat the repository flake as the project environment and use this container image as the host substrate." }
-                                } @else if !has_projects {
-                                    h1 class="welcome-headline" { "Inspect a repository before you wire it in" }
-                                    p class="muted" { "Hirsel will probe for a flake, show the current default container image, and let you override it before the project exists." }
+                                    h1 class="welcome-headline" { "Confirm and create" }
                                 } @else {
-                                    p class="eyebrow" { "New project" }
-                                    h1 class="welcome-headline" { "Inspect before create" }
-                                    p class="muted" { "Keep the source honest, keep the runtime explicit." }
+                                    h1 class="welcome-headline" { "Add project" }
                                 }
                             }
 
@@ -116,7 +109,7 @@ pub fn render_new_project_page(projects: &[Project], draft: &ProjectCreateDraft)
                                 @if let Some(review) = review {
                                     article class="card project-setup-card" {
                                         header class="project-setup-card-head" {
-                                            h3 { (icon("folder")) "Source inspection" }
+                                            h3 { (icon("folder")) "Source" }
                                             span class=(if review.flake_detected { "pill status-working" } else { "pill status-blocked" }) {
                                                 (if review.flake_detected { "flake detected" } else { "no flake yet" })
                                             }
@@ -169,8 +162,7 @@ pub fn render_new_project_page(projects: &[Project], draft: &ProjectCreateDraft)
 
                                     article class="card project-setup-card project-setup-card-accent" {
                                         header class="project-setup-card-head" {
-                                            h3 { (icon("cpu")) "Runtime substrate" }
-                                            span class="pill" { "docker host + nix env" }
+                                            h3 { (icon("cpu")) "Container image" }
                                         }
                                         section {
                                             form action=(final_form_action) method="post" class="welcome-form project-setup-form-final" {
@@ -193,7 +185,7 @@ pub fn render_new_project_page(projects: &[Project], draft: &ProjectCreateDraft)
                                                         value=(sandbox_image_value)
                                                         placeholder=(&draft.default_sandbox_image);
                                                     p class="field-help" {
-                                                        "Leave this at the default unless the project truly needs a different host image. The flake remains the main environment contract."
+                                                        "Default: " code { (&draft.default_sandbox_image) }
                                                     }
                                                 }
                                                 button type="submit" class="btn btn-primary btn-full" {
@@ -209,8 +201,7 @@ pub fn render_new_project_page(projects: &[Project], draft: &ProjectCreateDraft)
                                 } @else {
                                     article class="card project-setup-card project-setup-card-accent" {
                                         header class="project-setup-card-head" {
-                                            h3 { (icon("search")) "Repository probe" }
-                                            span class="pill" { "preflight" }
+                                            h3 { (icon("search")) "Repository" }
                                         }
                                         section {
                                             form
@@ -258,38 +249,11 @@ pub fn render_new_project_page(projects: &[Project], draft: &ProjectCreateDraft)
                                                             placeholder=(&draft.default_sandbox_image);
                                                     }
                                                 }
-                                                p class="field-help" {
-                                                    "Hirsel will inspect the source for a root flake before it creates the project. The image above is the current backend default and can be overridden per project."
-                                                }
                                                 button type="submit" class="btn btn-primary btn-full" {
                                                     (icon("search"))
-                                                    "Inspect repository"
+                                                    "Add project"
                                                 }
                                             }
-                                        }
-                                    }
-
-                                    article class="card project-setup-card" {
-                                        header class="project-setup-card-head" {
-                                            h3 { (icon("cpu")) "Runtime contract" }
-                                        }
-                                        section class="project-setup-ledger" {
-                                            div class="project-setup-row" {
-                                                span class="project-setup-label" { "Host image" }
-                                                code class="project-setup-value project-setup-value-break" { (&draft.default_sandbox_image) }
-                                            }
-                                            div class="project-setup-row" {
-                                                span class="project-setup-label" { "Repo env" }
-                                                span class="project-setup-copy" { "Root flake when present" }
-                                            }
-                                            div class="project-setup-row" {
-                                                span class="project-setup-label" { "Fallback" }
-                                                span class="project-setup-copy" { "Shepherd bootstrap only" }
-                                            }
-                                        }
-                                        div class="project-setup-note" {
-                                            (icon("sparkles"))
-                                            p { "The container image is just the substrate. The repo flake stays the real project environment." }
                                         }
                                     }
                                 }
@@ -330,7 +294,7 @@ fn preparation_status_label(status: &str) -> &'static str {
 pub fn render_project_preparation_panel(
     project: &Project,
     preparation: &ProjectRuntimePreparation,
-    effective_sandbox_image: &str,
+    _effective_sandbox_image: &str,
 ) -> Markup {
     let progress_percent = (preparation.progress * 100.0).round().clamp(0.0, 100.0) as i32;
     let ready = preparation.status == "done";
@@ -338,109 +302,50 @@ pub fn render_project_preparation_panel(
 
     html! {
         article class="project-prep-card" {
-            div class="project-prep-topline" {
-                p class="eyebrow" { "Runtime preparation" }
-                span class=(format!("pill {}", preparation_status_class(&preparation.status))) {
-                    (preparation_status_label(&preparation.status))
+            h1 class="project-prep-title" { "Setting up " (&project.name) }
+            div class="project-prep-progress-block" {
+                div class="project-prep-progress-track" {
+                    div class="project-prep-progress-fill" style=(format!("width: {}%;", progress_percent)) {}
+                }
+                p class="project-prep-progress-text" { (format!("{}%", progress_percent)) }
+            }
+
+            div class="project-prep-steps" {
+                @for step in &preparation.steps {
+                    article class="project-prep-step" {
+                        div class="project-prep-step-head" {
+                            h3 {
+                                @if step.status == "done" {
+                                    (icon("check"))
+                                } @else if step.status == "working" {
+                                    (icon("refresh-cw"))
+                                } @else if step.status == "failed" {
+                                    (icon("x"))
+                                } @else {
+                                    (icon("clock"))
+                                }
+                                (&step.label)
+                            }
+                            span class=(format!("pill {}", preparation_status_class(&step.status))) {
+                                (preparation_status_label(&step.status))
+                            }
+                        }
+                    }
                 }
             }
 
-            div class="project-prep-hero" {
-                div {
-                    h1 class="project-prep-title" { (&preparation.headline) }
-                    @if let Some(detail) = preparation.detail.as_deref().filter(|value| !value.trim().is_empty()) {
-                        p class="muted project-prep-copy" { (detail) }
+            @if failed {
+                form action=(format!("/app/projects/{}/prepare/retry", project.id)) method="post" class="project-prep-actions" {
+                    button type="submit" class="btn btn-primary" {
+                        (icon("refresh-cw"))
+                        "Retry"
                     }
                 }
-                div class="project-prep-progress-block" {
-                    p class="eyebrow" { "Progress" }
-                    div class="project-prep-progress-track" {
-                        div class="project-prep-progress-fill" style=(format!("width: {}%;", progress_percent)) {}
-                    }
-                    p class="project-prep-progress-text" { (format!("{}%", progress_percent)) }
-                }
-            }
-
-            div class="project-prep-grid" {
-                section class="project-prep-main" {
-                    div class="project-prep-steps" {
-                        @for step in &preparation.steps {
-                            article class="project-prep-step" {
-                                div class="project-prep-step-head" {
-                                    h3 {
-                                        @if step.status == "done" {
-                                            (icon("check"))
-                                        } @else if step.status == "working" {
-                                            (icon("refresh-cw"))
-                                        } @else if step.status == "failed" {
-                                            (icon("x"))
-                                        } @else {
-                                            (icon("clock"))
-                                        }
-                                        (&step.label)
-                                    }
-                                    span class=(format!("pill {}", preparation_status_class(&step.status))) {
-                                        (preparation_status_label(&step.status))
-                                    }
-                                }
-                                @if let Some(detail) = step.detail.as_deref().filter(|value| !value.trim().is_empty()) {
-                                    p class="muted project-prep-step-copy" { (detail) }
-                                }
-                            }
-                        }
-                    }
-
-                    @if failed {
-                        form action=(format!("/app/projects/{}/prepare/retry", project.id)) method="post" class="project-prep-actions" {
-                            button type="submit" class="btn btn-primary" {
-                                (icon("refresh-cw"))
-                                "Retry runtime preparation"
-                            }
-                        }
-                    } @else if ready {
-                        div class="project-prep-actions" {
-                            a href=(format!("/app/projects/{}", project.id)) class="btn btn-primary" {
-                                (icon("arrow-left"))
-                                "Enter project"
-                            }
-                        }
-                    }
-                }
-
-                aside class="project-prep-side" {
-                    article class="card project-prep-side-card" {
-                        header {
-                            h3 { (icon("cpu")) "Runtime contract" }
-                        }
-                        section class="project-setup-ledger" {
-                            div class="project-setup-row" {
-                                span class="project-setup-label" { "Project" }
-                                code class="project-setup-value" { (&project.name) }
-                            }
-                            div class="project-setup-row" {
-                                span class="project-setup-label" { "Host image" }
-                                code class="project-setup-value project-setup-value-break" { (effective_sandbox_image) }
-                            }
-                            div class="project-setup-row" {
-                                span class="project-setup-label" { "Repo env" }
-                                span class="project-setup-copy" { "Root flake when present" }
-                            }
-                            div class="project-setup-row" {
-                                span class="project-setup-label" { "Thread rule" }
-                                span class="project-setup-copy" { "Threads wait for flake.nix" }
-                            }
-                        }
-                    }
-
-                    article class="card project-prep-side-card project-prep-side-card-note" {
-                        header {
-                            h3 { (icon("git-branch")) "Flake behavior" }
-                        }
-                        section {
-                            p class="muted" {
-                                "If the repository has no root flake yet, shepherd still starts with the bootstrap environment so it can author one. Normal coding threads stay blocked until that file exists in the central checkout."
-                            }
-                        }
+            } @else if ready {
+                div class="project-prep-actions" {
+                    a href=(format!("/app/projects/{}", project.id)) class="btn btn-primary" {
+                        (icon("arrow-left"))
+                        "Open project"
                     }
                 }
             }
@@ -584,13 +489,10 @@ pub fn render_project_page(
                 }
 
                 section class="workbench" {
-                    @let canvas_collapsed = surface.focus_view.source.as_deref() == Some("placeholder");
-                    section class=(if canvas_collapsed { "surface-stack canvas-collapsed" } else { "surface-stack" }) {
-                        (render_project_focus_stage(project, surface))
-                        (render_threads_panel(project, threads))
-                    }
+                    (render_threads_panel(project, threads))
 
-                    aside class="chat-rail" {
+                    section class="main-area" {
+                        (render_project_focus_stage(project, surface))
                         (render_chat_panel(project.id, threads, history, activity))
                     }
                 }

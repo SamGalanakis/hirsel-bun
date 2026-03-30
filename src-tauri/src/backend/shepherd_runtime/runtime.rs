@@ -140,6 +140,13 @@ async fn resolve_project_workspace(project_id: i64) -> Result<PathBuf, String> {
 }
 
 pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("HIRSEL_SCOPE_WORKDIR")
+        .map(PathBuf::from)
+        .filter(|path| path.exists() && path.is_dir())
+    {
+        return Ok(path);
+    }
+
     match scope {
         ShepherdScope::General => Err("general scope has no workspace".to_string()),
         ShepherdScope::Project {

@@ -557,7 +557,7 @@ impl ShepherdToolProvider {
                 project_id,
                 thread_id: thread.id.clone(),
                 title: thread.title.clone(),
-                workspace_path: thread.workspace_path.clone(),
+                workspace_path: None,
                 focus: None,
             },
             Some(content),

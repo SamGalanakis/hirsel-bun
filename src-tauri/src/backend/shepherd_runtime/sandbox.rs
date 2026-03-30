@@ -6,6 +6,7 @@ use super::rpc::{server_control_socket_path, wait_for_worker_socket};
 use super::runtime::resolve_scope_workspace;
 use super::session::{ShepherdScopeSession, ShepherdSessionStore};
 use super::types::ShepherdScope;
+use crate::backend::ensure_thread_checkout;
 use crate::backend::project::ProjectStore;
 use crate::backend::sandbox::{
     ensure_sandbox_image_available, humanize_docker_error, SandboxConfig,
@@ -129,6 +130,7 @@ fn build_scope_runtime_script(
         r#"set -e
 export HIRSEL_ROOT=/hirsel
 export HOME=/tmp/home
+export HIRSEL_SCOPE_WORKDIR=/work
 mkdir -p "$HOME" /nix
 export PATH="$HOME/.nix-profile/bin:/usr/local/bin:$PATH"
 
@@ -151,12 +153,12 @@ fi
 
     if allow_bootstrap {
         script.push_str(&format!(
-            "export HIRSEL_BOOTSTRAP_FLAKE=1\nexec nix --extra-experimental-features \"nix-command flakes\" develop /hirsel/bootstrap-flake --command {}\n",
+            "export HIRSEL_BOOTSTRAP_FLAKE=1\nexec nix --extra-experimental-features \"nix-command flakes\" develop path:/hirsel/bootstrap-flake --command {}\n",
             serve_cmd
         ));
     } else {
         script.push_str(&format!(
-            "unset HIRSEL_BOOTSTRAP_FLAKE\nexec nix --extra-experimental-features \"nix-command flakes\" develop /work --command {}\n",
+            "unset HIRSEL_BOOTSTRAP_FLAKE\nexec nix --extra-experimental-features \"nix-command flakes\" develop path:/work --command {}\n",
             serve_cmd
         ));
     }
@@ -221,6 +223,14 @@ async fn load_sandbox_config(scope: &ShepherdScope) -> Result<SandboxConfig, Str
 async fn prepare_scope_runtime(
     scope: &ShepherdScope,
 ) -> Result<(PathBuf, bool, SandboxConfig), String> {
+    if let ShepherdScope::Thread {
+        project_id,
+        thread_id,
+        ..
+    } = scope
+    {
+        let _ = ensure_thread_checkout(*project_id, thread_id).await?;
+    }
     let work_dir = resolve_scope_workspace(scope).await?;
     let allow_bootstrap =
         matches!(scope, ShepherdScope::Project { .. }) && !work_dir.join("flake.nix").exists();
@@ -498,4 +508,32 @@ pub(super) async fn stop_scope_session(scope: &ShepherdScope) -> Result<(), Stri
 
 pub(super) fn current_server_control_socket_path() -> PathBuf {
     server_control_socket_path()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn workspace_scopes_use_path_flakes() {
+        let project_scope = ShepherdScope::Project {
+            project_id: 1,
+            workspace_path: None,
+            focus: None,
+        };
+        let thread_scope = ShepherdScope::Thread {
+            project_id: 1,
+            thread_id: "thread-1".to_string(),
+            title: "Smoke".to_string(),
+            workspace_path: None,
+            focus: None,
+        };
+
+        let bootstrap = build_scope_runtime_script(&project_scope, true).expect("bootstrap script");
+        assert!(bootstrap.contains("develop path:/hirsel/bootstrap-flake"));
+
+        let thread = build_scope_runtime_script(&thread_scope, false).expect("thread script");
+        assert!(thread.contains("develop path:/work"));
+        assert!(!thread.contains("develop /work --command"));
+    }
 }

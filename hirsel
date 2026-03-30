@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+resolve_self() {
+  local src="${BASH_SOURCE[0]}"
+  while [[ -L "$src" ]]; do
+    local dir
+    dir="$(cd "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  printf '%s\n' "$src"
+}
+
+default_repo_root() {
+  local self_path
+  self_path="$(resolve_self)"
+  cd "$(dirname "$self_path")" && pwd
+}
+
+repo_root="${HIRSEL_REPO:-$(default_repo_root)}"
+manifest="$repo_root/src-tauri/Cargo.toml"
+dev_script="$repo_root/dev.sh"
+server_bin="$repo_root/src-tauri/target/debug/hirsel-server"
+desktop_bin="$repo_root/src-tauri/target/debug/hirsel-desktop"
+worker_bin="$repo_root/src-tauri/target/debug/hirsel-worker"
+
+usage() {
+  cat >&2 <<'EOF'
+Usage:
+  hirsel                    Build fresh and launch local Hirsel
+  hirsel --mcp              Build fresh and launch local Hirsel in MCP mode
+  hirsel --profiling        Build fresh and launch local Hirsel with profiling
+  hirsel dev [flags...]     Alias for the local launcher
+  hirsel server [args...]   Build and run hirsel-server
+  hirsel desktop [args...]  Build and run hirsel-desktop
+  hirsel worker [args...]   Build and run hirsel-worker
+EOF
+  exit 2
+}
+
+ensure_repo() {
+  if [[ ! -f "$manifest" ]]; then
+    echo "hirsel launcher error: manifest not found at $manifest" >&2
+    exit 1
+  fi
+  if [[ ! -x "$dev_script" ]]; then
+    echo "hirsel launcher error: dev script not executable at $dev_script" >&2
+    exit 1
+  fi
+}
+
+build_bin() {
+  local target="$1"
+  local features="$2"
+  local cmd=(cargo build --manifest-path "$manifest" --bin "$target")
+  if [[ -n "$features" ]]; then
+    cmd+=(--features "$features")
+  fi
+  (
+    cd "$repo_root"
+    "${cmd[@]}"
+  )
+}
+
+ensure_repo
+
+if [[ $# -eq 0 ]]; then
+  cd "$repo_root"
+  exec "$dev_script"
+fi
+
+dev_flags_only=true
+for arg in "$@"; do
+  case "$arg" in
+    --mcp|--profiling|--remote) ;;
+    *) dev_flags_only=false; break ;;
+  esac
+done
+
+if [[ "$dev_flags_only" == true ]]; then
+  cd "$repo_root"
+  exec "$dev_script" "$@"
+fi
+
+case "${1:-}" in
+  dev)
+    shift
+    cd "$repo_root"
+    exec "$dev_script" "$@"
+    ;;
+  server)
+    shift
+    build_bin "hirsel-server" "server"
+    exec "$server_bin" "$@"
+    ;;
+  desktop)
+    shift
+    build_bin "hirsel-desktop" "gui"
+    exec "$desktop_bin" "$@"
+    ;;
+  worker)
+    shift
+    build_bin "hirsel-worker" ""
+    exec "$worker_bin" "$@"
+    ;;
+  *)
+    usage
+    ;;
+esac

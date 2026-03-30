@@ -51,5 +51,6 @@ pub use storage::{
     create_file_storage, FileStorage, LocalFileStorage, StorageError, StorageResult,
 };
 pub use workspace::{
-    ensure_project_workspace, prepare_thread_checkout, workspace_name_for_project, ProjectWorkspace,
+    ensure_project_workspace, ensure_thread_checkout, prepare_thread_checkout,
+    workspace_name_for_project, ProjectWorkspace,
 };

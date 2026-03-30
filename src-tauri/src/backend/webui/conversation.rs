@@ -7,28 +7,15 @@ use crate::backend::ShepherdChatMessage;
 use super::shared::{format_time, render_message_fragments};
 use super::ThreadPanelState;
 
-fn render_conversation_messages(
-    history: &[ShepherdChatMessage],
-    user_label: &str,
-    assistant_label: &str,
-) -> Markup {
+fn render_conversation_messages(history: &[ShepherdChatMessage]) -> Markup {
     html! {
         @for message in history {
             @let is_user = message.role == "user";
-            @let is_system = message.role == "system";
+            @let time = format_time(&message.timestamp);
             div class=(if is_user { "chat-row user" } else { "chat-row assistant" }) {
                 article class=(if is_user { "chat-message-user" } else { "chat-message-assistant" }) {
-                    div class="message-meta" {
-                        span class="message-author" {
-                            (if is_user {
-                                user_label
-                            } else if is_system {
-                                "system"
-                            } else {
-                                assistant_label
-                            })
-                        }
-                        span class="message-time" { (format_time(&message.timestamp)) }
+                    @if !time.is_empty() {
+                        span class="message-time" { (time) }
                     }
                     (render_message_fragments(&message.chunks_json))
                 }
@@ -37,7 +24,7 @@ fn render_conversation_messages(
     }
 }
 
-fn render_live_turn(activity: &ShepherdScopeActivity, assistant_label: &str) -> Markup {
+fn render_live_turn(activity: &ShepherdScopeActivity) -> Markup {
     let Some(live_turn) = activity.live_turn.as_ref() else {
         return html! {};
     };
@@ -45,10 +32,7 @@ fn render_live_turn(activity: &ShepherdScopeActivity, assistant_label: &str) -> 
     html! {
         div class="chat-row assistant" {
             article class="chat-message-assistant pending" {
-                div class="message-meta" {
-                    span class="message-author" { (assistant_label) }
-                    span class="message-time" { (format_time(&live_turn.updated_at)) }
-                }
+                span class="message-time" { (format_time(&live_turn.updated_at)) }
                 (render_message_fragments(&live_turn.chunks_json))
             }
         }
@@ -57,34 +41,22 @@ fn render_live_turn(activity: &ShepherdScopeActivity, assistant_label: &str) -> 
 
 pub(crate) fn render_conversation_panel(
     panel_id: &str,
-    header_eyebrow: &str,
-    header_copy: &str,
     history: &[ShepherdChatMessage],
     activity: &ShepherdScopeActivity,
-    user_label: &str,
-    assistant_label: &str,
-    empty_eyebrow: &str,
-    empty_text: &str,
     form_id: &str,
     form_action: &str,
     form_placeholder: &str,
-    active_threads_label: Option<String>,
     stop_action: Option<&str>,
+    has_queued: bool,
 ) -> Markup {
-    let active_threads_label = active_threads_label.filter(|value| !value.trim().is_empty());
-    let session_status = activity
-        .session
-        .as_ref()
-        .map(|session| session.status.as_str())
-        .unwrap_or("idle");
-    let last_error = activity
-        .session
-        .as_ref()
-        .and_then(|session| session.last_error.as_deref())
-        .filter(|value| !value.trim().is_empty());
-    let input_disabled = activity.has_active_turn;
+    let is_running = activity.has_active_turn;
+    let can_stop = is_running && stop_action.is_some();
 
-    let can_stop = input_disabled && stop_action.is_some();
+    let placeholder = if is_running && !has_queued {
+        "Queue a follow-up..."
+    } else {
+        form_placeholder
+    };
 
     html! {
         section id=(panel_id) class="chat-panel shepherd-chat-panel"
@@ -93,22 +65,14 @@ pub(crate) fn render_conversation_panel(
                 stop_action.unwrap_or_default()
             ))]
         {
-            header class="conversation-header" {
-                p class="eyebrow" { (header_eyebrow) }
-                @if !header_copy.is_empty() {
-                    p class="muted" { (header_copy) }
-                }
-            }
-
             div class="chat-thread shepherd-messages-area" {
                 @if history.is_empty() && activity.live_turn.is_none() {
                     div class="chat-empty-state" {
-                        p class="eyebrow" { (empty_eyebrow) }
-                        p class="muted" { (empty_text) }
+                        "Send a message to get started"
                     }
                 } @else {
-                    (render_conversation_messages(history, user_label, assistant_label))
-                    (render_live_turn(activity, assistant_label))
+                    (render_conversation_messages(history))
+                    (render_live_turn(activity))
                 }
             }
             form
@@ -123,27 +87,14 @@ pub(crate) fn render_conversation_panel(
                     form_action,
                     form_id
                 )) {
-                @if input_disabled || last_error.is_some() || active_threads_label.is_some() {
+                @if is_running || has_queued {
                     div class="chat-status-bar" {
-                        @if can_stop {
-                            button
-                                type="button"
-                                class="pill status-working chat-stop-btn"
-                                data-on:click__prevent=(format!("@post('{}')", stop_action.unwrap_or_default()))
-                            {
-                                (icon("square"))
-                                "Stop"
-                            }
-                        } @else if input_disabled {
-                            span class="pill status-working" { "Working" }
-                        } @else {
-                            span class=(format!("pill status-{}", session_status)) { (session_status) }
+                        @if is_running {
+                            span class="chat-status-dot" {}
+                            "Working"
                         }
-                        @if let Some(label) = active_threads_label {
-                            span class="pill muted" { (label) }
-                        }
-                        @if let Some(error) = last_error {
-                            span class="pill status-failed" { (icon("x")) (error) }
+                        @if has_queued {
+                            span { " · queued" }
                         }
                     }
                 }
@@ -152,20 +103,32 @@ pub(crate) fn render_conversation_panel(
                     input
                         type="text"
                         name="content"
-                        placeholder=(form_placeholder)
+                        placeholder=(placeholder)
                         autocomplete="off"
-                        data-bind:chat-draft
-                        data-attr:disabled=(if input_disabled { "true" } else { "null" }) {}
-                    button
-                        type="submit"
-                        class="btn btn-sm chat-send-btn"
-                        data-attr:disabled=(if input_disabled {
-                            "true"
-                        } else {
-                            "$chatSending || !$chatDraft.trim()"
-                        }) {
-                        (icon("send"))
-                        "Send"
+                        data-bind:chat-draft {}
+                    @if can_stop {
+                        button
+                            type="button"
+                            class="chat-stop-btn"
+                            data-on:click__prevent=(format!("@post('{}')", stop_action.unwrap_or_default()))
+                        {
+                            (icon("square"))
+                            "Stop"
+                        }
+                    } @else {
+                        button
+                            type="submit"
+                            class="btn btn-sm chat-send-btn"
+                            data-attr:disabled="$chatSending || !$chatDraft.trim()" {
+                            (icon("send"))
+                            @if is_running { "Queue" } @else { "Send" }
+                        }
+                    }
+                }
+                @if is_running {
+                    div class="chat-kb-hint" {
+                        kbd { "Esc" } " stop"
+                        kbd { "Enter" } " queue"
                     }
                 }
             }
@@ -179,36 +142,25 @@ pub fn render_chat_panel(
     history: &[ShepherdChatMessage],
     activity: &ShepherdScopeActivity,
 ) -> Markup {
-    let active_threads = threads
-        .iter()
-        .filter(|item| !matches!(item.thread.status.as_str(), "done"))
-        .collect::<Vec<_>>();
+    let scope = crate::backend::shepherd_runtime::ShepherdScope::Project {
+        project_id,
+        workspace_path: None,
+        focus: None,
+    };
+    let _ = threads; // threads now rendered in sidebar, not here
     let form_id = format!("chat-send-form-{}", project_id);
     let form_action = format!("/app/projects/{}/chat/send", project_id);
     let stop_action = format!("/app/projects/{}/chat/stop", project_id);
-    let active_threads_label = (!active_threads.is_empty()).then(|| {
-        let n = active_threads.len();
-        if n == 1 {
-            "1 active thread".to_string()
-        } else {
-            format!("{n} active threads")
-        }
-    });
+    let has_queued = crate::backend::shepherd_runtime::has_queued_turn(&scope);
 
     render_conversation_panel(
         "chat-panel",
-        "Shepherd",
-        "",
         history,
         activity,
-        "you",
-        "shepherd",
-        "No shepherd conversation yet",
-        "Ask a question about the project, or tell shepherd to start and manage threads for separate work.",
         &form_id,
         &form_action,
-        "Ask shepherd to answer, plan, or manage threads...",
-        active_threads_label,
+        "Message shepherd...",
         Some(&stop_action),
+        has_queued,
     )
 }

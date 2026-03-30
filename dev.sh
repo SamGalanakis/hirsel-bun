@@ -4,11 +4,11 @@
 # Logs to dev.log (gitignored)
 #
 # Usage:
-#   ./dev.sh              - Backend-first dev mode (serve + GUI over localhost)
-#   ./dev.sh --mcp        - Automation mode (serve + tauri-driver, launch app separately)
-#   ./dev.sh --profiling  - Backend-first dev mode with profiling
+#   ./dev.sh              - Fresh backend-first dev mode (serve + GUI over localhost)
+#   ./dev.sh --mcp        - Fresh automation mode (serve + tauri-driver, launch app separately)
+#   ./dev.sh --profiling  - Fresh backend-first dev mode with profiling
 #   ./dev.sh --remote     - Legacy alias for the default backend-first mode
-#   ./dev.sh --mcp --profiling  - Automation mode with profiling
+#   ./dev.sh --mcp --profiling  - Fresh automation mode with profiling
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_FILE="$SCRIPT_DIR/dev.log"
@@ -121,19 +121,10 @@ worker_image_build_label() {
 
 build_worker_image() {
     local image="hirsel-worker:local"
-    local label_key="org.hirsel.worker-build"
     local expected_label
-    local current_label
 
     expected_label="$(worker_image_build_label)"
-    current_label="$(docker image inspect --format "{{index .Config.Labels \"$label_key\"}}" "$image" 2>/dev/null || true)"
-
-    if [[ "$current_label" == "$expected_label" ]]; then
-        echo "Worker image up to date: $image ($expected_label)"
-        return
-    fi
-
-    echo "Building worker image $image..."
+    echo "Building fresh worker image $image..."
     docker build \
         -f "$SCRIPT_DIR/deploy/worker.Dockerfile" \
         --build-arg "HIRSEL_WORKER_BUILD_LABEL=$expected_label" \
@@ -172,13 +163,39 @@ EOF
     echo ""
 }
 
-start_local_backend() {
-    if curl -sf "http://127.0.0.1:$REMOTE_PORT/health" > /dev/null 2>&1; then
-        echo "Restarting existing local hirsel-server on port $REMOTE_PORT"
-        pkill -f "$SERVER_BIN --port $REMOTE_PORT" 2>/dev/null || true
-        sleep 0.5
+remove_container_if_present() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        return
+    fi
+    docker rm -f "$name" >/dev/null 2>&1 || true
+}
+
+stop_existing_local_runtime() {
+    echo "Stopping existing local Hirsel runtime..."
+
+    pkill -f "$DESKTOP_BIN" 2>/dev/null || true
+    pkill -f "$SERVER_BIN" 2>/dev/null || true
+
+    if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$HIRSEL_ROOT/hirsel.db" ]]; then
+        while IFS= read -r container_name; do
+            remove_container_if_present "$container_name"
+        done < <(
+            sqlite3 "$HIRSEL_ROOT/hirsel.db" \
+                "select container_name from shepherd_sessions where container_name is not null and trim(container_name) <> '';"
+        )
+
+        sqlite3 "$HIRSEL_ROOT/hirsel.db" <<'SQL' >/dev/null 2>&1 || true
+DELETE FROM shepherd_sessions;
+DELETE FROM project_runtime_preparations;
+SQL
     fi
 
+    rm -rf "$HIRSEL_ROOT/agent-sessions"
+    rm -f "$HIRSEL_ROOT/server/control.sock"
+}
+
+start_local_backend() {
     echo "Starting local hirsel-server..."
     "$SERVER_BIN" --port "$REMOTE_PORT" >> "$LOG_FILE" 2>&1 &
     server_pid=$!
@@ -223,8 +240,9 @@ ensure_tauri_driver() {
 prepare_local_backend
 build_binaries
 build_worker_image
-start_local_backend
 build_shell_assets
+stop_existing_local_runtime
+start_local_backend
 
 if [[ "$mcp_mode" == true ]]; then
     echo "Automation mode: local backend plus tauri-driver..."

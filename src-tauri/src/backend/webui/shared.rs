@@ -1,7 +1,16 @@
-use maud::{html, Markup, DOCTYPE};
+use maud::{html, Markup, PreEscaped, DOCTYPE};
+use pulldown_cmark::{html as md_html, Options, Parser};
 
 use crate::backend::icons::icon;
 use crate::backend::shepherd_runtime::ShepherdMessageChunk;
+
+fn markdown_to_html(text: &str) -> String {
+    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    let parser = Parser::new_ext(text, options);
+    let mut html_output = String::new();
+    md_html::push_html(&mut html_output, parser);
+    html_output
+}
 
 const DATASTAR_BUNDLE: &str = "/static/datastar.js";
 
@@ -17,7 +26,7 @@ pub(crate) fn app_document(title: &str, description: &str, body: Markup) -> Mark
                 meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: https:; font-src https://fonts.gstatic.com; frame-src 'self'; connect-src 'self';";
                 link rel="preconnect" href="https://fonts.googleapis.com";
                 link rel="preconnect" href="https://fonts.gstatic.com" crossorigin;
-                link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&family=Spectral:wght@400;500;600;700&display=swap";
+                link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&display=swap";
                 link rel="stylesheet" href="/static/webui.css";
                 script type="module" src=(DATASTAR_BUNDLE) {}
             }
@@ -38,22 +47,13 @@ pub(crate) fn format_time(timestamp: &str) -> String {
     String::new()
 }
 
-pub(crate) fn status_tone(status: &str) -> &str {
+pub(crate) fn status_dot_class(status: &str) -> &str {
     match status {
-        "active" => "working",
-        other => other,
+        "running" | "working" | "active" | "starting" => "st-active",
+        "done" => "st-done",
+        "failed" | "error" => "st-failed",
+        _ => "",
     }
-}
-
-fn truncate_copy(text: &str, max_chars: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= max_chars {
-        return trimmed.to_string();
-    }
-
-    let mut out = trimmed.chars().take(max_chars).collect::<String>();
-    out.push_str("...");
-    out
 }
 
 fn parse_message_chunks(chunks_json: &str) -> Vec<ShepherdMessageChunk> {
@@ -62,14 +62,8 @@ fn parse_message_chunks(chunks_json: &str) -> Vec<ShepherdMessageChunk> {
 
 enum ConversationFragment {
     Text(String),
-    Tool {
-        title: String,
-        status: String,
-        detail: Option<String>,
-    },
-    Image {
-        label: String,
-    },
+    Tool { title: String, status: String },
+    Image { label: String },
 }
 
 fn message_fragments(chunks_json: &str) -> Vec<ConversationFragment> {
@@ -85,21 +79,16 @@ fn message_fragments(chunks_json: &str) -> Vec<ConversationFragment> {
             }
             ShepherdMessageChunk::Tool {
                 title,
+                kind,
                 status,
-                input,
-                output,
                 ..
             } => {
-                let detail = output
-                    .or(input)
-                    .map(|value| truncate_copy(&value, 180))
-                    .filter(|value| !value.is_empty())
-                    .filter(|value| !value.starts_with('{') && !value.starts_with('['));
-                fragments.push(ConversationFragment::Tool {
-                    title,
-                    status,
-                    detail,
-                });
+                let is_batch =
+                    kind.as_deref() == Some("batch") || title.eq_ignore_ascii_case("batch");
+                if is_batch {
+                    continue;
+                }
+                fragments.push(ConversationFragment::Tool { title, status });
             }
             ShepherdMessageChunk::Image { name, .. } => {
                 fragments.push(ConversationFragment::Image {
@@ -121,33 +110,57 @@ fn message_fragments(chunks_json: &str) -> Vec<ConversationFragment> {
 
 pub(crate) fn render_message_fragments(chunks_json: &str) -> Markup {
     let fragments = message_fragments(chunks_json);
-    html! {
-        @for fragment in fragments {
-            @match fragment {
-                ConversationFragment::Text(content) => {
-                    pre class="message-body" { (content) }
-                }
-                ConversationFragment::Tool { title, status, detail } => {
-                    article class="message-tool" {
-                        div class="message-tool-header" {
-                            span class="message-tool-title" {
-                                (icon("cpu"))
-                                (title)
-                            }
-                            span class=(format!("pill status-{}", status_tone(&status))) { (status) }
-                        }
-                        @if let Some(detail) = detail {
-                            p class="message-tool-detail" { (detail) }
-                        }
-                    }
-                }
-                ConversationFragment::Image { label } => {
+
+    // Collect into groups: text/image render individually, consecutive tools collapse
+    let mut output: Vec<Markup> = Vec::new();
+    let mut tool_run: Vec<(String, String)> = Vec::new();
+
+    let flush_tools = |tools: &mut Vec<(String, String)>, out: &mut Vec<Markup>| {
+        if tools.is_empty() {
+            return;
+        }
+        let n = tools.len();
+        let label = if n == 1 {
+            tools[0].0.to_string()
+        } else {
+            format!("Used {} tools", n)
+        };
+        out.push(html! {
+            div class="tool-summary" {
+                (icon("cpu"))
+                (label)
+            }
+        });
+        tools.clear();
+    };
+
+    for fragment in fragments {
+        match fragment {
+            ConversationFragment::Text(content) => {
+                flush_tools(&mut tool_run, &mut output);
+                output.push(html! {
+                    div class="message-body markdown-body" { (PreEscaped(markdown_to_html(&content))) }
+                });
+            }
+            ConversationFragment::Tool { title, status, .. } => {
+                tool_run.push((title, status));
+            }
+            ConversationFragment::Image { label } => {
+                flush_tools(&mut tool_run, &mut output);
+                output.push(html! {
                     div class="message-attachment" {
                         (icon("package"))
                         span { (label) }
                     }
-                }
+                });
             }
+        }
+    }
+    flush_tools(&mut tool_run, &mut output);
+
+    html! {
+        @for markup in &output {
+            (markup)
         }
     }
 }

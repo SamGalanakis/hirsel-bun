@@ -583,9 +583,10 @@ pub fn create_workspace(
 
 /// Create a thread checkout that tracks the central checkout.
 ///
-/// Copies project files to `workspaces/<workspace_name>/work/<checkout_name>/`,
-/// initializes a fresh git repo, and sets up `origin` pointing to the
-/// central checkout.
+/// Copies the full central checkout snapshot to
+/// `workspaces/<workspace_name>/work/<checkout_name>/`, preserves any dirty or
+/// untracked working tree files, and switches the copy onto a dedicated local
+/// thread branch while wiring `origin` back to the central checkout.
 pub fn create_thread_checkout(
     workspace_name: &str,
     project_path: &Path,
@@ -611,83 +612,41 @@ pub fn create_thread_checkout(
         )));
     }
 
-    // Copy ALL project files (including untracked)
+    // Copy the full central snapshot, including .git and any untracked files.
     copy_dir_recursive(project_path, &checkout_dir)?;
     info!(
-        "Copied project files to thread checkout: {:?}",
+        "Copied central snapshot to thread checkout: {:?}",
         checkout_dir
     );
 
-    // Remove .git from copied directory
-    let copied_git = checkout_dir.join(".git");
-    if copied_git.is_dir() {
-        fs::remove_dir_all(&copied_git)?;
-    } else if copied_git.exists() {
-        fs::remove_file(&copied_git)?;
-    }
-
-    // Initialize fresh git repo
-    let repo = Repository::init(&checkout_dir)?;
-
-    // Create initial commit on a temporary branch
-    {
-        let sig = get_signature(&repo)?;
-        let tree_id = {
-            let mut index = repo.index()?;
-            index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
-            index.write()?;
-            index.write_tree()?
-        };
-        let tree = repo.find_tree(tree_id)?;
-        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])?;
-    }
-
-    // Rename the default branch to 'central'
-    // git2 doesn't have a rename API, so we create central and delete the old branch
+    let repo = Repository::open(&checkout_dir)?;
     let head_commit = repo.head()?.peel_to_commit()?;
-    repo.branch("central", &head_commit, false)?;
-    repo.set_head("refs/heads/central")?;
+    repo.branch(checkout_name, &head_commit, true)?;
+    repo.set_head(&format!("refs/heads/{checkout_name}"))?;
 
-    // Delete the old default branch (master/main)
-    if let Ok(mut head_ref) = repo.find_reference("refs/heads/master") {
-        let _ = head_ref.delete();
-    }
-    if let Ok(mut head_ref) = repo.find_reference("refs/heads/main") {
-        let _ = head_ref.delete();
-    }
-
-    // Add central checkout as origin remote
     let central_url = central.canonicalize()?.display().to_string();
-    repo.remote("origin", &central_url)?;
-
-    // Fetch from origin
-    let mut remote = repo.find_remote("origin")?;
-    remote.fetch(&["central"], None, None)?;
-
-    // Reset to origin/central
-    let origin_central = repo.find_reference("refs/remotes/origin/central")?;
-    let commit = origin_central.peel_to_commit()?;
-    repo.reset(commit.as_object(), git2::ResetType::Hard, None)?;
-
-    // Set upstream tracking
-    let mut branch = repo.find_branch("central", BranchType::Local)?;
-    branch.set_upstream(Some("origin/central"))?;
-
-    // Copy git config from the central checkout (user.name, user.email)
-    if let Ok(central_repo) = Repository::open(&central) {
-        if let Ok(central_config) = central_repo.config() {
-            let mut checkout_config = repo.config()?;
-            for key in ["user.name", "user.email"] {
-                if let Ok(value) = central_config.get_string(key) {
-                    let _ = checkout_config.set_str(key, &value);
-                }
-            }
+    if repo.find_remote("origin").is_ok() {
+        repo.remote_set_url("origin", &central_url)?;
+    } else {
+        repo.remote("origin", &central_url)?;
+    }
+    if let Ok(remotes) = repo.remotes() {
+        for remote_name in remotes.iter().flatten().filter(|name| *name != "origin") {
+            let _ = repo.remote_delete(remote_name);
         }
     }
 
+    let mut remote = repo.find_remote("origin")?;
+    remote.fetch(&["central"], None, None)?;
+
+    if repo.find_reference("refs/remotes/origin/central").is_ok() {
+        let mut branch = repo.find_branch(checkout_name, BranchType::Local)?;
+        branch.set_upstream(Some("origin/central"))?;
+    }
+
     info!(
-        "Created thread checkout: {:?} (origin → {:?})",
-        checkout_dir, central
+        "Created thread checkout snapshot: {:?} (branch {} tracking {:?})",
+        checkout_dir, checkout_name, central
     );
     Ok(checkout_dir)
 }
@@ -819,5 +778,40 @@ mod tests {
         let (dir, _repo) = create_test_repo();
         let result = get_repo(Some(dir.path()));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn create_thread_checkout_preserves_untracked_central_files() {
+        let (source_dir, _repo) = create_test_repo();
+        let workspaces = TempDir::new().unwrap();
+        let central_dir =
+            create_workspace("project-1", source_dir.path(), workspaces.path()).unwrap();
+
+        std::fs::write(central_dir.join("flake.nix"), "{ }").unwrap();
+
+        let checkout_dir = create_thread_checkout(
+            "project-1",
+            &central_dir,
+            "thread-smoke",
+            Some(&central_dir),
+            workspaces.path(),
+        )
+        .unwrap();
+
+        assert!(
+            checkout_dir.join("flake.nix").is_file(),
+            "thread checkout lost the untracked central flake snapshot"
+        );
+        assert_eq!(
+            get_current_branch(&checkout_dir).unwrap(),
+            "thread-smoke".to_string()
+        );
+
+        let repo = Repository::open(&checkout_dir).unwrap();
+        let origin = repo.find_remote("origin").unwrap();
+        assert_eq!(
+            origin.url().unwrap(),
+            central_dir.canonicalize().unwrap().display().to_string()
+        );
     }
 }
