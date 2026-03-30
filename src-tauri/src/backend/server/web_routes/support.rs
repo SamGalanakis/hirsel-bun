@@ -10,10 +10,11 @@ use serde::Deserialize;
 use crate::backend::config::LlmProvider;
 use crate::backend::draft::StartingPoint;
 use crate::backend::llm_provider::resolve_provider;
-use crate::backend::project::{Project, ProjectSurfaceSnapshot};
+use crate::backend::project::{Project, ProjectRuntimePreparation, ProjectSurfaceSnapshot};
 use crate::backend::webui::{ProjectCreateDraft, ProjectCreateReview, ThreadPanelState};
 use crate::backend::{
-    app, shepherd_runtime, ProjectStore, ShepherdChatMessage, ShepherdThreadStore,
+    app, ensure_project_runtime_preparation_started, shepherd_runtime, ProjectStore,
+    ShepherdChatMessage, ShepherdThreadStore,
 };
 
 use super::super::AppState;
@@ -54,6 +55,13 @@ pub(super) struct ProjectPageState {
     pub threads: Vec<ThreadPanelState>,
     pub history: Vec<ShepherdChatMessage>,
     pub activity: shepherd_runtime::ShepherdScopeActivity,
+}
+
+pub(super) struct ProjectPreparationPageState {
+    pub projects: Vec<Project>,
+    pub project: Project,
+    pub preparation: ProjectRuntimePreparation,
+    pub effective_sandbox_image: String,
 }
 
 pub(super) struct ThreadPageState {
@@ -246,7 +254,7 @@ pub(super) fn detect_remote_flake(repo_url: &str, branch: Option<&str>) -> Resul
         .map_err(|error| format!("Could not inspect the repository flake: {}", error))
 }
 
-pub(super) async fn persist_project_and_start_survey(
+pub(super) async fn persist_project_and_start_runtime_preparation(
     name: String,
     repo_url: String,
     branch: Option<String>,
@@ -265,9 +273,9 @@ pub(super) async fn persist_project_and_start_survey(
     .await
     .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
 
-    if let Err(e) = shepherd_runtime::launch_project_survey_thread(project.id).await {
-        tracing::warn!(project_id = project.id, error = %e, "auto survey thread launch failed after project creation");
-    }
+    ensure_project_runtime_preparation_started(project.id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
     Ok(project)
 }
@@ -350,6 +358,29 @@ pub(super) async fn load_project_page_state(project_id: i64) -> Result<ProjectPa
         threads: resolved_threads,
         history,
         activity,
+    })
+}
+
+pub(super) async fn load_project_preparation_state(
+    project_id: i64,
+) -> Result<ProjectPreparationPageState, String> {
+    let projects = app::list_projects().await?;
+    let project = projects
+        .iter()
+        .find(|item| item.id == project_id)
+        .cloned()
+        .ok_or_else(|| format!("Unknown project {}", project_id))?;
+    let preparation = ensure_project_runtime_preparation_started(project_id).await?;
+    let effective_sandbox_image = project
+        .sandbox_image
+        .clone()
+        .unwrap_or_else(current_default_sandbox_image);
+
+    Ok(ProjectPreparationPageState {
+        projects,
+        project,
+        preparation,
+        effective_sandbox_image,
     })
 }
 

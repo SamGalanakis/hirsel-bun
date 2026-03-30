@@ -5,7 +5,8 @@ use tokio::sync::OnceCell;
 
 use super::focus::default_project_focus_html;
 use super::types::{
-    CreateProjectRequest, Project, ProjectFocusView, ProjectRetainedContext, UpdateProjectRequest,
+    CreateProjectRequest, Project, ProjectFocusView, ProjectPreparationStep,
+    ProjectRetainedContext, ProjectRuntimePreparation, UpdateProjectRequest,
 };
 use crate::backend::db::{global_pool, utc_now};
 
@@ -38,10 +39,21 @@ CREATE TABLE IF NOT EXISTS project_retained_contexts (
     source TEXT,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS project_runtime_preparations (
+    project_id INTEGER PRIMARY KEY,
+    status TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    detail TEXT,
+    progress REAL NOT NULL,
+    steps_json TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 "#;
 
 const SCHEMA_VERSION_KEY: &str = "project_thread_model_version";
-const SCHEMA_VERSION: &str = "6";
+const SCHEMA_VERSION: &str = "7";
 
 static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
 
@@ -98,6 +110,7 @@ async fn reset_project_domain(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 DROP TABLE IF EXISTS projects;
 DROP TABLE IF EXISTS project_focus_views;
 DROP TABLE IF EXISTS project_retained_contexts;
+DROP TABLE IF EXISTS project_runtime_preparations;
 DROP TABLE IF EXISTS shepherd_threads;
 DROP TABLE IF EXISTS shepherd_chat_messages;
 DROP TABLE IF EXISTS shepherd_live_turns;
@@ -338,6 +351,10 @@ impl ProjectStore {
             .bind(id)
             .execute(pool)
             .await;
+        let _ = sqlx::query("DELETE FROM project_runtime_preparations WHERE project_id = ?")
+            .bind(id)
+            .execute(pool)
+            .await;
         let _ = sqlx::query("DELETE FROM projects WHERE id = ?")
             .bind(id)
             .execute(pool)
@@ -482,6 +499,63 @@ impl ProjectStore {
         self.get_project(id).await
     }
 
+    pub async fn get_project_runtime_preparation(
+        &self,
+        id: i64,
+    ) -> ProjectResult<Option<ProjectRuntimePreparation>> {
+        let pool = self.pool().await;
+        let _ = self.get_project(id).await?;
+
+        let row = sqlx::query(
+            "SELECT project_id, status, headline, detail, progress, steps_json, started_at, updated_at
+             FROM project_runtime_preparations
+             WHERE project_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+
+        row.map(Self::row_to_project_runtime_preparation)
+            .transpose()
+    }
+
+    pub async fn save_project_runtime_preparation(
+        &self,
+        state: &ProjectRuntimePreparation,
+    ) -> ProjectResult<ProjectRuntimePreparation> {
+        let pool = self.pool().await;
+        let _ = self.get_project(state.project_id).await?;
+        let steps_json = serde_json::to_string(&state.steps).map_err(|error| {
+            ProjectError::InvalidInput(format!("Invalid preparation steps: {}", error))
+        })?;
+
+        sqlx::query(
+            "INSERT INTO project_runtime_preparations (
+                project_id, status, headline, detail, progress, steps_json, started_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(project_id) DO UPDATE SET
+                status = excluded.status,
+                headline = excluded.headline,
+                detail = excluded.detail,
+                progress = excluded.progress,
+                steps_json = excluded.steps_json,
+                started_at = excluded.started_at,
+                updated_at = excluded.updated_at",
+        )
+        .bind(state.project_id)
+        .bind(&state.status)
+        .bind(&state.headline)
+        .bind(&state.detail)
+        .bind(state.progress)
+        .bind(&steps_json)
+        .bind(&state.started_at)
+        .bind(&state.updated_at)
+        .execute(pool)
+        .await?;
+
+        Ok(state.clone())
+    }
+
     fn row_to_project(row: &sqlx::sqlite::SqliteRow) -> Project {
         let starting_point_json: String = row.get("starting_point_json");
         let starting_point = serde_json::from_str(&starting_point_json)
@@ -498,6 +572,26 @@ impl ProjectStore {
             x: row.get("x"),
             y: row.get("y"),
         }
+    }
+
+    fn row_to_project_runtime_preparation(
+        row: sqlx::sqlite::SqliteRow,
+    ) -> ProjectResult<ProjectRuntimePreparation> {
+        let steps_json: String = row.get("steps_json");
+        let steps: Vec<ProjectPreparationStep> =
+            serde_json::from_str(&steps_json).map_err(|error| {
+                ProjectError::InvalidInput(format!("Invalid preparation steps JSON: {}", error))
+            })?;
+        Ok(ProjectRuntimePreparation {
+            project_id: row.get("project_id"),
+            status: row.get("status"),
+            headline: row.get("headline"),
+            detail: row.get("detail"),
+            progress: row.get("progress"),
+            steps,
+            started_at: row.get("started_at"),
+            updated_at: row.get("updated_at"),
+        })
     }
 }
 

@@ -16,6 +16,10 @@ pub fn render_thread_detail_main(project: &Project, item: &ThreadPanelState) -> 
         "/app/projects/{}/threads/{}/chat/send",
         project.id, thread.id
     );
+    let stop_action = format!(
+        "/app/projects/{}/threads/{}/chat/stop",
+        project.id, thread.id
+    );
 
     html! {
         section id="thread-detail-main" class="main-panel main-panel-wide" {
@@ -72,6 +76,7 @@ pub fn render_thread_detail_main(project: &Project, item: &ThreadPanelState) -> 
                 &form_action,
                 "Send guidance to this thread...",
                 None,
+                Some(&stop_action),
             ))
         }
     }

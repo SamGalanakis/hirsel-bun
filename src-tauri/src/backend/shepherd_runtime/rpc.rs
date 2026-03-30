@@ -80,6 +80,15 @@ pub enum ServerControlRequest {
         #[serde(default)]
         focus: Option<ShepherdTaskFocus>,
     },
+    CreateThread {
+        project_id: i64,
+        title: String,
+        objective: String,
+        summary: String,
+    },
+    InterruptScopeTurn {
+        scope: ShepherdScope,
+    },
     StopScopeSession {
         scope: ShepherdScope,
     },

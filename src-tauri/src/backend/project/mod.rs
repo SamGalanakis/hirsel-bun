@@ -10,12 +10,18 @@
 //! - many visible threads
 
 mod focus;
+mod prepare;
 mod store;
 mod types;
 
 pub use focus::validate_project_focus_view_html;
+pub use prepare::{
+    ensure_project_runtime_preparation_started, get_project_runtime_preparation,
+    project_runtime_is_ready, retry_project_runtime_preparation,
+};
 pub use store::{ProjectError, ProjectResult, ProjectStore};
 pub use types::{
-    CreateProjectRequest, Project, ProjectFocusView, ProjectRetainedContext,
-    ProjectSurfaceSnapshot, UpdateProjectRequest,
+    CreateProjectRequest, Project, ProjectFocusView, ProjectPreparationStep,
+    ProjectRetainedContext, ProjectRuntimePreparation, ProjectSurfaceSnapshot,
+    UpdateProjectRequest,
 };

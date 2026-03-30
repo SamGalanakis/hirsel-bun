@@ -941,6 +941,20 @@ a.thread-card {
   bottom: 3px;
 }
 
+.chat-stop-btn {
+  cursor: pointer;
+  border: none;
+  font-family: var(--font-body);
+  font-size: 11px;
+}
+.chat-stop-btn:hover {
+  filter: brightness(1.2);
+}
+.chat-stop-btn svg {
+  width: 10px;
+  height: 10px;
+}
+
 /* ═══════════════════════════════════════
    7. PAGES
    ═══════════════════════════════════════ */
@@ -988,6 +1002,118 @@ a.thread-card {
 .field-help { margin-top: var(--sp-2); color: var(--text-dim); font-size: 11px; line-height: 1.5; }
 .field-help code { color: var(--text-2); }
 
+.project-prep-shell { position: relative; overflow: hidden; }
+.project-prep-stage {
+  position: relative;
+  min-height: calc(100vh - 44px);
+  padding: var(--sp-8);
+  display: grid;
+  place-items: center;
+}
+.project-prep-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 14% 18%, rgba(232,163,60,0.14), transparent 32%),
+    radial-gradient(circle at 78% 22%, rgba(138,158,108,0.1), transparent 24%),
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 35%);
+  pointer-events: none;
+}
+.project-prep-card {
+  position: relative;
+  z-index: 1;
+  width: min(1120px, 100%);
+  display: grid;
+  gap: var(--sp-5);
+  padding: clamp(20px, 3vw, 32px);
+  border: 1px solid rgba(232,163,60,0.22);
+  background:
+    linear-gradient(180deg, rgba(26,26,24,0.98), rgba(14,13,11,0.96)),
+    rgba(20,20,18,0.96);
+  box-shadow: 0 20px 80px rgba(0,0,0,0.34);
+}
+.project-prep-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.project-prep-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(220px, 0.75fr);
+  gap: var(--sp-5);
+  align-items: end;
+}
+.project-prep-title {
+  margin-bottom: var(--sp-2);
+  font-size: clamp(22px, 3vw, 34px);
+  line-height: 0.95;
+}
+.project-prep-copy {
+  max-width: 56ch;
+  font-size: 15px;
+}
+.project-prep-progress-block {
+  display: grid;
+  gap: var(--sp-2);
+  justify-items: end;
+}
+.project-prep-progress-track {
+  width: 100%;
+  height: 10px;
+  border: 1px solid rgba(232,228,208,0.16);
+  background: rgba(255,255,255,0.03);
+  overflow: hidden;
+}
+.project-prep-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, rgba(232,163,60,0.42), rgba(232,228,208,0.9));
+  transition: width 220ms ease;
+}
+.project-prep-progress-text {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.project-prep-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
+  gap: var(--sp-5);
+}
+.project-prep-main { display: grid; gap: var(--sp-4); }
+.project-prep-steps { display: grid; gap: var(--sp-3); }
+.project-prep-step {
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+}
+.project-prep-step-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.project-prep-step-head h3 {
+  min-width: 0;
+  flex: 1;
+}
+.project-prep-step-copy {
+  margin-top: var(--sp-2);
+  padding-left: 22px;
+}
+.project-prep-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.project-prep-side { display: grid; gap: var(--sp-3); align-content: start; }
+.project-prep-side-card { background: rgba(255,255,255,0.02); }
+.project-prep-side-card-note {
+  border-color: rgba(138,158,108,0.22);
+  background: linear-gradient(180deg, rgba(138,158,108,0.06), rgba(255,255,255,0.01));
+}
+
 .shell { display: grid; grid-template-columns: 1fr; min-height: 100vh; }
 .main-panel { min-width: 0; padding: var(--sp-6); display: grid; gap: var(--sp-3); align-content: start; }
 .main-panel-narrow { max-width: 600px; margin: 0 auto; width: 100%; }
@@ -1024,6 +1150,13 @@ a.thread-card {
   .field-grid-2 { grid-template-columns: 1fr; }
   .project-setup-row { grid-template-columns: 1fr; gap: 6px; }
   .welcome-page { padding: var(--sp-4) var(--sp-3); }
+  .project-prep-stage { padding: var(--sp-4); }
+  .project-prep-card { padding: var(--sp-4); }
+  .project-prep-hero,
+  .project-prep-grid { grid-template-columns: 1fr; }
+  .project-prep-progress-block { justify-items: start; }
+  .project-prep-step-head,
+  .project-prep-topline { flex-direction: column; align-items: flex-start; }
 }
 
 @media (max-width: 900px) {

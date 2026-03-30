@@ -91,6 +91,17 @@ fn summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
     summary
 }
 
+fn truncate_copy(text: &str, max_chars: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_chars {
+        return trimmed.to_string();
+    }
+
+    let mut out = trimmed.chars().take(max_chars).collect::<String>();
+    out.push_str("...");
+    out
+}
+
 #[derive(Default)]
 struct LiveTurnAccumulator {
     chunks: Vec<ShepherdMessageChunk>,
@@ -353,9 +364,13 @@ async fn run_scope_turn_task(
 
     if let Err(error) = &result {
         let _ = clear_live_turn(&scope).await;
-        let _ = store.set_status(&scope_key, "failed", Some(error)).await;
-        let _ = update_thread_after_turn(&scope, Some(error), Some("failed")).await;
-        let _ = save_system_error(&scope, error).await;
+        if error.contains("interrupted") {
+            let _ = store.set_status(&scope_key, "idle", None).await;
+        } else {
+            let _ = store.set_status(&scope_key, "failed", Some(error)).await;
+            let _ = update_thread_after_turn(&scope, Some(error), Some("failed")).await;
+            let _ = save_system_error(&scope, error).await;
+        }
     }
     clear_scope_active(&scope_key);
     result
@@ -458,6 +473,16 @@ pub async fn send_project_message(
     .await
 }
 
+pub async fn prepare_project_scope_session(project_id: i64) -> Result<(), String> {
+    let scope = ShepherdScope::Project {
+        project_id,
+        workspace_path: None,
+        focus: None,
+    };
+    validate_scope_runtime(&scope).await?;
+    ensure_scope_session(&scope).await.map(|_| ())
+}
+
 pub async fn send_thread_message(
     project_id: i64,
     thread_id: &str,
@@ -478,6 +503,50 @@ pub async fn send_thread_message(
         ));
     }
     send_scope_message(thread_scope(&thread), content, chunks, None).await
+}
+
+async fn create_thread_local(
+    project_id: i64,
+    title: &str,
+    objective: &str,
+    summary: &str,
+) -> Result<ShepherdThread, String> {
+    let (workspace_path, checkout_name) = prepare_thread_checkout(project_id, title).await?;
+    let store = ShepherdThreadStore::open()
+        .await
+        .map_err(|error| format!("failed to open shepherd thread store: {}", error))?;
+    store
+        .create_thread(
+            project_id,
+            title,
+            objective,
+            summary,
+            Some(&workspace_path),
+            Some(&checkout_name),
+        )
+        .await
+        .map_err(|error| format!("failed to create thread '{}': {}", title, error))
+}
+
+pub async fn create_thread(
+    project_id: i64,
+    title: &str,
+    objective: &str,
+) -> Result<ShepherdThread, String> {
+    let summary = truncate_copy(objective, 180);
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        let payload = send_server_control_request(&ServerControlRequest::CreateThread {
+            project_id,
+            title: title.to_string(),
+            objective: objective.to_string(),
+            summary,
+        })
+        .await?
+        .ok_or_else(|| "server control reply did not include a thread payload".to_string())?;
+        return serde_json::from_value(payload)
+            .map_err(|error| format!("failed to decode created thread: {}", error));
+    }
+    create_thread_local(project_id, title, objective, &summary).await
 }
 
 pub async fn get_project_threads(project_id: i64) -> Result<Vec<ShepherdThread>, String> {
@@ -751,6 +820,21 @@ async fn handle_server_control_request(
                 format!("failed to encode response: {}", error)
             })?))
         }
+        ServerControlRequest::CreateThread {
+            project_id,
+            title,
+            objective,
+            summary,
+        } => {
+            let thread = create_thread_local(project_id, &title, &objective, &summary).await?;
+            Ok(Some(serde_json::to_value(thread).map_err(|error| {
+                format!("failed to encode thread: {}", error)
+            })?))
+        }
+        ServerControlRequest::InterruptScopeTurn { scope } => {
+            interrupt_scope_turn_local(&scope).await?;
+            Ok(None)
+        }
         ServerControlRequest::StopScopeSession { scope } => {
             stop_scope_session(&scope).await?;
             Ok(None)
@@ -820,6 +904,35 @@ pub async fn stop_scope_activity(scope: ShepherdScope) -> Result<(), String> {
     stop_scope_session(&scope).await
 }
 
+async fn interrupt_scope_turn_local(scope: &ShepherdScope) -> Result<(), String> {
+    let key = scope_key(scope);
+    let store = ShepherdSessionStore::open()
+        .await
+        .map_err(|error| format!("failed to open session store: {}", error))?;
+    if let Some(session) = store
+        .get_session(&key)
+        .await
+        .map_err(|error| format!("failed to load session: {}", error))?
+    {
+        let socket_path = std::path::Path::new(&session.socket_path);
+        if socket_path.exists() {
+            if let Ok(stream) = connect_worker_socket(socket_path).await {
+                let (_, mut write_half) = stream.into_split();
+                let _ = write_json_line(&mut write_half, &WorkerRequest::Interrupt).await;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn interrupt_scope_turn(scope: ShepherdScope) -> Result<(), String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        send_server_control_request(&ServerControlRequest::InterruptScopeTurn { scope }).await?;
+        return Ok(());
+    }
+    interrupt_scope_turn_local(&scope).await
+}
+
 pub async fn archive_thread(project_id: i64, thread_id: &str) -> Result<(), String> {
     if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
         send_server_control_request(&ServerControlRequest::ArchiveThread {
@@ -842,4 +955,119 @@ pub async fn delete_thread(project_id: i64, thread_id: &str) -> Result<(), Strin
         return Ok(());
     }
     delete_thread_local(project_id, thread_id).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::app;
+    use crate::backend::config::testing::TestEnv;
+    use crate::backend::draft::StartingPoint;
+    use git2::{Repository, Signature};
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    const TEST_FLAKE: &str = r#"
+{
+  description = "hirsel shepherd/thread smoke";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+
+  outputs = { self, nixpkgs }:
+    let
+      system = builtins.currentSystem;
+      pkgs = import nixpkgs { inherit system; };
+    in {
+      devShells.${system}.default = pkgs.mkShell {
+        packages = with pkgs; [
+          bash
+          coreutils
+          findutils
+          gawk
+          git
+          gnugrep
+          gnused
+          jq
+          ripgrep
+          xz
+        ];
+      };
+    };
+}
+"#;
+
+    fn create_local_source_repo() -> TempDir {
+        let dir = TempDir::new().expect("create temp repo");
+        let repo = Repository::init(dir.path()).expect("init repo");
+        std::fs::write(dir.path().join("README.md"), "# smoke\n").expect("write README");
+
+        let mut index = repo.index().expect("index");
+        index
+            .add_path(Path::new("README.md"))
+            .expect("add path to index");
+        index.write().expect("write index");
+        let tree_id = index.write_tree().expect("write tree");
+        let tree = repo.find_tree(tree_id).expect("find tree");
+        let sig = Signature::now("hirsel", "hirsel@test").expect("signature");
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .expect("initial commit");
+        dir
+    }
+
+    #[tokio::test]
+    #[ignore = "smoke test requiring docker and the local worker image"]
+    async fn create_thread_over_server_control_persists_host_workspace_path() {
+        let _env = TestEnv::builder()
+            .with_config(
+                r#"
+[sandbox]
+image = "hirsel-worker:local"
+"#,
+            )
+            .build();
+
+        let source = create_local_source_repo();
+        let project = app::create_project(
+            "smoke".to_string(),
+            StartingPoint::LocalFolder {
+                path: source.path().display().to_string(),
+            },
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("create project");
+
+        let workspace = crate::backend::ensure_project_workspace(project.id)
+            .await
+            .expect("materialize central workspace");
+        std::fs::write(workspace.central_dir.join("flake.nix"), TEST_FLAKE).expect("write flake");
+
+        start_server_control_listener()
+            .await
+            .expect("start server control listener");
+
+        let socket_path = current_server_control_socket_path();
+        std::env::set_var("HIRSEL_SERVER_RPC_SOCKET", &socket_path);
+        let thread = create_thread(project.id, "Smoke thread", "Read only smoke task")
+            .await
+            .expect("create thread through server control");
+        std::env::remove_var("HIRSEL_SERVER_RPC_SOCKET");
+
+        let workspace_path = thread.workspace_path.expect("thread workspace path");
+        let host_root = std::env::var("HIRSEL_ROOT").expect("HIRSEL_ROOT");
+        assert!(
+            workspace_path.starts_with(&host_root),
+            "expected host workspace path under {host_root}, got {workspace_path}"
+        );
+        assert!(
+            !workspace_path.starts_with("/hirsel/"),
+            "thread stored container-local workspace path: {workspace_path}"
+        );
+        assert!(
+            Path::new(&workspace_path).exists(),
+            "thread workspace path does not exist on host: {workspace_path}"
+        );
+    }
 }

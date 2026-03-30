@@ -1,7 +1,7 @@
 use maud::{html, Markup};
 
 use crate::backend::icons::icon;
-use crate::backend::project::{Project, ProjectSurfaceSnapshot};
+use crate::backend::project::{Project, ProjectRuntimePreparation, ProjectSurfaceSnapshot};
 use crate::backend::shepherd_runtime::ShepherdScopeActivity;
 use crate::backend::ShepherdChatMessage;
 
@@ -302,6 +302,219 @@ pub fn render_new_project_page(projects: &[Project], draft: &ProjectCreateDraft)
                             (icon("settings"))
                             "Backend settings"
                         }
+                    }
+                }
+            }
+        },
+    )
+}
+
+fn preparation_status_class(status: &str) -> &'static str {
+    match status {
+        "done" => "status-done",
+        "working" => "status-working",
+        "failed" => "status-failed",
+        _ => "status-blocked",
+    }
+}
+
+fn preparation_status_label(status: &str) -> &'static str {
+    match status {
+        "done" => "done",
+        "working" => "working",
+        "failed" => "failed",
+        _ => "pending",
+    }
+}
+
+pub fn render_project_preparation_panel(
+    project: &Project,
+    preparation: &ProjectRuntimePreparation,
+    effective_sandbox_image: &str,
+) -> Markup {
+    let progress_percent = (preparation.progress * 100.0).round().clamp(0.0, 100.0) as i32;
+    let ready = preparation.status == "done";
+    let failed = preparation.status == "failed";
+
+    html! {
+        article class="project-prep-card" {
+            div class="project-prep-topline" {
+                p class="eyebrow" { "Runtime preparation" }
+                span class=(format!("pill {}", preparation_status_class(&preparation.status))) {
+                    (preparation_status_label(&preparation.status))
+                }
+            }
+
+            div class="project-prep-hero" {
+                div {
+                    h1 class="project-prep-title" { (&preparation.headline) }
+                    @if let Some(detail) = preparation.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+                        p class="muted project-prep-copy" { (detail) }
+                    }
+                }
+                div class="project-prep-progress-block" {
+                    p class="eyebrow" { "Progress" }
+                    div class="project-prep-progress-track" {
+                        div class="project-prep-progress-fill" style=(format!("width: {}%;", progress_percent)) {}
+                    }
+                    p class="project-prep-progress-text" { (format!("{}%", progress_percent)) }
+                }
+            }
+
+            div class="project-prep-grid" {
+                section class="project-prep-main" {
+                    div class="project-prep-steps" {
+                        @for step in &preparation.steps {
+                            article class="project-prep-step" {
+                                div class="project-prep-step-head" {
+                                    h3 {
+                                        @if step.status == "done" {
+                                            (icon("check"))
+                                        } @else if step.status == "working" {
+                                            (icon("refresh-cw"))
+                                        } @else if step.status == "failed" {
+                                            (icon("x"))
+                                        } @else {
+                                            (icon("clock"))
+                                        }
+                                        (&step.label)
+                                    }
+                                    span class=(format!("pill {}", preparation_status_class(&step.status))) {
+                                        (preparation_status_label(&step.status))
+                                    }
+                                }
+                                @if let Some(detail) = step.detail.as_deref().filter(|value| !value.trim().is_empty()) {
+                                    p class="muted project-prep-step-copy" { (detail) }
+                                }
+                            }
+                        }
+                    }
+
+                    @if failed {
+                        form action=(format!("/app/projects/{}/prepare/retry", project.id)) method="post" class="project-prep-actions" {
+                            button type="submit" class="btn btn-primary" {
+                                (icon("refresh-cw"))
+                                "Retry runtime preparation"
+                            }
+                        }
+                    } @else if ready {
+                        div class="project-prep-actions" {
+                            a href=(format!("/app/projects/{}", project.id)) class="btn btn-primary" {
+                                (icon("arrow-left"))
+                                "Enter project"
+                            }
+                        }
+                    }
+                }
+
+                aside class="project-prep-side" {
+                    article class="card project-prep-side-card" {
+                        header {
+                            h3 { (icon("cpu")) "Runtime contract" }
+                        }
+                        section class="project-setup-ledger" {
+                            div class="project-setup-row" {
+                                span class="project-setup-label" { "Project" }
+                                code class="project-setup-value" { (&project.name) }
+                            }
+                            div class="project-setup-row" {
+                                span class="project-setup-label" { "Host image" }
+                                code class="project-setup-value project-setup-value-break" { (effective_sandbox_image) }
+                            }
+                            div class="project-setup-row" {
+                                span class="project-setup-label" { "Repo env" }
+                                span class="project-setup-copy" { "Root flake when present" }
+                            }
+                            div class="project-setup-row" {
+                                span class="project-setup-label" { "Thread rule" }
+                                span class="project-setup-copy" { "Threads wait for flake.nix" }
+                            }
+                        }
+                    }
+
+                    article class="card project-prep-side-card project-prep-side-card-note" {
+                        header {
+                            h3 { (icon("git-branch")) "Flake behavior" }
+                        }
+                        section {
+                            p class="muted" {
+                                "If the repository has no root flake yet, shepherd still starts with the bootstrap environment so it can author one. Normal coding threads stay blocked until that file exists in the central checkout."
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn render_project_preparation_page(
+    projects: &[Project],
+    project: &Project,
+    preparation: &ProjectRuntimePreparation,
+    effective_sandbox_image: &str,
+) -> Markup {
+    let stream_url = format!("/app/projects/{}/prepare/stream", project.id);
+    let redirect_url = format!("/app/projects/{}", project.id);
+
+    app_document(
+        &format!("Preparing {}", project.name),
+        "Warm the worker image, central checkout, and shepherd before chat opens",
+        html! {
+            main
+                class="app-shell project-prep-shell"
+                data-signals:project-picker-open="false"
+                data-signals:prep-ready=(if preparation.status == "done" { "true" } else { "false" })
+                data-signals:prep-error="''"
+                data-signals:prep-redirecting="false"
+                data-signals:prep-redirect=(format!("{:?}", redirect_url))
+                data-effect="if ($prepReady && !$prepRedirecting) { $prepRedirecting = true; setTimeout(() => { window.location.href = $prepRedirect }, 450) }" {
+                div data-init=(format!("@get('{}', {{openWhenHidden: true}})", stream_url)) {}
+
+                header class="titlebar" {
+                    div class="titlebar-left" {
+                        a href="/app" class="brandmark" { "HIRSEL" }
+                        div class="title-divider" {}
+                        div class="project-picker" {
+                            button type="button" class="btn btn-sm btn-ghost project-chip" data-on:click="$projectPickerOpen = !$projectPickerOpen" {
+                                (icon("folder"))
+                                (&project.name)
+                                (icon("chevron-down"))
+                            }
+                            div class="project-dropdown" data-show="$projectPickerOpen" {
+                                @for p in projects {
+                                    @if p.id == project.id {
+                                        span class="project-dropdown-item current" {
+                                            (icon("folder"))
+                                            (&p.name)
+                                            (icon("check"))
+                                        }
+                                    } @else {
+                                        a href=(format!("/app/projects/{}", p.id)) class="project-dropdown-item" {
+                                            (icon("folder"))
+                                            (&p.name)
+                                        }
+                                    }
+                                }
+                                hr {}
+                                a href="/app/new" class="project-dropdown-item" {
+                                    (icon("plus"))
+                                    "New project"
+                                }
+                            }
+                        }
+                    }
+                    div class="titlebar-right" {
+                        a href="/app/settings" class="btn-icon" data-tooltip="Settings" {
+                            (icon("settings"))
+                        }
+                    }
+                }
+
+                section class="project-prep-stage" {
+                    div class="project-prep-backdrop" {}
+                    div id="project-preparation-panel" {
+                        (render_project_preparation_panel(project, preparation, effective_sandbox_image))
                     }
                 }
             }

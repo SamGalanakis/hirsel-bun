@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use crate::backend::prepare_thread_checkout;
 use crate::backend::project::{validate_project_focus_view_html, ProjectStore};
 use crate::backend::{ShepherdChatMessage, ShepherdThread, ShepherdThreadStore};
 use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
@@ -8,7 +7,8 @@ use serde_json::{json, Value};
 use walkdir::WalkDir;
 
 use super::commands::{
-    archive_thread, delete_thread, get_thread_activity, get_thread_conversation, send_scope_message,
+    archive_thread, create_thread, delete_thread, get_thread_activity, get_thread_conversation,
+    send_scope_message,
 };
 use super::types::{ShepherdMessageChunk, ShepherdScope};
 
@@ -430,29 +430,13 @@ impl ShepherdToolProvider {
             None => return ToolResult::err_fmt("Missing required parameter: title"),
         };
         let objective = Self::trimmed_string(args, "objective").unwrap_or(title);
-        let summary = truncate_copy(objective, 180);
-        let (workspace_path, checkout_name) = match prepare_thread_checkout(project_id, title).await
-        {
-            Ok(result) => result,
-            Err(error) => return ToolResult::err(json!({ "error": error })),
-        };
         let store = match self.thread_store().await {
             Ok(store) => store,
             Err(error) => return error,
         };
-        let mut thread = match store
-            .create_thread(
-                project_id,
-                title,
-                objective,
-                &summary,
-                Some(&workspace_path),
-                Some(&checkout_name),
-            )
-            .await
-        {
+        let mut thread = match create_thread(project_id, title, objective).await {
             Ok(thread) => thread,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+            Err(error) => return ToolResult::err(json!({ "error": error })),
         };
 
         if let Some(status) =

@@ -69,6 +69,7 @@ pub(crate) fn render_conversation_panel(
     form_action: &str,
     form_placeholder: &str,
     active_threads_label: Option<String>,
+    stop_action: Option<&str>,
 ) -> Markup {
     let active_threads_label = active_threads_label.filter(|value| !value.trim().is_empty());
     let session_status = activity
@@ -83,8 +84,15 @@ pub(crate) fn render_conversation_panel(
         .filter(|value| !value.trim().is_empty());
     let input_disabled = activity.has_active_turn;
 
+    let can_stop = input_disabled && stop_action.is_some();
+
     html! {
-        section id=(panel_id) class="chat-panel shepherd-chat-panel" {
+        section id=(panel_id) class="chat-panel shepherd-chat-panel"
+            data-on:keydown__window=[can_stop.then(|| format!(
+                "if (event.key === 'Escape') @post('{}')",
+                stop_action.unwrap_or_default()
+            ))]
+        {
             header class="conversation-header" {
                 p class="eyebrow" { (header_eyebrow) }
                 @if !header_copy.is_empty() {
@@ -117,7 +125,16 @@ pub(crate) fn render_conversation_panel(
                 )) {
                 @if input_disabled || last_error.is_some() || active_threads_label.is_some() {
                     div class="chat-status-bar" {
-                        @if input_disabled {
+                        @if can_stop {
+                            button
+                                type="button"
+                                class="pill status-working chat-stop-btn"
+                                data-on:click__prevent=(format!("@post('{}')", stop_action.unwrap_or_default()))
+                            {
+                                (icon("square"))
+                                "Stop"
+                            }
+                        } @else if input_disabled {
                             span class="pill status-working" { "Working" }
                         } @else {
                             span class=(format!("pill status-{}", session_status)) { (session_status) }
@@ -168,6 +185,7 @@ pub fn render_chat_panel(
         .collect::<Vec<_>>();
     let form_id = format!("chat-send-form-{}", project_id);
     let form_action = format!("/app/projects/{}/chat/send", project_id);
+    let stop_action = format!("/app/projects/{}/chat/stop", project_id);
     let active_threads_label = (!active_threads.is_empty()).then(|| {
         let n = active_threads.len();
         if n == 1 {
@@ -191,5 +209,6 @@ pub fn render_chat_panel(
         &form_action,
         "Ask shepherd to answer, plan, or manage threads...",
         active_threads_label,
+        Some(&stop_action),
     )
 }

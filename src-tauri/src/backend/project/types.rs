@@ -56,6 +56,30 @@ pub struct ProjectSurfaceSnapshot {
     pub focus_view: ProjectFocusView,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectPreparationStep {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRuntimePreparation {
+    pub project_id: i64,
+    pub status: String,
+    pub headline: String,
+    #[serde(default)]
+    pub detail: Option<String>,
+    pub progress: f64,
+    pub steps: Vec<ProjectPreparationStep>,
+    pub started_at: String,
+    pub updated_at: String,
+}
+
 /// Request to create a new project
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

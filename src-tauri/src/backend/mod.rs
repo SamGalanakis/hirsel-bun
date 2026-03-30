@@ -34,7 +34,9 @@ pub use draft::{
 };
 pub use error::{ErrorKind, HirselError, HirselResult};
 pub use project::{
-    CreateProjectRequest, Project, ProjectError, ProjectResult, ProjectStore, UpdateProjectRequest,
+    ensure_project_runtime_preparation_started, get_project_runtime_preparation,
+    project_runtime_is_ready, retry_project_runtime_preparation, CreateProjectRequest, Project,
+    ProjectError, ProjectResult, ProjectRuntimePreparation, ProjectStore, UpdateProjectRequest,
 };
 pub use sandbox::{ensure_docker_available, humanize_docker_error, SandboxConfig, SandboxError};
 pub use shepherd_chat::{

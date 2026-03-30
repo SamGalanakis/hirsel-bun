@@ -46,6 +46,35 @@ pub async fn send_thread_message(
     Ok(Sse::new(stream))
 }
 
+pub async fn stop_thread_chat(
+    Path((project_id, thread_id)): Path<(i64, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let thread_store = crate::backend::ShepherdThreadStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let thread = thread_store
+        .get_thread(&thread_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let scope = shepherd_runtime::ShepherdScope::Thread {
+        project_id,
+        thread_id: thread.id.clone(),
+        title: thread.title.clone(),
+        workspace_path: thread.workspace_path.clone(),
+        focus: None,
+    };
+    shepherd_runtime::interrupt_scope_turn(scope)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let stream = stream! {
+        if let Ok(page) = load_thread_page_state(project_id, &thread_id, 200).await {
+            let markup = render_thread_detail_main(&page.project, &page.item).into_string();
+            yield Ok::<Event, Infallible>(patch_elements("#thread-detail-main", markup));
+        }
+    };
+    Ok(Sse::new(stream))
+}
+
 pub async fn thread_detail_page(
     State(state): State<Arc<AppState>>,
     Path((project_id, thread_id)): Path<(i64, String)>,

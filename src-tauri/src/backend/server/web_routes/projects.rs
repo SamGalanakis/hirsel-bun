@@ -10,16 +10,20 @@ use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::backend::webui::{
     render_chat_panel, render_focus_document, render_new_project_page, render_project_focus_stage,
-    render_project_page, render_project_settings_page, render_threads_panel,
+    render_project_page, render_project_preparation_page, render_project_preparation_panel,
+    render_project_settings_page, render_threads_panel,
 };
-use crate::backend::{app, shepherd_runtime};
+use crate::backend::{
+    app, ensure_project_runtime_preparation_started, humanize_docker_error,
+    project_runtime_is_ready, retry_project_runtime_preparation, shepherd_runtime,
+};
 
 use super::super::AppState;
 use super::support::{
     current_default_sandbox_image, detect_remote_flake, draft_from_confirm_form, draft_from_form,
     ensure_llm_ready, humanize_chat_send_error, load_project_page_state,
-    normalize_project_sandbox_image, patch_elements, patch_signals,
-    persist_project_and_start_survey, validate_remote_project_source, ChatSendForm,
+    load_project_preparation_state, normalize_project_sandbox_image, patch_elements, patch_signals,
+    persist_project_and_start_runtime_preparation, validate_remote_project_source, ChatSendForm,
     ConfirmCreateProjectForm, CreateProjectForm, RemoteProjectValidation, UpdateProjectForm,
 };
 
@@ -206,7 +210,7 @@ pub async fn create_project(
         }
     };
 
-    let project = persist_project_and_start_survey(
+    let project = persist_project_and_start_runtime_preparation(
         form.name,
         parsed.repo_url,
         requested_branch,
@@ -214,7 +218,7 @@ pub async fn create_project(
     )
     .await?;
 
-    Ok(Redirect::to(&format!("/app/projects/{}", project.id)).into_response())
+    Ok(Redirect::to(&format!("/app/projects/{}/prepare", project.id)).into_response())
 }
 
 pub async fn confirm_create_project(
@@ -267,11 +271,98 @@ pub async fn confirm_create_project(
         return Ok(render_new_project_page(&projects, &draft).into_response());
     }
 
-    let project =
-        persist_project_and_start_survey(form.name, parsed.repo_url, Some(branch), sandbox_image)
-            .await?;
+    let project = persist_project_and_start_runtime_preparation(
+        form.name,
+        parsed.repo_url,
+        Some(branch),
+        sandbox_image,
+    )
+    .await?;
 
-    Ok(Redirect::to(&format!("/app/projects/{}", project.id)).into_response())
+    Ok(Redirect::to(&format!("/app/projects/{}/prepare", project.id)).into_response())
+}
+
+pub async fn project_preparation_page(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<i64>,
+) -> Result<Response, (StatusCode, String)> {
+    let return_to = format!("/app/projects/{}/prepare", project_id);
+    if let Err(response) = ensure_llm_ready(&state, &return_to).await {
+        return Ok(response);
+    }
+
+    let page = load_project_preparation_state(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(render_project_preparation_page(
+        &page.projects,
+        &page.project,
+        &page.preparation,
+        &page.effective_sandbox_image,
+    )
+    .into_response())
+}
+
+pub async fn retry_project_preparation(
+    Path(project_id): Path<i64>,
+) -> Result<Redirect, (StatusCode, String)> {
+    retry_project_runtime_preparation(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, humanize_docker_error(&e)))?;
+    Ok(Redirect::to(&format!(
+        "/app/projects/{}/prepare",
+        project_id
+    )))
+}
+
+pub async fn project_preparation_stream(Path(project_id): Path<i64>) -> impl IntoResponse {
+    let stream = stream! {
+        let mut last_panel = String::new();
+        let mut last_ready = None;
+
+        if let Err(error) = ensure_project_runtime_preparation_started(project_id).await {
+            let escaped = serde_json::to_string(&humanize_docker_error(&error))
+                .unwrap_or_else(|_| "\"Failed to warm the runtime.\"".to_string());
+            yield Ok::<Event, Infallible>(patch_signals(format!("{{prepError: {}, prepReady: false}}", escaped)));
+            return;
+        }
+
+        loop {
+            match load_project_preparation_state(project_id).await {
+                Ok(page) => {
+                    let panel = render_project_preparation_panel(
+                        &page.project,
+                        &page.preparation,
+                        &page.effective_sandbox_image,
+                    )
+                    .into_string();
+                    if panel != last_panel {
+                        last_panel = panel.clone();
+                        yield Ok::<Event, Infallible>(patch_elements("#project-preparation-panel", panel));
+                    }
+
+                    let ready = page.preparation.status == "done";
+                    if last_ready != Some(ready) {
+                        last_ready = Some(ready);
+                        yield Ok::<Event, Infallible>(patch_signals(format!("{{prepReady: {}}}", if ready { "true" } else { "false" })));
+                    }
+
+                    if ready {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let escaped = serde_json::to_string(&error)
+                        .unwrap_or_else(|_| "\"Failed to refresh project preparation state.\"".to_string());
+                    yield Ok::<Event, Infallible>(patch_signals(format!("{{prepError: {}, prepReady: false}}", escaped)));
+                }
+            }
+
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    };
+
+    Sse::new(stream)
 }
 
 pub async fn project_page(
@@ -281,6 +372,16 @@ pub async fn project_page(
     let return_to = format!("/app/projects/{}", project_id);
     if let Err(response) = ensure_llm_ready(&state, &return_to).await {
         return Ok(response);
+    }
+
+    if !project_runtime_is_ready(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?
+    {
+        ensure_project_runtime_preparation_started(project_id)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, humanize_docker_error(&e)))?;
+        return Ok(Redirect::to(&format!("/app/projects/{}/prepare", project_id)).into_response());
     }
 
     let page = load_project_page_state(project_id)
@@ -320,6 +421,34 @@ pub async fn send_chat_message(
     Form(form): Form<ChatSendForm>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let stream = stream! {
+        match project_runtime_is_ready(project_id).await {
+            Ok(false) => {
+                let message = "The project runtime is still warming. Wait for setup to finish before chatting.".to_string();
+                let escaped_message = serde_json::to_string(&message)
+                    .unwrap_or_else(|_| "\"Project runtime is still warming.\"".to_string());
+                let escaped_draft = serde_json::to_string(&form.content)
+                    .unwrap_or_else(|_| "\"\"".to_string());
+                yield Ok::<Event, Infallible>(patch_signals(format!(
+                    "{{chatDraft: {}, chatError: {}}}",
+                    escaped_draft, escaped_message
+                )));
+                return;
+            }
+            Err(error) => {
+                let message = humanize_chat_send_error(error);
+                let escaped_message = serde_json::to_string(&message)
+                    .unwrap_or_else(|_| "\"Failed to send message.\"".to_string());
+                let escaped_draft = serde_json::to_string(&form.content)
+                    .unwrap_or_else(|_| "\"\"".to_string());
+                yield Ok::<Event, Infallible>(patch_signals(format!(
+                    "{{chatDraft: {}, chatError: {}}}",
+                    escaped_draft, escaped_message
+                )));
+                return;
+            }
+            Ok(true) => {}
+        }
+
         match shepherd_runtime::send_project_message(project_id, Some(form.content.clone()), None).await {
             Ok(_) => {
                 yield Ok::<Event, Infallible>(patch_signals("{chatDraft: '', chatError: ''}"));
@@ -341,6 +470,28 @@ pub async fn send_chat_message(
                     escaped_draft, escaped_message
                 )));
             }
+        }
+    };
+    Ok(Sse::new(stream))
+}
+
+pub async fn stop_chat(
+    Path(project_id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let scope = shepherd_runtime::ShepherdScope::Project {
+        project_id,
+        workspace_path: None,
+        focus: None,
+    };
+    shepherd_runtime::interrupt_scope_turn(scope)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    let stream = stream! {
+        if let Ok(page) = load_project_page_state(project_id).await {
+            let chat_markup =
+                render_chat_panel(page.project.id, &page.threads, &page.history, &page.activity)
+                    .into_string();
+            yield Ok::<Event, Infallible>(patch_elements("#chat-panel", chat_markup));
         }
     };
     Ok(Sse::new(stream))

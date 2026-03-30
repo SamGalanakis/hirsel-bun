@@ -21,7 +21,8 @@ pub use connect::render_connect_page;
 pub use conversation::render_chat_panel;
 pub use focus::{render_focus_document, render_project_focus_stage};
 pub use projects::{
-    render_new_project_page, render_project_page, ProjectCreateDraft, ProjectCreateReview,
+    render_new_project_page, render_project_page, render_project_preparation_page,
+    render_project_preparation_panel, ProjectCreateDraft, ProjectCreateReview,
 };
 pub use settings::{render_project_settings_page, render_settings_page};
 pub use thread_detail::{render_thread_detail_main, render_thread_detail_page};

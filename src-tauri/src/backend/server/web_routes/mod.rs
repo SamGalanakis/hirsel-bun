@@ -44,6 +44,18 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/app/settings/codex/stream",
             get(settings::stream_codex_device),
         )
+        .route(
+            "/app/projects/{project_id}/prepare",
+            get(projects::project_preparation_page),
+        )
+        .route(
+            "/app/projects/{project_id}/prepare/stream",
+            get(projects::project_preparation_stream),
+        )
+        .route(
+            "/app/projects/{project_id}/prepare/retry",
+            post(projects::retry_project_preparation),
+        )
         .route("/app/projects/{project_id}", get(projects::project_page))
         .route(
             "/app/projects/{project_id}/focus",
@@ -58,6 +70,10 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             post(projects::send_chat_message),
         )
         .route(
+            "/app/projects/{project_id}/chat/stop",
+            post(projects::stop_chat),
+        )
+        .route(
             "/app/projects/{project_id}/threads/{thread_id}",
             get(threads::thread_detail_page),
         )
@@ -68,6 +84,10 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route(
             "/app/projects/{project_id}/threads/{thread_id}/chat/send",
             post(threads::send_thread_message),
+        )
+        .route(
+            "/app/projects/{project_id}/threads/{thread_id}/chat/stop",
+            post(threads::stop_thread_chat),
         )
         .route(
             "/app/projects/{project_id}/settings",
