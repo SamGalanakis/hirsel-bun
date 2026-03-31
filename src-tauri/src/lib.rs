@@ -146,13 +146,13 @@ pub fn init_process_tracing(process_role: &str) {
 pub fn run_desktop() {
     init_process_tracing("desktop");
 
-    let builder =
-        tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             // When a second instance tries to launch, focus the existing window
             use tauri::Manager;
             tracing::info!("Second instance attempted with args: {:?}", args);
             if let Some(window) = app.get_webview_window("main") {
-                // Unminimize if minimized, then focus
                 let _ = window.unminimize();
                 let _ = window.set_focus();
             }
@@ -196,31 +196,37 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
 
     let mut initial_url = WebviewUrl::App("index.html".into());
     let backend = config.backend.clone();
-    if let (Some(url), Some(api_key)) = (backend.url, backend.api_key) {
-        if !url.trim().is_empty() && !api_key.trim().is_empty() {
+    if let Some(url) = backend.url.filter(|value| !value.trim().is_empty()) {
+        let api_key = backend.api_key.filter(|value| !value.trim().is_empty());
+        {
             let rt = tokio::runtime::Runtime::new()
                 .expect("Failed to create tokio runtime for backend bootstrap");
             let should_open = rt.block_on(async {
                 let client = reqwest::Client::new();
-                match client
-                    .get(format!("{}/health", url.trim_end_matches('/')))
-                    .bearer_auth(&api_key)
-                    .send()
-                    .await
-                {
+                let mut request = client.get(format!("{}/health", url.trim_end_matches('/')));
+                if let Some(api_key) = api_key.as_deref() {
+                    request = request.bearer_auth(api_key);
+                }
+                match request.send().await {
                     Ok(response) => response.status().is_success(),
                     Err(_) => false,
                 }
             });
 
             if should_open {
-                let mut bootstrap = format!("{}/connect/bootstrap", url.trim_end_matches('/'))
-                    .parse::<tauri::Url>()?;
-                bootstrap
-                    .query_pairs_mut()
-                    .append_pair("api_key", &api_key)
-                    .append_pair("return_to", "/app");
-                initial_url = WebviewUrl::External(bootstrap);
+                if let Some(api_key) = api_key {
+                    let mut bootstrap = format!("{}/connect/bootstrap", url.trim_end_matches('/'))
+                        .parse::<tauri::Url>()?;
+                    bootstrap
+                        .query_pairs_mut()
+                        .append_pair("api_key", &api_key)
+                        .append_pair("return_to", "/app");
+                    initial_url = WebviewUrl::External(bootstrap);
+                } else {
+                    let app_url =
+                        format!("{}/app", url.trim_end_matches('/')).parse::<tauri::Url>()?;
+                    initial_url = WebviewUrl::External(app_url);
+                }
             }
         }
     }

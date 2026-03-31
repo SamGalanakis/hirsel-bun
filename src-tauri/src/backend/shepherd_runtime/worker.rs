@@ -23,7 +23,7 @@ use super::runtime::{
 use super::tools::ShepherdToolProvider;
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::backend::app::ResultExt;
-use crate::backend::credentials::CredentialStore;
+use crate::backend::credentials::require_tavily_api_key;
 use crate::backend::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
 use crate::backend::llm_provider;
 use crate::backend::{ShepherdChatMessage, ShepherdChatStore, ShepherdThreadStore};
@@ -109,13 +109,6 @@ fn result_summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
         summary.push_str("...");
     }
     summary
-}
-
-async fn load_tavily_api_key() -> Option<String> {
-    match CredentialStore::open().await {
-        Ok(store) => store.load("tavily_api_key").await.ok(),
-        Err(_) => None,
-    }
 }
 
 fn plan_tracker_prompt_contributions() -> Vec<PromptContribution> {
@@ -207,7 +200,7 @@ async fn build_runtime_services(
     let mut plugin_factories = embedded_tool_plugin_factories(
         "hirsel_shepherd_tools",
         Arc::clone(&tools),
-        load_tavily_api_key().await,
+        require_tavily_api_key().await?.api_key,
     );
     plugin_factories.push(Arc::new(EmbeddedPlanTrackerPluginFactory));
     let plugin_host = PluginHost::new(plugin_factories).with_dynamic_tools();

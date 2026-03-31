@@ -19,7 +19,6 @@ impl ProjectLifecycleService {
             let _ = store.set_project_icon(project.id, Some(&icon_url)).await;
         }
 
-        let _ = store.get_project_focus_view(project.id).await;
         let _ = store.get_project_retained_context(project.id).await;
 
         store

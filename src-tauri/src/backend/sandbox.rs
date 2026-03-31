@@ -20,6 +20,7 @@ fn default_image() -> String {
 ///
 /// Agents always run in Docker containers and enter the project through Nix.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SandboxConfig {
     #[serde(default = "default_image")]
     pub image: String,

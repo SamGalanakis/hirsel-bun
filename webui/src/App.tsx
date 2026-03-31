@@ -1,4 +1,4 @@
-import { type Component, createEffect, createSignal, on, onCleanup, Show } from "solid-js";
+import { type Component, createSignal, onCleanup, onMount, Show } from "solid-js";
 import ConnectPage from "@/pages/ConnectPage";
 import ProjectPage from "@/pages/ProjectPage";
 import ThreadDetailPage from "@/pages/ThreadDetailPage";
@@ -58,7 +58,7 @@ const App: Component = () => {
     }
   };
 
-  createEffect(() => {
+  onMount(() => {
     navigate();
     window.addEventListener("hashchange", navigate);
     onCleanup(() => window.removeEventListener("hashchange", navigate));

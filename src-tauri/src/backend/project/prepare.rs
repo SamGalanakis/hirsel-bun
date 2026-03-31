@@ -4,6 +4,7 @@ use std::sync::{Mutex, OnceLock};
 use super::types::{ProjectPreparationStep, ProjectRuntimePreparation};
 use super::ProjectStore;
 use crate::backend::config::Config;
+use crate::backend::credentials::require_tavily_api_key;
 use crate::backend::db::utc_now;
 use crate::backend::sandbox::ensure_sandbox_image_available_with_progress;
 use crate::backend::shepherd_runtime::{
@@ -11,6 +12,7 @@ use crate::backend::shepherd_runtime::{
 };
 use crate::backend::workspace::ensure_project_workspace;
 
+const STEP_TAVILY: &str = "tavily";
 const STEP_IMAGE: &str = "image";
 const STEP_WORKSPACE: &str = "workspace";
 const STEP_SHEPHERD: &str = "shepherd";
@@ -70,11 +72,18 @@ fn build_state(project_id: i64, image: &str) -> ProjectRuntimePreparation {
     let now = utc_now();
     let steps = vec![
         ProjectPreparationStep {
+            id: STEP_TAVILY.to_string(),
+            label: "Resolve web tools".to_string(),
+            status: "working".to_string(),
+            detail: Some("Checking the required Tavily search key.".to_string()),
+            progress: Some(0.06),
+        },
+        ProjectPreparationStep {
             id: STEP_IMAGE.to_string(),
             label: "Resolve worker image".to_string(),
-            status: "working".to_string(),
+            status: "pending".to_string(),
             detail: Some(format!("Preparing container substrate `{}`.", image)),
-            progress: Some(0.06),
+            progress: Some(0.0),
         },
         ProjectPreparationStep {
             id: STEP_WORKSPACE.to_string(),
@@ -168,6 +177,30 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
     save_state(&state).await?;
 
     let result = async {
+        let tavily = require_tavily_api_key().await?;
+        advance_step(
+            &mut state,
+            STEP_TAVILY,
+            "done",
+            Some(match tavily.source {
+                crate::backend::credentials::CredentialSource::Env => {
+                    "Required Tavily key loaded from the environment.".to_string()
+                }
+                crate::backend::credentials::CredentialSource::Store => {
+                    "Required Tavily key loaded from saved settings.".to_string()
+                }
+            }),
+            Some(1.0),
+        );
+        advance_step(
+            &mut state,
+            STEP_IMAGE,
+            "working",
+            Some(format!("Preparing container substrate `{}`.", image)),
+            Some(0.06),
+        );
+        save_state(&state).await?;
+
         ensure_sandbox_image_available_with_progress(&image, |update| {
             advance_step(
                 &mut state,
@@ -254,6 +287,10 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
                 Some(error.clone()),
                 None,
             );
+        } else if step_mut(&mut state, STEP_IMAGE).is_some_and(|step| step.status == "working") {
+            advance_step(&mut state, STEP_IMAGE, "failed", Some(error.clone()), None);
+        } else if step_mut(&mut state, STEP_TAVILY).is_some_and(|step| step.status == "working") {
+            advance_step(&mut state, STEP_TAVILY, "failed", Some(error.clone()), None);
         } else if step_mut(&mut state, STEP_WORKSPACE).is_some_and(|step| step.status == "working")
         {
             advance_step(

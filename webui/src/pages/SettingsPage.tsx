@@ -1,72 +1,92 @@
-import { type Component, createEffect, createSignal, on, Show } from "solid-js";
-import { cn } from "@/lib/cn";
+import { type Component, Show, createSignal, onCleanup, onMount } from "solid-js";
+import Badge from "@/components/ui/badge";
 import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
 import Label from "@/components/ui/label";
+import Select, { type SelectOption } from "@/components/ui/select";
+import Tabs, { TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  type CodexDeviceStartResponse,
+  type SettingsResponse,
+  getSettings,
+  pollCodexDeviceFlow,
+  saveOpenRouterSettings,
+  saveSettingsProvider,
+  saveTavilyKey,
+  startCodexDeviceFlow,
+} from "@/lib/api";
+import { openUrl } from "@/lib/open-url";
 
-interface Settings {
-  llm_provider: "codex" | "openrouter";
-  openrouter_api_key_masked: string | null;
-  openrouter_base_url: string | null;
-  tavily_api_key_masked: string | null;
-}
+const providerOptions: SelectOption[] = [
+  { value: "codex", label: "Codex", description: "Built-in OAuth" },
+  { value: "openrouter", label: "OpenRouter", description: "Custom endpoint / API key" },
+];
 
-async function fetchSettings(): Promise<Settings> {
-  const res = await fetch("/api/settings", { credentials: "same-origin" });
-  if (!res.ok) throw new Error("Failed to load settings");
-  return res.json();
-}
-
-async function saveSection(path: string, body: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`/api/settings/${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    credentials: "same-origin",
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || `Save failed (${res.status})`);
-  }
-}
+type CodexAuthFlow = CodexDeviceStartResponse & { error: string | null };
 
 const SettingsPage: Component = () => {
-  const [settings, setSettings] = createSignal<Settings | null>(null);
+  const [settings, setSettings] = createSignal<SettingsResponse | null>(null);
   const [error, setError] = createSignal("");
 
-  // LLM section
   const [llmProvider, setLlmProvider] = createSignal<"codex" | "openrouter">("codex");
   const [llmSaving, setLlmSaving] = createSignal(false);
+  const [llmReconnecting, setLlmReconnecting] = createSignal(false);
   const [llmStatus, setLlmStatus] = createSignal("");
+  const [codexFlow, setCodexFlow] = createSignal<CodexAuthFlow | null>(null);
+  const [codeCopied, setCodeCopied] = createSignal(false);
 
-  // OpenRouter section
   const [orApiKey, setOrApiKey] = createSignal("");
   const [orBaseUrl, setOrBaseUrl] = createSignal("");
-  const [orSaving, setOrSaving] = createSignal(false);
-  const [orStatus, setOrStatus] = createSignal("");
 
-  // Tavily section
   const [tavilyKey, setTavilyKey] = createSignal("");
   const [tavilySaving, setTavilySaving] = createSignal(false);
   const [tavilyStatus, setTavilyStatus] = createSignal("");
+  let codexPollTimer: number | undefined;
 
-  createEffect(() => {
-    fetchSettings()
-      .then((s) => {
-        setSettings(s);
-        setLlmProvider(s.llm_provider);
-        setOrBaseUrl(s.openrouter_base_url ?? "");
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load settings"));
-  });
+  const clearCodexPollTimer = () => {
+    if (codexPollTimer !== undefined) {
+      window.clearTimeout(codexPollTimer);
+      codexPollTimer = undefined;
+    }
+  };
 
-  const handleSaveLlm = async () => {
+  const scheduleCodexPoll = (intervalSeconds: number) => {
+    clearCodexPollTimer();
+    codexPollTimer = window.setTimeout(() => {
+      void pollCodexFlow();
+    }, Math.max(intervalSeconds, 1) * 1000);
+  };
+
+  const reloadSettings = async () => {
+    try {
+      const next = await getSettings();
+      setSettings(next);
+      setLlmProvider(next.provider);
+      setOrBaseUrl(next.openrouter_base_url ?? "");
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load settings");
+    }
+  };
+
+  onMount(() => { void reloadSettings(); });
+  onCleanup(() => clearCodexPollTimer());
+
+  const handleSaveProvider = async () => {
     setLlmSaving(true);
     setLlmStatus("");
     try {
-      await saveSection("llm", { provider: llmProvider() });
+      await saveSettingsProvider(llmProvider());
+      if (llmProvider() === "openrouter") {
+        const body: { api_key?: string; base_url?: string } = {};
+        if (orApiKey().trim()) body.api_key = orApiKey().trim();
+        body.base_url = orBaseUrl().trim();
+        await saveOpenRouterSettings(body);
+        setOrApiKey("");
+      }
       setLlmStatus("Saved");
       setTimeout(() => setLlmStatus(""), 2000);
+      await reloadSettings();
     } catch (err) {
       setLlmStatus(err instanceof Error ? err.message : "Save failed");
     } finally {
@@ -74,24 +94,44 @@ const SettingsPage: Component = () => {
     }
   };
 
-  const handleSaveOpenRouter = async () => {
-    setOrSaving(true);
-    setOrStatus("");
+  const pollCodexFlow = async () => {
+    const flow = codexFlow();
+    if (!flow) return;
     try {
-      const body: Record<string, string> = {};
-      if (orApiKey().trim()) body.api_key = orApiKey().trim();
-      if (orBaseUrl().trim()) body.base_url = orBaseUrl().trim();
-      await saveSection("openrouter", body);
-      setOrApiKey("");
-      setOrStatus("Saved");
-      setTimeout(() => setOrStatus(""), 2000);
-      // Refresh to update masked value
-      const s = await fetchSettings();
-      setSettings(s);
+      const result = await pollCodexDeviceFlow({
+        deviceAuthId: flow.deviceAuthId,
+        userCode: flow.userCode,
+      });
+      if (result.status === "connected") {
+        clearCodexPollTimer();
+        setCodexFlow(null);
+        setLlmStatus("Connected");
+        setTimeout(() => setLlmStatus(""), 2000);
+        await reloadSettings();
+        return;
+      }
+      setCodexFlow({ ...flow, error: null });
+      scheduleCodexPoll(flow.interval);
     } catch (err) {
-      setOrStatus(err instanceof Error ? err.message : "Save failed");
+      setCodexFlow({
+        ...flow,
+        error: err instanceof Error ? err.message : "Polling failed",
+      });
+    }
+  };
+
+  const handleConnectCodex = async () => {
+    setLlmReconnecting(true);
+    setLlmStatus("");
+    clearCodexPollTimer();
+    try {
+      const flow = await startCodexDeviceFlow();
+      setCodexFlow({ ...flow, error: null });
+      scheduleCodexPoll(flow.interval);
+    } catch (err) {
+      setLlmStatus(err instanceof Error ? err.message : "Connect failed");
     } finally {
-      setOrSaving(false);
+      setLlmReconnecting(false);
     }
   };
 
@@ -99,12 +139,11 @@ const SettingsPage: Component = () => {
     setTavilySaving(true);
     setTavilyStatus("");
     try {
-      await saveSection("tavily", { api_key: tavilyKey().trim() });
+      await saveTavilyKey(tavilyKey().trim());
       setTavilyKey("");
       setTavilyStatus("Saved");
       setTimeout(() => setTavilyStatus(""), 2000);
-      const s = await fetchSettings();
-      setSettings(s);
+      await reloadSettings();
     } catch (err) {
       setTavilyStatus(err instanceof Error ? err.message : "Save failed");
     } finally {
@@ -112,140 +151,225 @@ const SettingsPage: Component = () => {
     }
   };
 
-  return (
-    <div class="flex items-center justify-center min-h-screen bg-background">
-      <div class="w-full max-w-md px-6 py-12 space-y-8">
-        <div class="flex items-center justify-between">
-          <h1 class="font-display text-2xl text-foreground">Settings</h1>
-          <a
-            href="#"
-            class="text-xs text-muted-foreground hover:text-foreground transition-colors"
-          >
-            Back
-          </a>
-        </div>
+  // Derived state
+  const codexReady = () => settings()?.codex_configured && settings()?.provider === "codex";
+  const codexFromEnv = () => settings()?.codex_source === "env";
+  const showConnectBtn = () => llmProvider() === "codex" && !codexFromEnv();
 
+  return (
+    <div class="min-h-screen bg-background text-foreground">
+      <header class="flex items-center justify-between border-b border-border bg-card px-4 py-3">
+        <div class="flex items-center gap-2">
+          <a href="#" class="font-display text-base tracking-tight">HIRSEL</a>
+          <span class="text-xs text-muted-foreground">/</span>
+          <span class="text-sm font-medium">Settings</span>
+        </div>
+        <a href="#" class="text-xs text-muted-foreground transition-colors hover:text-foreground">
+          Back
+        </a>
+      </header>
+
+      <main class="mx-auto max-w-xl px-6 py-10">
         <Show when={error()}>
-          <p class="text-xs text-signal-red">{error()}</p>
+          <div class="mb-6 border border-signal-red/30 bg-signal-red/10 px-4 py-3 text-sm text-signal-red">
+            {error()}
+          </div>
         </Show>
 
-        <Show when={settings()}>
-          {/* LLM Provider */}
-          <div class="space-y-3 border border-border p-4">
-            <Label>LLM Provider</Label>
-            <div class="flex gap-2">
-              <Button
-                variant={llmProvider() === "codex" ? "primary" : "default"}
-                size="sm"
-                onClick={() => setLlmProvider("codex")}
-              >
-                Codex
-              </Button>
-              <Button
-                variant={llmProvider() === "openrouter" ? "primary" : "default"}
-                size="sm"
-                onClick={() => setLlmProvider("openrouter")}
-              >
-                OpenRouter
-              </Button>
-            </div>
-            <div class="flex items-center gap-2">
-              <Button
-                size="sm"
-                loading={llmSaving()}
-                onClick={handleSaveLlm}
-              >
-                Save
-              </Button>
-              <Show when={llmStatus()}>
+        <Tabs defaultValue="provider">
+          <TabsList>
+            <TabsTrigger value="provider">Provider</TabsTrigger>
+            <TabsTrigger value="tools">Tools</TabsTrigger>
+          </TabsList>
+
+          {/* ── Provider ── */}
+          <TabsContent value="provider">
+            <div class="space-y-5">
+              {/* Provider selector row */}
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <Label class="flex-1">LLM Provider</Label>
+                  <Show when={codexReady()}>
+                    <Badge variant="success">Connected</Badge>
+                  </Show>
+                  <Show when={codexFromEnv()}>
+                    <Badge>Env</Badge>
+                  </Show>
+                </div>
+                <div class="flex items-center gap-3">
+                  <Select
+                    options={providerOptions}
+                    value={llmProvider()}
+                    onChange={(v) => {
+                      const provider = v as "codex" | "openrouter";
+                      setLlmProvider(provider);
+                      setCodexFlow(null);
+                      clearCodexPollTimer();
+                      // Auto-save provider choice immediately
+                      void saveSettingsProvider(provider).then(() => reloadSettings());
+                    }}
+                    class="w-56"
+                  />
+                  <Show when={showConnectBtn()}>
+                    <Button
+                      size="sm"
+                      variant={codexReady() ? "ghost" : "primary"}
+                      loading={llmReconnecting()}
+                      onClick={handleConnectCodex}
+                    >
+                      {codexReady() ? "Reconnect" : "Connect"}
+                    </Button>
+                  </Show>
+                </div>
+              </div>
+
+              {/* Codex device flow */}
+              <Show when={llmProvider() === "codex" && codexFlow()}>
+                <div class="border border-border bg-muted/10 p-4 space-y-4">
+                  <div class="flex items-center gap-2">
+                    <span class="chassis-label">Device code</span>
+                    <Badge variant="warning">Waiting</Badge>
+                    <span class="ml-auto text-[10px] text-muted-foreground font-mono">
+                      polling {codexFlow()!.interval}s
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    class="group/code flex w-full items-center justify-between border border-border bg-background px-4 py-3 text-left transition-colors hover:bg-muted/30"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(codexFlow()!.userCode);
+                      setCodeCopied(true);
+                      setTimeout(() => setCodeCopied(false), 1500);
+                    }}
+                  >
+                    <span class="font-mono text-2xl tracking-[0.22em] text-foreground select-all">
+                      {codexFlow()!.userCode}
+                    </span>
+                    <span class="text-xs text-muted-foreground group-hover/code:text-foreground transition-colors">
+                      {codeCopied() ? "Copied" : "Copy"}
+                    </span>
+                  </button>
+                  <div class="flex items-center gap-3">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={() => void openUrl(codexFlow()!.verifyUrl)}
+                    >
+                      Open verification page
+                    </Button>
+                    <Button size="sm" variant="default" onClick={() => void pollCodexFlow()}>
+                      Check now
+                    </Button>
+                  </div>
+                  <Show when={codexFlow()!.error}>
+                    <div class="border border-signal-red/30 bg-signal-red/10 px-3 py-2 text-xs text-signal-red">
+                      {codexFlow()!.error}
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+
+              {/* OpenRouter fields */}
+              <Show when={llmProvider() === "openrouter"}>
+                <div class="border-l-[2px] border-border pl-5 space-y-4">
+                  <div class="space-y-1.5">
+                    <Label for="or-key">API Key</Label>
+                    <Show when={settings()?.openrouter_key_masked}>
+                      <p class="font-mono text-xs text-muted-foreground">
+                        Current: {settings()!.openrouter_key_masked}
+                      </p>
+                    </Show>
+                    <Input
+                      id="or-key"
+                      type="password"
+                      placeholder="sk-or-..."
+                      value={orApiKey()}
+                      onInput={(e) => setOrApiKey(e.currentTarget.value)}
+                    />
+                  </div>
+                  <div class="space-y-1.5">
+                    <Label for="or-url">Base URL</Label>
+                    <Input
+                      id="or-url"
+                      type="text"
+                      placeholder="https://openrouter.ai/api/v1"
+                      value={orBaseUrl()}
+                      onInput={(e) => setOrBaseUrl(e.currentTarget.value)}
+                    />
+                  </div>
+                </div>
+              </Show>
+
+              {/* Save credentials (provider choice auto-saves) */}
+              <Show when={llmProvider() === "openrouter"}>
+                <div class="flex items-center gap-3">
+                  <Button size="sm" loading={llmSaving()} onClick={handleSaveProvider}>
+                    Save credentials
+                  </Button>
+                  <Show when={llmStatus()}>
+                    <span class="text-xs text-muted-foreground">{llmStatus()}</span>
+                  </Show>
+                </div>
+              </Show>
+              <Show when={llmProvider() === "codex" && llmStatus()}>
                 <span class="text-xs text-muted-foreground">{llmStatus()}</span>
               </Show>
             </div>
-          </div>
+          </TabsContent>
 
-          {/* OpenRouter */}
-          <Show when={llmProvider() === "openrouter"}>
-            <div class="space-y-3 border border-border p-4">
-              <Label>OpenRouter</Label>
+          {/* ── Tools ── */}
+          <TabsContent value="tools">
+            <div class="space-y-5">
+              <div class="flex items-center gap-2">
+                <Label class="flex-1">Tavily Search</Label>
+                <Show when={settings()?.tavily_configured}>
+                  <Badge variant="success">Configured</Badge>
+                </Show>
+                <Show when={!settings()?.tavily_configured}>
+                  <Badge variant="warning">Required</Badge>
+                </Show>
+                <Show when={settings()?.tavily_source === "env"}>
+                  <Badge>Env</Badge>
+                </Show>
+              </div>
 
               <div class="space-y-1.5">
-                <Label for="or-key">API Key</Label>
-                <Show when={settings()!.openrouter_api_key_masked}>
-                  <p class="text-xs text-muted-foreground font-mono">
-                    Current: {settings()!.openrouter_api_key_masked}
+                <Label for="tavily-key">API Key</Label>
+                <Show when={settings()?.tavily_key_masked}>
+                  <p class="font-mono text-xs text-muted-foreground">
+                    Current: {settings()!.tavily_key_masked}
                   </p>
                 </Show>
                 <Input
-                  id="or-key"
+                  id="tavily-key"
                   type="password"
-                  placeholder="sk-or-..."
-                  value={orApiKey()}
-                  onInput={(e) => setOrApiKey(e.currentTarget.value)}
+                  placeholder="tvly-..."
+                  value={tavilyKey()}
+                  onInput={(e) => setTavilyKey(e.currentTarget.value)}
                 />
+                <p class="text-xs text-muted-foreground">
+                  Or set <code class="mx-0.5 bg-muted px-1 py-px text-[11px]">TAVILY_API_KEY</code> in
+                  the environment.
+                </p>
               </div>
 
-              <div class="space-y-1.5">
-                <Label for="or-url">Base URL (optional)</Label>
-                <Input
-                  id="or-url"
-                  type="text"
-                  placeholder="https://openrouter.ai/api/v1"
-                  value={orBaseUrl()}
-                  onInput={(e) => setOrBaseUrl(e.currentTarget.value)}
-                />
-              </div>
-
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-3">
                 <Button
                   size="sm"
-                  loading={orSaving()}
-                  onClick={handleSaveOpenRouter}
+                  loading={tavilySaving()}
+                  onClick={handleSaveTavily}
+                  disabled={!tavilyKey().trim()}
                 >
                   Save
                 </Button>
-                <Show when={orStatus()}>
-                  <span class="text-xs text-muted-foreground">{orStatus()}</span>
+                <Show when={tavilyStatus()}>
+                  <span class="text-xs text-muted-foreground">{tavilyStatus()}</span>
                 </Show>
               </div>
             </div>
-          </Show>
-
-          {/* Tavily */}
-          <div class="space-y-3 border border-border p-4">
-            <Label>Tavily Search</Label>
-
-            <div class="space-y-1.5">
-              <Label for="tavily-key">API Key</Label>
-              <Show when={settings()!.tavily_api_key_masked}>
-                <p class="text-xs text-muted-foreground font-mono">
-                  Current: {settings()!.tavily_api_key_masked}
-                </p>
-              </Show>
-              <Input
-                id="tavily-key"
-                type="password"
-                placeholder="tvly-..."
-                value={tavilyKey()}
-                onInput={(e) => setTavilyKey(e.currentTarget.value)}
-              />
-            </div>
-
-            <div class="flex items-center gap-2">
-              <Button
-                size="sm"
-                loading={tavilySaving()}
-                onClick={handleSaveTavily}
-                disabled={!tavilyKey().trim()}
-              >
-                Save
-              </Button>
-              <Show when={tavilyStatus()}>
-                <span class="text-xs text-muted-foreground">{tavilyStatus()}</span>
-              </Show>
-            </div>
-          </div>
-        </Show>
-      </div>
+          </TabsContent>
+        </Tabs>
+      </main>
     </div>
   );
 };

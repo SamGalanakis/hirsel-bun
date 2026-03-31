@@ -3,7 +3,7 @@
 use lash::provider::Provider;
 
 use crate::backend::config::{Config, LlmProvider};
-use crate::backend::credentials::{CodexOAuthCredentials, CredentialStore};
+use crate::backend::credentials::{resolve_codex_oauth_credentials, CredentialStore};
 
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
@@ -18,38 +18,16 @@ fn normalize_openrouter_base_url(config: &Config) -> String {
         .to_string()
 }
 
-async fn load_codex_oauth(store: &CredentialStore) -> Result<CodexOAuthCredentials, String> {
-    if let Some(creds) = store
-        .load_codex_oauth()
+async fn load_codex_oauth(
+    _store: &CredentialStore,
+) -> Result<crate::backend::credentials::CodexOAuthCredentials, String> {
+    resolve_codex_oauth_credentials()
         .await
-        .map_err(|e| format!("failed to load codex credentials: {}", e))?
-    {
-        return Ok(creds);
-    }
-
-    let access_token = std::env::var("CODEX_ACCESS_TOKEN")
-        .or_else(|_| std::env::var("OPENAI_ACCESS_TOKEN"))
-        .map_err(|_| {
-            "Codex OAuth not configured. Login via /api/auth/codex/device/* first".to_string()
-        })?;
-    let refresh_token = std::env::var("CODEX_REFRESH_TOKEN")
-        .or_else(|_| std::env::var("OPENAI_REFRESH_TOKEN"))
-        .map_err(|_| "Missing CODEX_REFRESH_TOKEN/OPENAI_REFRESH_TOKEN".to_string())?;
-    let expires_at = std::env::var("CODEX_EXPIRES_AT")
-        .or_else(|_| std::env::var("OPENAI_EXPIRES_AT"))
-        .ok()
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(u64::MAX);
-    let account_id = std::env::var("CODEX_ACCOUNT_ID")
-        .or_else(|_| std::env::var("OPENAI_ACCOUNT_ID"))
-        .ok();
-
-    Ok(CodexOAuthCredentials {
-        access_token,
-        refresh_token,
-        expires_at,
-        account_id,
-    })
+        .map(|resolved| resolved.credentials)
+        .ok_or_else(|| {
+            "Codex credentials not configured. Connect Codex in Settings, or set CODEX_ACCESS_TOKEN and CODEX_REFRESH_TOKEN."
+                .to_string()
+        })
 }
 
 async fn load_openrouter_key(store: &CredentialStore) -> Result<String, String> {

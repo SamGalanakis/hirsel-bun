@@ -91,25 +91,29 @@ pub async fn open_backend_window(app: tauri::AppHandle) -> Result<(), String> {
     let api_key = backend
         .api_key
         .clone()
-        .filter(|value: &String| !value.trim().is_empty())
-        .ok_or_else(|| "Backend API key is not configured".to_string())?;
+        .filter(|value| !value.trim().is_empty());
 
-    backend_health(&base_url, Some(&api_key)).await?;
+    backend_health(&base_url, api_key.as_deref()).await?;
 
-    let mut url = base_url.trim_end_matches('/').to_string();
-    url.push_str("/connect/bootstrap");
-    let mut url = url
-        .parse::<tauri::Url>()
-        .map_err(|error| format!("Invalid backend URL: {}", error))?;
-    url.query_pairs_mut()
-        .append_pair("api_key", &api_key)
-        .append_pair("return_to", "/app");
+    let target = if let Some(api_key) = api_key {
+        let mut url = format!("{}/connect/bootstrap", base_url.trim_end_matches('/'))
+            .parse::<tauri::Url>()
+            .map_err(|error| format!("Invalid backend URL: {}", error))?;
+        url.query_pairs_mut()
+            .append_pair("api_key", &api_key)
+            .append_pair("return_to", "/app");
+        url
+    } else {
+        format!("{}/app", base_url.trim_end_matches('/'))
+            .parse::<tauri::Url>()
+            .map_err(|error| format!("Invalid backend URL: {}", error))?
+    };
 
     let window = app
         .get_webview_window("main")
         .ok_or_else(|| "Main window not found".to_string())?;
     window
-        .navigate(url)
+        .navigate(target)
         .map_err(|error| format!("Failed to navigate to backend: {}", error))?;
     Ok(())
 }

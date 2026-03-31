@@ -53,7 +53,7 @@ pub struct ProjectRetainedContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSurfaceSnapshot {
-    pub focus_view: ProjectFocusView,
+    pub focus_view: Option<ProjectFocusView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

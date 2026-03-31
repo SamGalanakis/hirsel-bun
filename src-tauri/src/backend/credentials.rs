@@ -90,6 +90,43 @@ pub struct ForwardedCredentials {
     pub codex_account_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialSource {
+    Env,
+    Store,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedTavilyApiKey {
+    pub api_key: String,
+    pub source: CredentialSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedCodexOAuthCredentials {
+    pub credentials: CodexOAuthCredentials,
+    pub source: CredentialSource,
+}
+
+impl CredentialSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Env => "env",
+            Self::Store => "store",
+        }
+    }
+}
+
+fn read_env_credential(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 impl ForwardedCredentials {
     /// Create empty credentials
     pub fn new() -> Self {
@@ -123,26 +160,86 @@ impl ForwardedCredentials {
     /// Load forwarded credentials from the current process environment.
     pub fn from_env() -> Self {
         Self {
-            openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
-            openrouter_api_key: std::env::var("OPENROUTER_API_KEY").ok(),
-            tavily_api_key: std::env::var("TAVILY_API_KEY").ok(),
-            codex_access_token: std::env::var("CODEX_ACCESS_TOKEN").ok(),
-            codex_refresh_token: std::env::var("CODEX_REFRESH_TOKEN").ok(),
-            codex_expires_at: std::env::var("CODEX_EXPIRES_AT").ok(),
-            codex_account_id: std::env::var("CODEX_ACCOUNT_ID").ok(),
+            openai_api_key: read_env_credential("OPENAI_API_KEY"),
+            openrouter_api_key: read_env_credential("OPENROUTER_API_KEY"),
+            tavily_api_key: read_env_credential("TAVILY_API_KEY"),
+            codex_access_token: read_env_credential("CODEX_ACCESS_TOKEN"),
+            codex_refresh_token: read_env_credential("CODEX_REFRESH_TOKEN"),
+            codex_expires_at: read_env_credential("CODEX_EXPIRES_AT"),
+            codex_account_id: read_env_credential("CODEX_ACCOUNT_ID"),
         }
     }
 }
 
 /// Best-effort load of credentials that should be forwarded to coding sessions.
 ///
-/// Credential-store values win over ambient environment values.
+/// Ambient environment values win over stored fallbacks.
 pub async fn load_forwarded_credentials() -> ForwardedCredentials {
     let env = ForwardedCredentials::from_env();
     match CredentialStore::open().await {
-        Ok(store) => store.load_all().await.merge(env),
+        Ok(store) => env.merge(store.load_all().await),
         Err(_) => env,
     }
+}
+
+pub async fn resolve_tavily_api_key() -> Option<ResolvedTavilyApiKey> {
+    if let Some(api_key) = read_env_credential("TAVILY_API_KEY") {
+        return Some(ResolvedTavilyApiKey {
+            api_key,
+            source: CredentialSource::Env,
+        });
+    }
+
+    let store = CredentialStore::open().await.ok()?;
+    let api_key = store.load("tavily_api_key").await.ok()?;
+    let trimmed = api_key.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(ResolvedTavilyApiKey {
+        api_key: trimmed.to_string(),
+        source: CredentialSource::Store,
+    })
+}
+
+pub async fn require_tavily_api_key() -> Result<ResolvedTavilyApiKey, String> {
+    resolve_tavily_api_key().await.ok_or_else(|| {
+        "Tavily is required for Hirsel. Set TAVILY_API_KEY in the environment or save a Tavily key in Settings."
+            .to_string()
+    })
+}
+
+pub async fn resolve_codex_oauth_credentials() -> Option<ResolvedCodexOAuthCredentials> {
+    let access_token = read_env_credential("CODEX_ACCESS_TOKEN")
+        .or_else(|| read_env_credential("OPENAI_ACCESS_TOKEN"));
+    let refresh_token = read_env_credential("CODEX_REFRESH_TOKEN")
+        .or_else(|| read_env_credential("OPENAI_REFRESH_TOKEN"));
+
+    if let (Some(access_token), Some(refresh_token)) = (access_token, refresh_token) {
+        let expires_at = read_env_credential("CODEX_EXPIRES_AT")
+            .or_else(|| read_env_credential("OPENAI_EXPIRES_AT"))
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(u64::MAX);
+        let account_id = read_env_credential("CODEX_ACCOUNT_ID")
+            .or_else(|| read_env_credential("OPENAI_ACCOUNT_ID"));
+        return Some(ResolvedCodexOAuthCredentials {
+            credentials: CodexOAuthCredentials {
+                access_token,
+                refresh_token,
+                expires_at,
+                account_id,
+            },
+            source: CredentialSource::Env,
+        });
+    }
+
+    let store = CredentialStore::open().await.ok()?;
+    let credentials = store.load_codex_oauth().await.ok()??;
+    Some(ResolvedCodexOAuthCredentials {
+        credentials,
+        source: CredentialSource::Store,
+    })
 }
 
 /// Load encryption key from file, or generate a new one if it doesn't exist

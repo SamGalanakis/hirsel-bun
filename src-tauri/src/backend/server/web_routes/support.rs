@@ -1,6 +1,10 @@
 use axum::http::{HeaderValue, StatusCode};
 
 use crate::backend::draft::StartingPoint;
+use crate::backend::git::{
+    list_remote_branches, parse_github_url, remote_branch_exists, remote_branch_has_flake,
+    remote_default_branch,
+};
 use crate::backend::project::{Project, ProjectSurfaceSnapshot};
 use crate::backend::{
     app, ensure_project_runtime_preparation_started, shepherd_runtime, ProjectStore,
@@ -27,6 +31,15 @@ pub(super) struct ProjectPageState {
 pub(super) struct ThreadPageState {
     pub project: Project,
     pub item: ThreadPanelState,
+}
+
+pub(super) struct ProjectCreateProbe {
+    pub normalized_repo_url: String,
+    pub suggested_name: String,
+    pub selected_branch: String,
+    pub branch_source: String,
+    pub has_root_flake: bool,
+    pub worker_image: String,
 }
 
 // ── Cookie helpers ──
@@ -60,10 +73,90 @@ pub(super) fn normalize_project_sandbox_image(raw: Option<&str>) -> Result<Optio
     Ok(Some(value.to_string()))
 }
 
-fn current_default_sandbox_image() -> String {
+pub(super) fn current_default_sandbox_image() -> String {
     crate::backend::config::Config::load()
         .map(|(config, _)| config.sandbox.image)
         .unwrap_or_else(|_| crate::backend::sandbox::SandboxConfig::default().image)
+}
+
+pub(super) fn effective_project_worker_image(project_image: Option<&str>) -> String {
+    project_image
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(current_default_sandbox_image)
+}
+
+fn derive_project_name_from_repo_url(repo_url: &str) -> String {
+    let trimmed = repo_url.trim().trim_end_matches('/');
+    let last_segment = trimmed
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim_end_matches(".git");
+    if last_segment.is_empty() {
+        "project".to_string()
+    } else {
+        last_segment.to_string()
+    }
+}
+
+fn choose_detected_branch(repo_url: &str) -> Result<String, String> {
+    if let Some(branch) = remote_default_branch(repo_url).map_err(|e| e.to_string())? {
+        return Ok(branch);
+    }
+
+    let branches = list_remote_branches(repo_url).map_err(|e| e.to_string())?;
+    branches
+        .iter()
+        .find(|branch| branch.as_str() == "main")
+        .or_else(|| branches.iter().find(|branch| branch.as_str() == "master"))
+        .cloned()
+        .or_else(|| branches.first().cloned())
+        .ok_or_else(|| "No visible remote branches were found for this repository.".to_string())
+}
+
+pub(super) fn probe_project_create(
+    repo_url: &str,
+    branch: Option<&str>,
+) -> Result<ProjectCreateProbe, String> {
+    let parsed = parse_github_url(repo_url);
+    let normalized_repo_url = parsed.repo_url.trim().to_string();
+    if normalized_repo_url.is_empty() {
+        return Err("Repository URL is required.".to_string());
+    }
+
+    let explicit_branch = branch.map(str::trim).filter(|value| !value.is_empty());
+    let url_branch = parsed.branch.as_deref().filter(|value| !value.is_empty());
+    let (selected_branch, branch_source) = if let Some(value) = explicit_branch {
+        (value.to_string(), "explicit".to_string())
+    } else if let Some(value) = url_branch {
+        (value.to_string(), "url".to_string())
+    } else {
+        (
+            choose_detected_branch(&normalized_repo_url)?,
+            "detected".to_string(),
+        )
+    };
+
+    if !remote_branch_exists(&normalized_repo_url, &selected_branch).map_err(|e| e.to_string())? {
+        return Err(format!(
+            "Remote branch '{}' was not found for {}.",
+            selected_branch, normalized_repo_url
+        ));
+    }
+
+    let has_root_flake = remote_branch_has_flake(&normalized_repo_url, &selected_branch)
+        .map_err(|e| e.to_string())?;
+
+    Ok(ProjectCreateProbe {
+        suggested_name: derive_project_name_from_repo_url(&normalized_repo_url),
+        normalized_repo_url,
+        selected_branch,
+        branch_source,
+        has_root_flake,
+        worker_image: current_default_sandbox_image(),
+    })
 }
 
 pub(super) async fn persist_project_and_start_runtime_preparation(

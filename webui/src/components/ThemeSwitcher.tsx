@@ -1,62 +1,80 @@
-import { type Component, createSignal, For, Show } from "solid-js";
+import { type Component, For } from "solid-js";
+import { DropdownMenu } from "@kobalte/core/dropdown-menu";
 import { cn } from "@/lib/cn";
 import { themes, useTheme } from "@/lib/theme";
 
-const ThemeSwitcher: Component = () => {
-  const { theme, setTheme } = useTheme();
-  const [open, setOpen] = createSignal(false);
+/** HSL swatch colors extracted from the CSS theme vars. */
+const THEME_SWATCHES: Record<string, [string, string, string]> = {
+  hirsel:        ["hsl(42 20% 95%)", "hsl(30 8% 10%)", "hsl(36 80% 50%)"],
+  "hirsel-dark": ["hsl(40 8% 6%)",  "hsl(40 10% 88%)", "hsl(36 80% 50%)"],
+  midnight:      ["hsl(230 25% 7%)", "hsl(210 15% 88%)", "hsl(185 80% 55%)"],
+  bone:          ["hsl(38 40% 95%)", "hsl(20 8% 10%)",  "hsl(20 60% 40%)"],
+};
 
-  const currentLabel = () => themes.find((t) => t.name === theme())?.label ?? theme();
+const ThemeSwitcher: Component<{ class?: string }> = (props) => {
+  const { theme, setTheme } = useTheme();
 
   return (
-    <div class="relative">
-      <button
+    <DropdownMenu>
+      <DropdownMenu.Trigger
         class={cn(
-          "inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-body",
+          "inline-flex items-center justify-center h-[34px] w-[34px]",
           "text-muted-foreground hover:text-foreground transition-colors",
           "border border-border bg-background hover:bg-accent",
+          props.class,
         )}
-        onClick={() => setOpen((v) => !v)}
+        aria-label="Switch theme"
       >
-        {currentLabel()}
-        <svg class="h-3 w-3" viewBox="0 0 12 12" fill="none">
-          <path d="M3 5l3 3 3-3" stroke="currentColor" stroke-width="1.5" />
+        {/* Palette icon — matches figments */}
+        <svg class="h-[15px] w-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" />
+          <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" />
+          <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" />
+          <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" />
+          <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z" />
         </svg>
-      </button>
-
-      <Show when={open()}>
-        <div
-          class="absolute right-0 top-full mt-1 z-50 min-w-[140px] border border-border bg-popover text-popover-foreground shadow-md"
-          onFocusOut={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setOpen(false);
-          }}
-        >
-          <For each={themes}>
-            {(t) => (
-              <button
-                class={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-xs font-body hover:bg-accent transition-colors text-left",
-                  theme() === t.name && "text-foreground font-medium",
-                  theme() !== t.name && "text-muted-foreground",
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content class="z-50 min-w-[180px] border border-border bg-popover text-popover-foreground shadow-md">
+          <DropdownMenu.RadioGroup
+            value={theme()}
+            onChange={(value) => setTheme(value as any)}
+          >
+            <div class="p-1">
+              <For each={themes}>
+                {(t) => (
+                  <DropdownMenu.RadioItem
+                    value={t.name}
+                    class={cn(
+                      "flex w-full items-center gap-3 px-2.5 py-2 text-xs font-body cursor-pointer outline-none transition-colors",
+                      "data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground",
+                      "text-muted-foreground data-[checked]:text-foreground data-[checked]:font-medium",
+                    )}
+                  >
+                    <span class="flex h-4 w-4 items-center justify-center border border-border shrink-0 data-[checked]:border-foreground">
+                      <DropdownMenu.ItemIndicator>
+                        <span class="block h-2 w-2 bg-foreground" />
+                      </DropdownMenu.ItemIndicator>
+                    </span>
+                    <span class="flex-1">{t.label}</span>
+                    <div class="flex shrink-0 items-center gap-px">
+                      <For each={THEME_SWATCHES[t.name] ?? []}>
+                        {(color) => (
+                          <span
+                            class="h-3.5 w-1.5 border border-border"
+                            style={{ background: color }}
+                          />
+                        )}
+                      </For>
+                    </div>
+                  </DropdownMenu.RadioItem>
                 )}
-                onClick={() => {
-                  setTheme(t.name);
-                  setOpen(false);
-                }}
-              >
-                <span
-                  class={cn(
-                    "h-2 w-2 rounded-full",
-                    theme() === t.name ? "bg-signal-amber" : "bg-border",
-                  )}
-                />
-                {t.label}
-              </button>
-            )}
-          </For>
-        </div>
-      </Show>
-    </div>
+              </For>
+            </div>
+          </DropdownMenu.RadioGroup>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu>
   );
 };
 

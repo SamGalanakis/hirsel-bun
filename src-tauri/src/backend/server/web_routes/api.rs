@@ -1,19 +1,23 @@
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
+use lash::oauth;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::config::LlmProvider;
-use crate::backend::credentials::CredentialStore;
+use crate::backend::credentials::{
+    resolve_codex_oauth_credentials, resolve_tavily_api_key, CredentialStore,
+};
 use crate::backend::{app, shepherd_runtime, ProjectStore, ShepherdThreadStore};
 
 use super::super::AppState;
 use super::support::{
-    clear_cookie_header, cookie_headers, load_project_page_state, load_thread_page_state,
-    normalize_project_sandbox_image, persist_project_and_start_runtime_preparation,
+    clear_cookie_header, effective_project_worker_image, load_project_page_state,
+    load_thread_page_state, normalize_project_sandbox_image,
+    persist_project_and_start_runtime_preparation, probe_project_create,
 };
 
 pub async fn health() -> StatusCode {
@@ -27,6 +31,38 @@ struct ApiProject {
     description: Option<String>,
     sandbox_image: Option<String>,
     created_at: String,
+}
+
+#[derive(Serialize)]
+struct ApiPreparationStep {
+    id: String,
+    label: String,
+    status: String,
+    detail: Option<String>,
+    progress: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct ApiProjectPreparation {
+    project: ApiProject,
+    worker_image: String,
+    status: String,
+    headline: String,
+    detail: Option<String>,
+    progress: f64,
+    steps: Vec<ApiPreparationStep>,
+    started_at: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+struct ApiProjectCreateProbe {
+    normalized_repo_url: String,
+    suggested_name: String,
+    selected_branch: String,
+    branch_source: String,
+    has_root_flake: bool,
+    worker_image: String,
 }
 
 #[derive(Serialize)]
@@ -62,6 +98,13 @@ struct ApiThreadPanel {
     thread: ApiThread,
     history: Vec<ApiChatMessage>,
     activity: ApiScopeActivity,
+    plan_progress: Option<ApiPlanProgress>,
+}
+
+#[derive(Serialize)]
+struct ApiPlanProgress {
+    completed: usize,
+    total: usize,
 }
 
 #[derive(Serialize)]
@@ -72,8 +115,6 @@ struct ApiThread {
     objective: String,
     summary: String,
     status: String,
-    workspace_path: Option<String>,
-    checkout_name: Option<String>,
     created_at: String,
     updated_at: String,
     last_activity_at: String,
@@ -86,7 +127,6 @@ struct ApiProjectPage {
     threads: Vec<ApiThreadPanel>,
     history: Vec<ApiChatMessage>,
     activity: ApiScopeActivity,
-    has_queued: bool,
     focus_html: Option<String>,
     focus_source: Option<String>,
 }
@@ -97,7 +137,7 @@ struct ApiThreadPage {
     thread: ApiThread,
     history: Vec<ApiChatMessage>,
     activity: ApiScopeActivity,
-    has_queued: bool,
+    plan: Option<serde_json::Value>,
 }
 
 fn to_api_project(p: &crate::backend::project::Project) -> ApiProject {
@@ -116,6 +156,52 @@ fn to_api_message(m: &crate::backend::ShepherdChatMessage) -> ApiChatMessage {
         role: m.role.clone(),
         chunks_json: m.chunks_json.clone(),
         timestamp: m.timestamp.clone(),
+    }
+}
+
+fn to_api_preparation_step(
+    step: &crate::backend::project::ProjectPreparationStep,
+) -> ApiPreparationStep {
+    ApiPreparationStep {
+        id: step.id.clone(),
+        label: step.label.clone(),
+        status: step.status.clone(),
+        detail: step.detail.clone(),
+        progress: step.progress,
+    }
+}
+
+fn to_api_project_preparation(
+    project: &crate::backend::project::Project,
+    preparation: &crate::backend::project::ProjectRuntimePreparation,
+) -> ApiProjectPreparation {
+    ApiProjectPreparation {
+        project: to_api_project(project),
+        worker_image: effective_project_worker_image(project.sandbox_image.as_deref()),
+        status: preparation.status.clone(),
+        headline: preparation.headline.clone(),
+        detail: preparation.detail.clone(),
+        progress: preparation.progress,
+        steps: preparation
+            .steps
+            .iter()
+            .map(to_api_preparation_step)
+            .collect(),
+        started_at: preparation.started_at.clone(),
+        updated_at: preparation.updated_at.clone(),
+    }
+}
+
+fn to_api_project_create_probe(
+    probe: crate::backend::server::web_routes::support::ProjectCreateProbe,
+) -> ApiProjectCreateProbe {
+    ApiProjectCreateProbe {
+        normalized_repo_url: probe.normalized_repo_url,
+        suggested_name: probe.suggested_name,
+        selected_branch: probe.selected_branch,
+        branch_source: probe.branch_source,
+        has_root_flake: probe.has_root_flake,
+        worker_image: probe.worker_image,
     }
 }
 
@@ -142,12 +228,38 @@ fn to_api_thread(t: &crate::backend::ShepherdThread) -> ApiThread {
         objective: t.objective.clone(),
         summary: t.summary.clone(),
         status: t.status.clone(),
-        workspace_path: t.workspace_path.clone(),
-        checkout_name: t.checkout_name.clone(),
         created_at: t.created_at.clone(),
         updated_at: t.updated_at.clone(),
         last_activity_at: t.last_activity_at.clone(),
     }
+}
+
+/// Extract the latest plan snapshot from a thread's message history.
+/// Walks messages in reverse looking for the last `update_plan` / `Plan Update` tool chunk
+/// that contains a `plan` array in its input.
+fn extract_latest_plan(
+    messages: &[crate::backend::ShepherdChatMessage],
+) -> Option<serde_json::Value> {
+    use crate::backend::shepherd_runtime::ShepherdMessageChunk;
+    for message in messages.iter().rev() {
+        let Ok(chunks) = serde_json::from_str::<Vec<ShepherdMessageChunk>>(&message.chunks_json)
+        else {
+            continue;
+        };
+        for chunk in chunks.into_iter().rev() {
+            let ShepherdMessageChunk::Tool { input, .. } = chunk else {
+                continue;
+            };
+            let Some(input) = input else { continue };
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&input) else {
+                continue;
+            };
+            if parsed.get("plan").and_then(|v| v.as_array()).is_some() {
+                return Some(parsed);
+            }
+        }
+    }
+    None
 }
 
 // ── Handlers ──
@@ -160,6 +272,52 @@ pub async fn list_projects() -> Result<impl IntoResponse, (StatusCode, String)> 
     Ok(Json(out))
 }
 
+#[derive(Deserialize)]
+pub struct ProjectCreateProbeQuery {
+    repo_url: String,
+    branch: Option<String>,
+}
+
+pub async fn probe_project_create_api(
+    Query(query): Query<ProjectCreateProbeQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let probe = probe_project_create(&query.repo_url, query.branch.as_deref())
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    Ok(Json(to_api_project_create_probe(probe)))
+}
+
+pub async fn get_project_preparation(
+    Path(project_id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let store = ProjectStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let project = store
+        .get_project(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let state = crate::backend::ensure_project_runtime_preparation_started(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(to_api_project_preparation(&project, &state)))
+}
+
+pub async fn retry_project_preparation(
+    Path(project_id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let store = ProjectStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let project = store
+        .get_project(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let state = crate::backend::retry_project_runtime_preparation(project_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(to_api_project_preparation(&project, &state)))
+}
+
 pub async fn get_project_page(
     Path(project_id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -167,19 +325,16 @@ pub async fn get_project_page(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let scope = shepherd_runtime::ShepherdScope::Project {
-        project_id,
-        workspace_path: None,
-        focus: None,
-    };
-    let has_queued = shepherd_runtime::has_queued_turn(&scope);
-
-    let focus_source = page.surface.focus_view.source.clone();
-    let focus_html = if focus_source.as_deref() != Some("placeholder") {
-        Some(page.surface.focus_view.html.clone())
-    } else {
-        None
-    };
+    let focus_source = page
+        .surface
+        .focus_view
+        .as_ref()
+        .and_then(|view| view.source.clone());
+    let focus_html = page
+        .surface
+        .focus_view
+        .as_ref()
+        .map(|view| view.html.clone());
 
     let out = ApiProjectPage {
         project: to_api_project(&page.project),
@@ -187,15 +342,26 @@ pub async fn get_project_page(
         threads: page
             .threads
             .iter()
-            .map(|tp| ApiThreadPanel {
-                thread: to_api_thread(&tp.thread),
-                history: tp.history.iter().map(to_api_message).collect(),
-                activity: to_api_activity(&tp.activity),
+            .map(|tp| {
+                let plan_progress = extract_latest_plan(&tp.history).and_then(|plan| {
+                    let steps = plan.get("plan")?.as_array()?;
+                    let total = steps.len();
+                    let completed = steps
+                        .iter()
+                        .filter(|s| s.get("status").and_then(|v| v.as_str()) == Some("completed"))
+                        .count();
+                    Some(ApiPlanProgress { completed, total })
+                });
+                ApiThreadPanel {
+                    thread: to_api_thread(&tp.thread),
+                    history: tp.history.iter().map(to_api_message).collect(),
+                    activity: to_api_activity(&tp.activity),
+                    plan_progress,
+                }
             })
             .collect(),
         history: page.history.iter().map(to_api_message).collect(),
         activity: to_api_activity(&page.activity),
-        has_queued,
         focus_html,
         focus_source,
     };
@@ -209,21 +375,13 @@ pub async fn get_thread_page(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let scope = shepherd_runtime::ShepherdScope::Thread {
-        project_id,
-        thread_id: page.item.thread.id.clone(),
-        title: page.item.thread.title.clone(),
-        workspace_path: page.item.thread.workspace_path.clone(),
-        focus: None,
-    };
-    let has_queued = shepherd_runtime::has_queued_turn(&scope);
-
+    let plan = extract_latest_plan(&page.item.history);
     let out = ApiThreadPage {
         project: to_api_project(&page.project),
         thread: to_api_thread(&page.item.thread),
         history: page.item.history.iter().map(to_api_message).collect(),
         activity: to_api_activity(&page.item.activity),
-        has_queued,
+        plan,
     };
     Ok(Json(out))
 }
@@ -281,7 +439,7 @@ pub async fn stop_thread_chat(
         project_id,
         thread_id: thread.id.clone(),
         title: thread.title.clone(),
-        workspace_path: thread.workspace_path.clone(),
+        workspace_path: None,
         focus: None,
     };
     shepherd_runtime::interrupt_scope_turn(scope)
@@ -299,6 +457,15 @@ pub async fn connect(
     State(state): State<Arc<AppState>>,
     Json(body): Json<ConnectBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    if state.api_key.trim().is_empty() {
+        let cookie = clear_cookie_header();
+        let mut response = Json(serde_json::json!({ "ok": true })).into_response();
+        response
+            .headers_mut()
+            .insert(axum::http::header::SET_COOKIE, cookie);
+        return Ok(response);
+    }
+
     if body.api_key != state.api_key {
         return Err((StatusCode::UNAUTHORIZED, "Invalid API key".to_string()));
     }
@@ -331,8 +498,36 @@ struct ApiSettingsResponse {
     provider: String,
     openrouter_key_masked: Option<String>,
     openrouter_base_url: Option<String>,
-    codex_connected: bool,
+    codex_configured: bool,
+    codex_source: Option<String>,
+    tavily_required: bool,
+    tavily_configured: bool,
     tavily_key_masked: Option<String>,
+    tavily_source: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiCodexDeviceStartResponse {
+    status: String,
+    device_auth_id: String,
+    user_code: String,
+    verify_url: String,
+    interval: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiCodexDevicePollRequest {
+    device_auth_id: String,
+    user_code: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiCodexDevicePollResponse {
+    status: String,
+    expires_at: Option<u64>,
 }
 
 pub async fn get_settings(
@@ -348,12 +543,8 @@ pub async fn get_settings(
         .await
         .ok()
         .map(|value| crate::backend::api_types::mask_credential(&value));
-    let tavily_key_masked = store
-        .load("tavily_api_key")
-        .await
-        .ok()
-        .map(|value| crate::backend::api_types::mask_credential(&value));
-    let codex_connected = store.load_codex_oauth().await.ok().flatten().is_some();
+    let codex = resolve_codex_oauth_credentials().await;
+    let tavily = resolve_tavily_api_key().await;
 
     let provider = match config.llm.provider {
         LlmProvider::Codex => "codex",
@@ -364,8 +555,14 @@ pub async fn get_settings(
         provider: provider.to_string(),
         openrouter_key_masked,
         openrouter_base_url: config.llm.openrouter_base_url,
-        codex_connected,
-        tavily_key_masked,
+        codex_configured: codex.is_some(),
+        codex_source: codex.map(|value| value.source.as_str().to_string()),
+        tavily_required: true,
+        tavily_configured: tavily.is_some(),
+        tavily_key_masked: tavily
+            .as_ref()
+            .map(|value| crate::backend::api_types::mask_credential(&value.api_key)),
+        tavily_source: tavily.map(|value| value.source.as_str().to_string()),
     }))
 }
 
@@ -392,6 +589,81 @@ pub async fn save_llm_provider(
     }
 
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn start_codex_device_flow(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    {
+        let mut config = state.config.write().await;
+        config.llm.provider = LlmProvider::Codex;
+        config
+            .save()
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    let device = oauth::codex_request_device_code().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("Failed to start Codex device auth: {}", e),
+        )
+    })?;
+
+    Ok(Json(ApiCodexDeviceStartResponse {
+        status: "pending".to_string(),
+        device_auth_id: device.device_auth_id,
+        user_code: device.user_code,
+        verify_url: oauth::CODEX_DEVICE_VERIFY_URL.to_string(),
+        interval: device.interval,
+    }))
+}
+
+pub async fn poll_codex_device_flow(
+    Json(body): Json<ApiCodexDevicePollRequest>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let polled = oauth::codex_poll_device_auth(&body.device_auth_id, &body.user_code)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to poll Codex device auth: {}", e),
+            )
+        })?;
+
+    let Some((authorization_code, code_verifier)) = polled else {
+        return Ok(Json(ApiCodexDevicePollResponse {
+            status: "pending".to_string(),
+            expires_at: None,
+        }));
+    };
+
+    let tokens = oauth::codex_exchange_code(&authorization_code, &code_verifier)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("Failed to exchange Codex auth code: {}", e),
+            )
+        })?;
+
+    let expires_at = tokens.expires_at;
+    let store = CredentialStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    store
+        .store_codex_oauth(&crate::backend::credentials::CodexOAuthCredentials {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            expires_at: tokens.expires_at,
+            account_id: tokens.account_id,
+        })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(ApiCodexDevicePollResponse {
+        status: "connected".to_string(),
+        expires_at: Some(expires_at),
+    }))
 }
 
 #[derive(Deserialize)]
@@ -434,15 +706,21 @@ pub struct SaveTavilyKeyBody {
 pub async fn save_tavily_key(
     Json(body): Json<SaveTavilyKeyBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let api_key = body.api_key.trim();
+    if api_key.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Tavily is required. Enter a Tavily key or set TAVILY_API_KEY.".to_string(),
+        ));
+    }
+
     let store = CredentialStore::open()
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if !body.api_key.trim().is_empty() {
-        store
-            .store("tavily_api_key", body.api_key.trim())
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    }
+    store
+        .store("tavily_api_key", api_key)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

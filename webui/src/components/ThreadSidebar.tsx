@@ -16,15 +16,38 @@ function statusColor(status: string): string {
     case "failed":
     case "error":
       return "bg-signal-red";
+    case "blocked":
+    case "waiting":
+      return "bg-signal-amber";
     default:
       return "bg-muted-foreground/40";
+  }
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case "running":
+    case "active":
+      return "running";
+    case "failed":
+    case "error":
+      return "failed";
+    case "blocked":
+      return "blocked";
+    case "waiting":
+      return "waiting";
+    case "done":
+      return "done";
+    case "draft":
+      return "draft";
+    default:
+      return status || "idle";
   }
 }
 
 const ThreadSidebar: Component<ThreadSidebarProps> = (props) => {
   return (
     <div class="flex flex-col h-full border-r border-border bg-card">
-      {/* Header */}
       <div class="flex items-center justify-between px-3 py-3 border-b border-border">
         <span class="chassis-label">Threads</span>
         <Show when={props.threads.length > 0}>
@@ -34,7 +57,6 @@ const ThreadSidebar: Component<ThreadSidebarProps> = (props) => {
         </Show>
       </div>
 
-      {/* Thread list */}
       <div class="flex-1 overflow-y-auto min-h-0">
         <Show
           when={props.threads.length > 0}
@@ -49,8 +71,7 @@ const ThreadSidebar: Component<ThreadSidebarProps> = (props) => {
               {(tp) => {
                 const isActive = () => tp.thread.id === props.activeThreadId;
                 const status = () => tp.activity.session?.status ?? tp.thread.status;
-                const summary = () =>
-                  tp.thread.objective || tp.thread.summary || "";
+                const summary = () => tp.thread.objective || tp.thread.summary || "";
 
                 return (
                   <a
@@ -64,8 +85,16 @@ const ThreadSidebar: Component<ThreadSidebarProps> = (props) => {
                       <span
                         class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusColor(status()))}
                       />
-                      <span class="text-xs font-medium text-foreground truncate">
+                      <span class="text-xs font-medium text-foreground truncate flex-1">
                         {tp.thread.title || "Untitled"}
+                      </span>
+                      <Show when={tp.plan_progress}>
+                        <span class="text-[10px] font-mono text-muted-foreground shrink-0">
+                          {tp.plan_progress!.completed}/{tp.plan_progress!.total}
+                        </span>
+                      </Show>
+                      <span class="text-[10px] font-mono text-muted-foreground shrink-0">
+                        {statusLabel(status())}
                       </span>
                     </div>
                     <Show when={summary()}>

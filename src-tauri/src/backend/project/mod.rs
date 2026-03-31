@@ -9,12 +9,10 @@
 //! - one canvas artifact
 //! - many visible threads
 
-mod focus;
 mod prepare;
 mod store;
 mod types;
 
-pub use focus::validate_project_focus_view_html;
 pub use prepare::{
     ensure_project_runtime_preparation_started, get_project_runtime_preparation,
     project_runtime_is_ready, retry_project_runtime_preparation,

@@ -9,10 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@kobalte/core": "^0.13",
+    "@kobalte/core": "^0.13.11",
     "class-variance-authority": "^0.7",
     "clsx": "^2",
-    "lucide-solid": "^1.7",
+    "marked": "^17.0.5",
     "solid-js": "1.9.12",
     "tailwind-merge": "^2",
     "tailwindcss-animate": "^1.0"

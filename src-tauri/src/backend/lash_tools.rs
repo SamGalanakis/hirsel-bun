@@ -19,7 +19,7 @@ fn shell_prompt_contributions() -> Vec<PromptContribution> {
 
 fn base_tool_plugin_factories(
     instruction_source: Option<Arc<dyn InstructionSource>>,
-    tavily_api_key: Option<String>,
+    tavily_api_key: String,
 ) -> Vec<Arc<dyn PluginFactory>> {
     let mut factories: Vec<Arc<dyn PluginFactory>> = vec![
         Arc::new(BuiltinToolResultProjectionPluginFactory::default()) as Arc<dyn PluginFactory>,
@@ -50,19 +50,17 @@ fn base_tool_plugin_factories(
         )) as Arc<dyn PluginFactory>,
     ];
 
-    if let Some(key) = tavily_api_key {
-        let search_key = key.clone();
-        factories.push(Arc::new(StaticPluginFactory::new(
-            "search_web",
-            PluginSpec::new()
-                .with_tool_provider(Arc::new(WebSearch::new(search_key)) as Arc<dyn ToolProvider>),
-        )) as Arc<dyn PluginFactory>);
-        factories.push(Arc::new(StaticPluginFactory::new(
-            "fetch_url",
-            PluginSpec::new()
-                .with_tool_provider(Arc::new(FetchUrl::new(key)) as Arc<dyn ToolProvider>),
-        )) as Arc<dyn PluginFactory>);
-    }
+    let search_key = tavily_api_key.clone();
+    factories.push(Arc::new(StaticPluginFactory::new(
+        "search_web",
+        PluginSpec::new()
+            .with_tool_provider(Arc::new(WebSearch::new(search_key)) as Arc<dyn ToolProvider>),
+    )) as Arc<dyn PluginFactory>);
+    factories.push(Arc::new(StaticPluginFactory::new(
+        "fetch_url",
+        PluginSpec::new()
+            .with_tool_provider(Arc::new(FetchUrl::new(tavily_api_key)) as Arc<dyn ToolProvider>),
+    )) as Arc<dyn PluginFactory>);
 
     factories
 }
@@ -70,7 +68,7 @@ fn base_tool_plugin_factories(
 pub(crate) fn embedded_tool_plugin_factories(
     custom_plugin_id: &'static str,
     custom_tool_provider: Arc<dyn ToolProvider>,
-    tavily_api_key: Option<String>,
+    tavily_api_key: String,
 ) -> Vec<Arc<dyn PluginFactory>> {
     let instruction_source: Arc<dyn InstructionSource> = Arc::new(FsInstructionSource::new());
     let mut factories = base_tool_plugin_factories(Some(instruction_source), tavily_api_key);

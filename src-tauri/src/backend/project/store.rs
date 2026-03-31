@@ -3,7 +3,6 @@
 use sqlx::{Row, SqlitePool};
 use tokio::sync::OnceCell;
 
-use super::focus::default_project_focus_html;
 use super::types::{
     CreateProjectRequest, Project, ProjectFocusView, ProjectPreparationStep,
     ProjectRetainedContext, ProjectRuntimePreparation, UpdateProjectRequest,
@@ -363,9 +362,9 @@ impl ProjectStore {
         Ok(())
     }
 
-    pub async fn get_project_focus_view(&self, id: i64) -> ProjectResult<ProjectFocusView> {
+    pub async fn get_project_focus_view(&self, id: i64) -> ProjectResult<Option<ProjectFocusView>> {
         let pool = self.pool().await;
-        let project = self.get_project(id).await?;
+        let _project = self.get_project(id).await?;
 
         let row = sqlx::query(
             "SELECT project_id, html, source, updated_at FROM project_focus_views WHERE project_id = ?",
@@ -375,16 +374,14 @@ impl ProjectStore {
         .await?;
 
         if let Some(row) = row {
-            Ok(ProjectFocusView {
+            Ok(Some(ProjectFocusView {
                 project_id: row.get("project_id"),
                 html: row.get("html"),
                 source: row.get("source"),
                 updated_at: row.get("updated_at"),
-            })
+            }))
         } else {
-            let html = default_project_focus_html(&project.name);
-            self.update_project_focus_view(id, &html, Some("placeholder"))
-                .await
+            Ok(None)
         }
     }
 

@@ -13,7 +13,7 @@ pub enum LlmProvider {
 
 /// Per-tier model overrides for agent intelligence levels.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct AgentModelOverrides {
     /// Fast/cheap model for exploration and read-only tasks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -28,7 +28,7 @@ pub struct AgentModelOverrides {
 
 /// Global LLM configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct LlmConfig {
     /// Active provider used for shepherd and thread sessions.
     #[serde(default)]

@@ -7,8 +7,6 @@ dist/
 references/
 .hirsel-dev/
 .hirsel-remote-dev/
-src-tauri/runs/
-src-tauri/runtimes/
 
 # Environment and secrets
 .env

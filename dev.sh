@@ -23,6 +23,34 @@ profiling_mode=false
 server_pid=""
 tauri_driver_pid=""
 
+load_dotenv_file() {
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*(export[[:space:]]+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+            local key="${BASH_REMATCH[2]}"
+            local value="${BASH_REMATCH[3]}"
+            value="${value%$'\r'}"
+            if [[ ${#value} -ge 2 ]]; then
+                if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+                    value="${value:1:${#value}-2}"
+                elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+                    value="${value:1:${#value}-2}"
+                fi
+            fi
+            if [[ -z "${!key+x}" ]]; then
+                export "$key=$value"
+            fi
+        fi
+    done < "$file"
+}
+
+load_dotenv_file "$SCRIPT_DIR/.env"
+load_dotenv_file "$SCRIPT_DIR/.env.local"
+
 cleanup() {
     if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
         kill "$server_pid" 2>/dev/null || true
@@ -146,20 +174,29 @@ build_shell_assets() {
 }
 
 prepare_local_backend() {
-    export HIRSEL_API_KEY="${HIRSEL_API_KEY:-${HIRSEL_DEV_API_KEY:-dev-test-key}}"
+    export HIRSEL_API_KEY="${HIRSEL_API_KEY:-${HIRSEL_DEV_API_KEY:-}}"
     export HIRSEL_ROOT="${HIRSEL_ROOT:-$DEV_ROOT_DEFAULT}"
 
     mkdir -p "$HIRSEL_ROOT"
     cat > "$HIRSEL_ROOT/config.toml" <<EOF
 [backend]
 url = "http://127.0.0.1:$REMOTE_PORT"
+EOF
+
+    if [[ -n "$HIRSEL_API_KEY" ]]; then
+        cat >> "$HIRSEL_ROOT/config.toml" <<EOF
 api_key = "$HIRSEL_API_KEY"
 EOF
+    fi
 
     echo "Backend-first dev mode"
     echo "  Root: $HIRSEL_ROOT"
     echo "  Backend URL: http://127.0.0.1:$REMOTE_PORT"
-    echo "  API key: $HIRSEL_API_KEY"
+    if [[ -n "$HIRSEL_API_KEY" ]]; then
+        echo "  API key: $HIRSEL_API_KEY"
+    else
+        echo "  API key: disabled"
+    fi
     echo ""
 }
 

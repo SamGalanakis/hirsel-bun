@@ -10,6 +10,10 @@ use axum::{
 
 pub const SESSION_COOKIE: &str = "hirsel_session";
 
+pub fn auth_enabled(expected_key: &str) -> bool {
+    !expected_key.trim().is_empty()
+}
+
 fn extract_cookie(headers: &HeaderMap, key: &str) -> Option<String> {
     headers
         .get(header::COOKIE)
@@ -41,7 +45,11 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
 }
 
 pub fn is_public_path(path: &str) -> bool {
-    path == "/" || path == "/health" || path.starts_with("/connect") || path.starts_with("/static/")
+    path == "/"
+        || path == "/health"
+        || path.starts_with("/connect")
+        || path == "/api/connect"
+        || path.starts_with("/static/")
 }
 
 /// Middleware to validate API key from Authorization header
@@ -50,6 +58,10 @@ pub async fn api_key_auth(
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, Response> {
+    if !auth_enabled(&expected_key) {
+        return Ok(next.run(request).await);
+    }
+
     let path = request.uri().path().to_string();
 
     if is_public_path(&path) {

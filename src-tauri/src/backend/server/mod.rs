@@ -38,8 +38,7 @@ fn resolve_webui_dist() -> PathBuf {
 
 /// Start the HTTP server
 pub async fn start_server(port: u16) -> anyhow::Result<()> {
-    let api_key = std::env::var("HIRSEL_API_KEY")
-        .map_err(|_| anyhow::anyhow!("HIRSEL_API_KEY environment variable is required"))?;
+    let api_key = std::env::var("HIRSEL_API_KEY").unwrap_or_default();
 
     let (config, warnings) =
         Config::load().map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
@@ -80,6 +79,11 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!("Hirsel server listening on 0.0.0.0:{}", port);
+    if auth::auth_enabled(&api_key) {
+        tracing::info!("HTTP API key auth enabled");
+    } else {
+        tracing::info!("HTTP API key auth disabled");
+    }
 
     axum::serve(listener, app).await?;
 

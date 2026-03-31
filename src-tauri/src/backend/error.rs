@@ -344,12 +344,6 @@ impl From<crate::backend::git::GitError> for HirselError {
     }
 }
 
-impl From<crate::backend::storage::StorageError> for HirselError {
-    fn from(err: crate::backend::storage::StorageError) -> Self {
-        HirselError::Io(std::io::Error::other(err.to_string()))
-    }
-}
-
 impl From<crate::backend::sandbox::SandboxError> for HirselError {
     fn from(err: crate::backend::sandbox::SandboxError) -> Self {
         match err {

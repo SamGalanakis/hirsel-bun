@@ -14,7 +14,16 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route("/api/connect", post(api::connect))
         .route("/api/logout", post(api::logout))
         .route("/api/projects", get(api::list_projects))
+        .route("/api/projects/probe", get(api::probe_project_create_api))
         .route("/api/projects", post(api::create_project_api))
+        .route(
+            "/api/projects/{project_id}/preparation",
+            get(api::get_project_preparation),
+        )
+        .route(
+            "/api/projects/{project_id}/preparation/retry",
+            post(api::retry_project_preparation),
+        )
         .route(
             "/api/projects/{project_id}/page",
             get(api::get_project_page),
@@ -43,6 +52,14 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         )
         .route("/api/settings", get(api::get_settings))
         .route("/api/settings/provider", post(api::save_llm_provider))
+        .route(
+            "/api/settings/provider/codex/device/start",
+            post(api::start_codex_device_flow),
+        )
+        .route(
+            "/api/settings/provider/codex/device/poll",
+            post(api::poll_codex_device_flow),
+        )
         .route("/api/settings/openrouter", post(api::save_openrouter_key))
         .route("/api/settings/tavily", post(api::save_tavily_key))
 }

@@ -20,7 +20,6 @@ pub mod server;
 pub mod shepherd_chat;
 pub mod shepherd_runtime;
 pub mod shepherd_threads;
-pub mod storage;
 pub mod system;
 pub mod workspace;
 
@@ -42,11 +41,6 @@ pub use shepherd_chat::{
 };
 pub use shepherd_threads::{
     ShepherdThread, ShepherdThreadError, ShepherdThreadResult, ShepherdThreadStore,
-};
-#[cfg(feature = "s3-storage")]
-pub use storage::S3FileStorage;
-pub use storage::{
-    create_file_storage, FileStorage, LocalFileStorage, StorageError, StorageResult,
 };
 pub use workspace::{
     ensure_project_workspace, ensure_thread_checkout, prepare_thread_checkout,

@@ -36,6 +36,35 @@ export interface Project {
   created_at: string;
 }
 
+export interface ProjectPreparationStep {
+  id: string;
+  label: string;
+  status: string;
+  detail: string | null;
+  progress: number | null;
+}
+
+export interface ProjectPreparation {
+  project: Project;
+  worker_image: string;
+  status: string;
+  headline: string;
+  detail: string | null;
+  progress: number;
+  steps: ProjectPreparationStep[];
+  started_at: string;
+  updated_at: string;
+}
+
+export interface ProjectCreateProbe {
+  normalized_repo_url: string;
+  suggested_name: string;
+  selected_branch: string;
+  branch_source: "explicit" | "url" | "detected";
+  has_root_flake: boolean;
+  worker_image: string;
+}
+
 export interface ShepherdThread {
   id: string;
   project_id: number;
@@ -43,8 +72,6 @@ export interface ShepherdThread {
   objective: string;
   summary: string;
   status: string;
-  workspace_path: string | null;
-  checkout_name: string | null;
   created_at: string;
   updated_at: string;
   last_activity_at: string;
@@ -69,10 +96,26 @@ export interface ScopeActivity {
   has_active_turn: boolean;
 }
 
+export interface PlanProgress {
+  completed: number;
+  total: number;
+}
+
+export interface PlanStep {
+  step: string;
+  status: string;
+}
+
+export interface PlanSnapshot {
+  explanation?: string;
+  plan: PlanStep[];
+}
+
 export interface ThreadPanelState {
   thread: ShepherdThread;
   history: ChatMessage[];
   activity: ScopeActivity;
+  plan_progress: PlanProgress | null;
 }
 
 export interface ProjectPageData {
@@ -81,7 +124,6 @@ export interface ProjectPageData {
   threads: ThreadPanelState[];
   history: ChatMessage[];
   activity: ScopeActivity;
-  has_queued: boolean;
   focus_html: string | null;
   focus_source: string | null;
 }
@@ -91,7 +133,32 @@ export interface ThreadPageData {
   thread: ShepherdThread;
   history: ChatMessage[];
   activity: ScopeActivity;
-  has_queued: boolean;
+  plan: PlanSnapshot | null;
+}
+
+export interface SettingsResponse {
+  provider: "codex" | "openrouter";
+  openrouter_key_masked: string | null;
+  openrouter_base_url: string | null;
+  codex_configured: boolean;
+  codex_source: "env" | "store" | null;
+  tavily_required: boolean;
+  tavily_configured: boolean;
+  tavily_key_masked: string | null;
+  tavily_source: "env" | "store" | null;
+}
+
+export interface CodexDeviceStartResponse {
+  status: "pending";
+  deviceAuthId: string;
+  userCode: string;
+  verifyUrl: string;
+  interval: number;
+}
+
+export interface CodexDevicePollResponse {
+  status: "pending" | "connected";
+  expiresAt: number | null;
 }
 
 // ── API Functions ──
@@ -101,9 +168,38 @@ export async function listProjects(): Promise<Project[]> {
   return parseJson<Project[]>(res);
 }
 
+export async function probeProjectCreate(data: {
+  repo_url: string;
+  branch?: string;
+}): Promise<ProjectCreateProbe> {
+  const params = new URLSearchParams();
+  params.set("repo_url", data.repo_url);
+  if (data.branch?.trim()) {
+    params.set("branch", data.branch.trim());
+  }
+  const res = await apiFetch(`/projects/probe?${params.toString()}`);
+  return parseJson<ProjectCreateProbe>(res);
+}
+
 export async function getProjectPage(projectId: number): Promise<ProjectPageData> {
   const res = await apiFetch(`/projects/${projectId}/page`);
   return parseJson<ProjectPageData>(res);
+}
+
+export async function getProjectPreparation(
+  projectId: number,
+): Promise<ProjectPreparation> {
+  const res = await apiFetch(`/projects/${projectId}/preparation`);
+  return parseJson<ProjectPreparation>(res);
+}
+
+export async function retryProjectPreparation(
+  projectId: number,
+): Promise<ProjectPreparation> {
+  const res = await apiFetch(`/projects/${projectId}/preparation/retry`, {
+    method: "POST",
+  });
+  return parseJson<ProjectPreparation>(res);
 }
 
 export async function getThreadPage(
@@ -171,4 +267,56 @@ export async function createProject(data: {
 
 export async function deleteProject(projectId: number): Promise<void> {
   await apiFetch(`/projects/${projectId}`, { method: "DELETE" });
+}
+
+export async function getSettings(): Promise<SettingsResponse> {
+  const res = await apiFetch("/settings");
+  return parseJson<SettingsResponse>(res);
+}
+
+export async function saveSettingsProvider(
+  provider: "codex" | "openrouter",
+): Promise<void> {
+  const res = await apiFetch("/settings/provider", {
+    method: "POST",
+    body: JSON.stringify({ provider }),
+  });
+  await parseJson<{ ok: true }>(res);
+}
+
+export async function saveOpenRouterSettings(data: {
+  api_key?: string;
+  base_url?: string;
+}): Promise<void> {
+  const res = await apiFetch("/settings/openrouter", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  await parseJson<{ ok: true }>(res);
+}
+
+export async function startCodexDeviceFlow(): Promise<CodexDeviceStartResponse> {
+  const res = await apiFetch("/settings/provider/codex/device/start", {
+    method: "POST",
+  });
+  return parseJson<CodexDeviceStartResponse>(res);
+}
+
+export async function pollCodexDeviceFlow(data: {
+  deviceAuthId: string;
+  userCode: string;
+}): Promise<CodexDevicePollResponse> {
+  const res = await apiFetch("/settings/provider/codex/device/poll", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+  return parseJson<CodexDevicePollResponse>(res);
+}
+
+export async function saveTavilyKey(api_key: string): Promise<void> {
+  const res = await apiFetch("/settings/tavily", {
+    method: "POST",
+    body: JSON.stringify({ api_key }),
+  });
+  await parseJson<{ ok: true }>(res);
 }

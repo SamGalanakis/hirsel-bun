@@ -1,19 +1,15 @@
 //! Configuration system for hirsel.
 //!
 //! This module provides the configuration system for hirsel, including:
-//! - Agent configuration (command, type detection)
 //! - Agent container configuration
 //! - Backend connection configuration
 //! - The shared Config struct used by the desktop shell and backend
 
-mod agent;
 mod backend;
 mod llm;
 mod loader;
 pub mod paths;
 mod saver;
-mod storage;
-mod types;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -21,14 +17,10 @@ use std::env;
 use std::path::PathBuf;
 use thiserror::Error;
 
-// Re-export all public types
-pub use agent::AgentConfig;
 pub use backend::BackendConfig;
 pub use lash::McpServerConfig;
 pub use llm::{AgentModelOverrides, LlmConfig, LlmProvider};
 pub use paths::{global_db_path, hirsel_dir, project_assets_dir, workspace_dir, workspaces_dir};
-pub use storage::{S3Config, StorageBackend, StorageConfig, StorageProvider};
-pub use types::AgentType;
 
 /// Context window sizes per model (in tokens).
 pub const CONTEXT_WINDOWS: &[(&str, u32)] = &[("gpt-5", 200_000), ("gpt-5-mini", 200_000)];
@@ -75,9 +67,6 @@ pub struct Config {
     pub root: PathBuf,
 
     #[serde(default)]
-    pub agent: AgentConfig,
-
-    #[serde(default)]
     pub llm: LlmConfig,
 
     /// Agent container configuration for the backend host.
@@ -91,22 +80,16 @@ pub struct Config {
     /// MCP servers imported into embedded lash sessions.
     #[serde(default)]
     pub mcp_servers: BTreeMap<String, McpServerConfig>,
-
-    /// Storage configuration for files and database
-    #[serde(default)]
-    pub storage: StorageConfig,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             root: default_root(),
-            agent: AgentConfig::default(),
             llm: LlmConfig::default(),
             sandbox: crate::backend::sandbox::SandboxConfig::docker_nix(),
             backend: BackendConfig::default(),
             mcp_servers: BTreeMap::new(),
-            storage: StorageConfig::default(),
         }
     }
 }
@@ -158,13 +141,6 @@ impl Config {
     /// Save the current configuration to `config.toml`.
     pub fn save(&self) -> Result<(), ConfigError> {
         saver::save_config(self, &self.config_file())
-    }
-
-    /// Update agent settings
-    pub fn update_agent(&mut self, command: Option<Vec<String>>) {
-        if let Some(cmd) = command {
-            self.agent.command = cmd;
-        }
     }
 }
 

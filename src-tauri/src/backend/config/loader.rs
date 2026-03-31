@@ -1,26 +1,16 @@
 //! Configuration file loading and TOML parsing.
 
+use serde::de::DeserializeOwned;
 use std::fs;
 use std::path::Path;
 
-use super::{
-    BackendConfig, Config, ConfigError, LlmConfig, LlmProvider, McpServerConfig, S3Config,
-    StorageBackend, StorageConfig, StorageProvider,
-};
+use super::{Config, ConfigError, McpServerConfig};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn validate_top_level_keys(table: &toml::Table) -> Result<(), ConfigError> {
-    let allowed: BTreeSet<&str> = [
-        "root",
-        "agent",
-        "llm",
-        "sandbox",
-        "backend",
-        "mcp_servers",
-        "storage",
-    ]
-    .into_iter()
-    .collect();
+    let allowed: BTreeSet<&str> = ["root", "llm", "sandbox", "backend", "mcp_servers"]
+        .into_iter()
+        .collect();
 
     let unknown = table
         .keys()
@@ -38,41 +28,14 @@ fn validate_top_level_keys(table: &toml::Table) -> Result<(), ConfigError> {
     )))
 }
 
-/// Parse an S3Config from a TOML table
-fn parse_s3_config(table: &toml::Table) -> S3Config {
-    let provider = table
-        .get("provider")
-        .and_then(|v| v.as_str())
-        .map(|s| match s {
-            "minio" => StorageProvider::Minio,
-            _ => StorageProvider::S3,
-        })
-        .unwrap_or(StorageProvider::S3);
-
-    S3Config {
-        provider,
-        endpoint: table
-            .get("endpoint")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        bucket: table
-            .get("bucket")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        region: table
-            .get("region")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        access_key_id: table
-            .get("access_key_id")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-        secret_access_key: table
-            .get("secret_access_key")
-            .and_then(|v| v.as_str())
-            .map(String::from),
-    }
+fn parse_section<T: DeserializeOwned>(
+    section_name: &str,
+    value: &toml::Value,
+) -> Result<T, ConfigError> {
+    let toml_str = toml::to_string(value).unwrap_or_default();
+    toml::from_str::<T>(&toml_str).map_err(|error| {
+        ConfigError::ValidationError(format!("[{}] invalid config: {}", section_name, error))
+    })
 }
 
 /// Load settings from a TOML config file into the Config struct.
@@ -117,81 +80,25 @@ pub fn load_config_file(
         }
     }
 
-    // Load agent config
-    if let Some(agent_data) = table.get("agent") {
-        if let Some(agent_table) = agent_data.as_table() {
-            if let Some(cmd) = agent_table.get("command") {
-                if let Some(arr) = cmd.as_array() {
-                    let command: Vec<String> = arr
-                        .iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect();
-                    if !command.is_empty() {
-                        config.agent.command = command;
-                    }
-                } else {
-                    warnings.push(format!(
-                        "Config warning: agent.command should be a list of strings, got {}",
-                        cmd.type_str()
-                    ));
-                }
-            }
-        } else {
-            warnings.push(format!(
-                "Config warning: [agent] section should be a table, got {}",
-                agent_data.type_str()
-            ));
-        }
-    }
-
     // Load LLM configuration
-    load_llm_config(&table, &mut config.llm);
+    if let Some(llm_data) = table.get("llm") {
+        config.llm = parse_section("llm", llm_data)?;
+    }
 
     // Load sandbox configuration
     if let Some(sandbox_data) = table.get("sandbox") {
-        let toml_str = toml::to_string(sandbox_data).unwrap_or_default();
-        match toml::from_str::<crate::backend::sandbox::SandboxConfig>(&toml_str) {
-            Ok(sandbox) => {
-                config.sandbox = sandbox;
-            }
-            Err(e) => warnings.push(format!("Config warning: [sandbox] invalid config: {}", e)),
-        }
+        config.sandbox = parse_section("sandbox", sandbox_data)?;
     }
 
     // Load backend connection
-    load_backend_config(&table, &mut config.backend, &mut warnings);
+    if let Some(backend_data) = table.get("backend") {
+        config.backend = parse_section("backend", backend_data)?;
+    }
 
     // Load MCP server imports
     load_mcp_servers(&table, &mut config.mcp_servers, &mut warnings);
 
-    // Load storage configuration
-    load_storage_config(&table, &mut config.storage, &mut warnings);
-
     Ok(warnings)
-}
-
-fn load_llm_config(table: &toml::Table, llm: &mut LlmConfig) {
-    if let Some(llm_data) = table.get("llm") {
-        if let Some(llm_table) = llm_data.as_table() {
-            if let Some(provider) = llm_table.get("provider").and_then(|v| v.as_str()) {
-                llm.provider = match provider.to_lowercase().as_str() {
-                    "openrouter" => LlmProvider::Openrouter,
-                    _ => LlmProvider::Codex,
-                };
-            }
-            llm.openrouter_base_url = llm_table
-                .get("openrouter_base_url")
-                .and_then(|v| v.as_str())
-                .and_then(|v| {
-                    let trimmed = v.trim();
-                    if trimmed.is_empty() {
-                        None
-                    } else {
-                        Some(trimmed.to_string())
-                    }
-                });
-        }
-    }
 }
 
 fn load_mcp_servers(
@@ -212,69 +119,78 @@ fn load_mcp_servers(
     }
 }
 
-fn load_backend_config(
-    table: &toml::Table,
-    backend: &mut BackendConfig,
-    warnings: &mut Vec<String>,
-) {
-    if let Some(backend_data) = table.get("backend") {
-        if let Some(backend_table) = backend_data.as_table() {
-            backend.url = backend_table
-                .get("url")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            backend.api_key = backend_table
-                .get("api_key")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-        } else {
-            warnings.push("Config warning: [backend] must be a table".to_string());
+#[cfg(test)]
+mod tests {
+    use super::load_config_file;
+    use crate::backend::config::{Config, ConfigError, LlmProvider};
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn rejects_legacy_agent_section() {
+        let temp = TempDir::new().expect("temp dir");
+        let config_path = temp.path().join("config.toml");
+        fs::write(
+            &config_path,
+            "[agent]\ncommand = [\"hirsel\", \"__worker-run\"]\n",
+        )
+        .expect("write config");
+
+        let mut config = Config::default();
+        match load_config_file(&mut config, &config_path) {
+            Err(ConfigError::ValidationError(message)) => {
+                assert!(message.contains("unknown config keys: agent"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
         }
     }
-}
 
-fn load_storage_config(
-    table: &toml::Table,
-    storage: &mut StorageConfig,
-    warnings: &mut Vec<String>,
-) {
-    if let Some(storage_data) = table.get("storage") {
-        if let Some(storage_table) = storage_data.as_table() {
-            // Parse files backend
-            if let Some(files_str) = storage_table.get("files").and_then(|v| v.as_str()) {
-                storage.files = match files_str.to_lowercase().as_str() {
-                    "local" => StorageBackend::Local,
-                    "s3" => StorageBackend::S3,
-                    _ => {
-                        warnings.push(format!(
-                            "Config warning: unknown storage backend '{}', using local",
-                            files_str
-                        ));
-                        StorageBackend::Local
-                    }
-                };
-            }
+    #[test]
+    fn loads_full_llm_section() {
+        let temp = TempDir::new().expect("temp dir");
+        let config_path = temp.path().join("config.toml");
+        fs::write(
+            &config_path,
+            r#"
+[llm]
+provider = "openrouter"
+openrouter_base_url = "https://openrouter.example/api"
+model = "gpt-5"
+model_variant = "high"
 
-            // Parse default_storage
-            if let Some(default) = storage_table
-                .get("default_storage")
-                .and_then(|v| v.as_str())
-            {
-                storage.default_storage = Some(default.to_string());
-            }
+[llm.agent_models]
+low = "gpt-5-mini"
+high = "gpt-5"
+"#,
+        )
+        .expect("write config");
 
-            // Parse named storages: [storage.storages.name]
-            if let Some(storages_data) = storage_table.get("storages") {
-                if let Some(storages_table) = storages_data.as_table() {
-                    for (name, value) in storages_table {
-                        if let Some(s3_table) = value.as_table() {
-                            storage
-                                .storages
-                                .insert(name.clone(), parse_s3_config(s3_table));
-                        }
-                    }
-                }
-            }
-        }
+        let mut config = Config::default();
+        let warnings = load_config_file(&mut config, &config_path).expect("load config");
+
+        assert!(warnings.is_empty());
+        assert_eq!(config.llm.provider, LlmProvider::Openrouter);
+        assert_eq!(
+            config.llm.openrouter_base_url.as_deref(),
+            Some("https://openrouter.example/api")
+        );
+        assert_eq!(config.llm.model.as_deref(), Some("gpt-5"));
+        assert_eq!(config.llm.model_variant.as_deref(), Some("high"));
+        assert_eq!(
+            config
+                .llm
+                .agent_models
+                .as_ref()
+                .and_then(|m| m.low.as_deref()),
+            Some("gpt-5-mini")
+        );
+        assert_eq!(
+            config
+                .llm
+                .agent_models
+                .as_ref()
+                .and_then(|m| m.high.as_deref()),
+            Some("gpt-5")
+        );
     }
 }

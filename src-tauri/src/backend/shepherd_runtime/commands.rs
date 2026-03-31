@@ -56,20 +56,10 @@ fn take_queued_turn(key: &str) -> Option<QueuedTurn> {
     QUEUED_TURNS.lock().ok()?.remove(key)
 }
 
-pub fn has_queued_turn(scope: &ShepherdScope) -> bool {
-    let key = scope_key(scope);
-    QUEUED_TURNS
-        .lock()
-        .ok()
-        .is_some_and(|map| map.contains_key(&key))
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendShepherdMessageResponse {
     pub started: bool,
-    #[serde(default)]
-    pub queued: bool,
     #[serde(default)]
     pub thread_id: Option<String>,
 }
@@ -180,7 +170,7 @@ impl LiveTurnAccumulator {
                 }
             }
             WorkerStreamEvent::Message { text, kind } => {
-                if kind == "final" || kind == "tool_output" {
+                if kind == "final" {
                     if let Some(ShepherdMessageChunk::Text { content }) = self
                         .chunks
                         .iter_mut()
@@ -471,7 +461,6 @@ async fn dispatch_scope_message_local(
         );
         return Ok(SendShepherdMessageResponse {
             started: false,
-            queued: true,
             thread_id: match scope {
                 ShepherdScope::Thread { thread_id, .. } => Some(thread_id),
                 _ => None,
@@ -489,7 +478,6 @@ async fn dispatch_scope_message_local(
     spawn_scope_turn(scope.clone(), user_chunks, focus, message_id)?;
     Ok(SendShepherdMessageResponse {
         started: true,
-        queued: false,
         thread_id: match scope {
             ShepherdScope::Thread { thread_id, .. } => Some(thread_id),
             _ => None,

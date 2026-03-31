@@ -3,22 +3,15 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/cn";
 
 const badgeVariants = cva(
-  "inline-flex items-center font-mono text-[10px] uppercase tracking-[0.12em] px-2 py-0.5 font-medium transition-colors",
+  "inline-flex items-center rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors",
   {
     variants: {
       variant: {
-        default: "border border-border bg-background text-foreground",
-        destructive: "border-transparent bg-destructive text-destructive-foreground",
-        amber: "border-transparent bg-signal-amber/15 text-signal-amber",
-        green: "border-transparent bg-signal-green/15 text-signal-green",
-        blue: "border-transparent bg-signal-blue/15 text-signal-blue",
-      },
-      status: {
-        working: "border-transparent bg-signal-amber/15 text-signal-amber",
-        done: "border-transparent bg-signal-green/15 text-signal-green",
-        failed: "border-transparent bg-destructive/15 text-destructive",
-        idle: "border border-border bg-muted text-muted-foreground",
-        queued: "border-transparent bg-signal-blue/15 text-signal-blue",
+        default: "border-border bg-background text-muted-foreground",
+        secondary: "border-border bg-muted text-foreground",
+        success: "border-signal-green/30 bg-signal-green/10 text-signal-green",
+        warning: "border-signal-amber/30 bg-signal-amber/10 text-signal-amber",
+        destructive: "border-signal-red/30 bg-signal-red/10 text-signal-red",
       },
     },
     defaultVariants: {
@@ -27,21 +20,13 @@ const badgeVariants = cva(
   },
 );
 
-type BadgeProps = JSX.HTMLAttributes<HTMLSpanElement> &
+type BadgeProps = JSX.HTMLAttributes<HTMLDivElement> &
   VariantProps<typeof badgeVariants>;
 
 const Badge: Component<BadgeProps> = (props) => {
-  const [local, others] = splitProps(props, ["class", "variant", "status"]);
+  const [local, others] = splitProps(props, ["class", "variant"]);
 
-  return (
-    <span
-      class={cn(
-        badgeVariants({ variant: local.variant, status: local.status }),
-        local.class,
-      )}
-      {...others}
-    />
-  );
+  return <div class={cn(badgeVariants({ variant: local.variant }), local.class)} {...others} />;
 };
 
 export default Badge;

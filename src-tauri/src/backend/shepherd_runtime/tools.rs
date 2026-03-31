@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::backend::project::{validate_project_focus_view_html, ProjectStore};
+use crate::backend::project::ProjectStore;
 use crate::backend::{ShepherdChatMessage, ShepherdThread, ShepherdThreadStore};
 use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
 use serde_json::{json, Value};
@@ -604,11 +604,17 @@ impl ShepherdToolProvider {
         };
 
         match store.get_project_focus_view(project_id).await {
-            Ok(view) => ToolResult::ok(json!({
+            Ok(Some(view)) => ToolResult::ok(json!({
                 "project_id": view.project_id,
                 "html": view.html,
                 "updated_at": view.updated_at,
                 "source": view.source,
+            })),
+            Ok(None) => ToolResult::ok(json!({
+                "project_id": project_id,
+                "html": null,
+                "updated_at": null,
+                "source": null,
             })),
             Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
         }
@@ -624,8 +630,8 @@ impl ShepherdToolProvider {
             .and_then(|v| v.as_str())
             .filter(|s| !s.trim().is_empty());
 
-        if let Err(error) = validate_project_focus_view_html(html) {
-            return ToolResult::err(json!({ "error": error }));
+        if html.trim().is_empty() {
+            return ToolResult::err(json!({ "error": "Project canvas HTML cannot be empty" }));
         }
 
         let store = match ProjectStore::open().await {
