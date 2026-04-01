@@ -230,8 +230,8 @@ const ProjectPage: Component<ProjectPageProps> = (props) => {
         />
       }
     >
-      <div class="h-screen bg-background overflow-hidden">
-        <header class="flex h-[46px] items-center gap-3 border-b border-border bg-card px-4">
+      <div class="flex min-h-0 flex-1 flex-col bg-background overflow-hidden">
+        <header class="flex h-[46px] shrink-0 items-center gap-3 border-b border-border bg-card px-4">
           <a href="#" class="font-display text-base tracking-tight text-foreground">
             HIRSEL
           </a>
@@ -303,7 +303,7 @@ const ProjectPage: Component<ProjectPageProps> = (props) => {
         <Show
           when={data()}
           fallback={
-            <div class="flex" style={{ height: "calc(100vh - 46px)" }}>
+            <div class="flex flex-1 min-h-0 overflow-hidden">
               <div class="w-[220px] shrink-0 border-r border-border bg-card">
                 <div class="px-3 py-3 border-b border-border">
                   <div class="h-3 w-16 bg-muted animate-pulse" />
@@ -320,10 +320,10 @@ const ProjectPage: Component<ProjectPageProps> = (props) => {
             </div>
           }
         >
-          <div class="flex overflow-hidden" style={{ height: "calc(100vh - 46px)" }}>
+          <div class="flex flex-1 min-h-0 overflow-hidden">
               {/* Thread sidebar */}
               <Show when={sidebarWidth() > 0}>
-                <div class="shrink-0 h-full overflow-hidden" style={{ width: `${sidebarWidth()}px` }}>
+                <div class="flex shrink-0 min-h-0 self-stretch overflow-hidden" style={{ width: `${sidebarWidth()}px` }}>
                   <ThreadSidebar
                     threads={data()?.threads ?? []}
                     projectId={props.projectId}
@@ -340,7 +340,7 @@ const ProjectPage: Component<ProjectPageProps> = (props) => {
               />
 
               {/* Chat */}
-              <div class="flex-1 min-w-0 h-full overflow-hidden">
+              <div class="flex flex-1 min-h-0 min-w-0 overflow-hidden">
                 <ChatPanel
                   messages={data()?.history ?? []}
                   liveTurn={data()?.activity.live_turn ?? null}
@@ -355,7 +355,7 @@ const ProjectPage: Component<ProjectPageProps> = (props) => {
                 <ResizeHandle
                   onResize={(dx) => setCanvasWidth((w) => Math.min(CANVAS_MAX, Math.max(CANVAS_MIN, w - dx)))}
                 />
-                <div class="shrink-0 h-full flex flex-col bg-card overflow-hidden" style={{ width: `${canvasWidth()}px` }}>
+                <div class="flex shrink-0 min-h-0 self-stretch flex-col overflow-hidden bg-card" style={{ width: `${canvasWidth()}px` }}>
                   <div class="flex-1 overflow-y-auto">
                     <Show
                       when={hasFocusHtml()}

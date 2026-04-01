@@ -23,7 +23,6 @@ interface ChatPanelProps {
 const ChatPanel: Component<ChatPanelProps> = (props) => {
   const [input, setInput] = createSignal("");
   const [stickToBottom, setStickToBottom] = createSignal(true);
-  let bottomRef!: HTMLDivElement;
   let scrollRef!: HTMLDivElement;
   let inputRef!: HTMLTextAreaElement;
 
@@ -33,10 +32,9 @@ const ChatPanel: Component<ChatPanelProps> = (props) => {
     return scrollHeight - scrollTop - clientHeight < 80;
   };
 
-  const scrollToBottom = (behavior: ScrollBehavior = "auto") => {
-    requestAnimationFrame(() => {
-      bottomRef?.scrollIntoView({ behavior });
-    });
+  const scrollToBottom = () => {
+    if (!scrollRef) return;
+    scrollRef.scrollTop = scrollRef.scrollHeight;
   };
 
   const updateStickinessFromScroll = () => {
@@ -44,7 +42,7 @@ const ChatPanel: Component<ChatPanelProps> = (props) => {
   };
 
   onMount(() => {
-    scrollToBottom("auto");
+    scrollToBottom();
     setStickToBottom(true);
   });
 
@@ -58,7 +56,7 @@ const ChatPanel: Component<ChatPanelProps> = (props) => {
       ],
       () => {
         if (stickToBottom()) {
-          scrollToBottom("smooth");
+          scrollToBottom();
         }
       },
     ),
@@ -68,7 +66,7 @@ const ChatPanel: Component<ChatPanelProps> = (props) => {
     on(
       () => props.messages[0]?.id ?? null,
       () => {
-        scrollToBottom("auto");
+        scrollToBottom();
         setStickToBottom(true);
       },
     ),
@@ -89,7 +87,7 @@ const ChatPanel: Component<ChatPanelProps> = (props) => {
     props.onSend(content);
     setInput("");
     if (inputRef) { inputRef.style.height = "auto"; }
-    scrollToBottom("smooth");
+    scrollToBottom();
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -109,22 +107,22 @@ const ChatPanel: Component<ChatPanelProps> = (props) => {
   const isEmpty = () => props.messages.length === 0 && !props.liveTurn;
 
   return (
-    <div class="flex flex-col h-full">
+    <div class="flex flex-1 min-h-0 flex-col overflow-hidden">
       {/* Message list */}
       <div
         ref={scrollRef}
-        class="flex-1 overflow-y-auto min-h-0"
+        class="flex flex-1 min-h-0 flex-col overflow-y-auto"
         onScroll={updateStickinessFromScroll}
       >
         <Show
           when={!isEmpty()}
           fallback={
-            <div class="flex items-center justify-center h-full text-muted-foreground text-sm">
+            <div class="flex flex-1 items-center justify-center text-muted-foreground text-sm">
               Send a message to get started
             </div>
           }
         >
-          <div class="divide-y divide-border">
+          <div class="w-full divide-y divide-border">
             <For each={props.messages}>
               {(msg) => (
                 <ChatMessageComponent
@@ -147,7 +145,6 @@ const ChatPanel: Component<ChatPanelProps> = (props) => {
             </Show>
           </div>
         </Show>
-        <div ref={bottomRef} />
       </div>
 
       {/* Status bar */}

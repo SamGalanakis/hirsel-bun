@@ -87,7 +87,7 @@ const ThreadDetailPage: Component<ThreadDetailPageProps> = (props) => {
   };
 
   return (
-    <div class="flex flex-col h-screen bg-background">
+    <div class="flex min-h-0 flex-1 flex-col bg-background overflow-hidden">
       <header class="flex items-center gap-3 px-4 h-[46px] shrink-0 border-b border-border bg-card">
         <a
           href={`#project/${props.projectId}`}
@@ -135,9 +135,9 @@ const ThreadDetailPage: Component<ThreadDetailPageProps> = (props) => {
         </div>
       </Show>
 
-      <div class="flex min-h-0 flex-1">
+      <div class="flex min-h-0 flex-1 overflow-hidden">
         <Show when={projectData()}>
-          <div class="w-[220px] shrink-0">
+          <div class="flex w-[220px] shrink-0 min-h-0 self-stretch overflow-hidden">
             <ThreadSidebar
               threads={projectData()?.threads ?? []}
               projectId={props.projectId}
@@ -146,7 +146,7 @@ const ThreadDetailPage: Component<ThreadDetailPageProps> = (props) => {
           </div>
         </Show>
 
-        <div class="flex-1 min-h-0 flex flex-col">
+        <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
           <Show when={data()?.thread}>
             {(thread) => (
               <Show when={thread().objective}>
@@ -161,7 +161,7 @@ const ThreadDetailPage: Component<ThreadDetailPageProps> = (props) => {
             {(plan) => <PlanPanel plan={plan()} />}
           </Show>
 
-          <div class="flex-1 min-h-0">
+          <div class="flex flex-1 min-h-0 overflow-hidden">
             <ChatPanel
               messages={data()?.history ?? []}
               liveTurn={data()?.activity.live_turn ?? null}

@@ -65,7 +65,7 @@ const App: Component = () => {
   });
 
   return (
-    <>
+    <div class="fixed inset-0 flex min-h-0 flex-col overflow-hidden">
       <Show when={route().page === "connect"}>
         <ConnectPage />
       </Show>
@@ -90,11 +90,11 @@ const App: Component = () => {
       </Show>
 
       <Show when={route().page === "loading"}>
-        <div class="flex items-center justify-center h-screen bg-background">
+        <div class="flex flex-1 items-center justify-center bg-background">
           <span class="text-muted-foreground text-xs font-mono">loading...</span>
         </div>
       </Show>
-    </>
+    </div>
   );
 };
 

@@ -47,8 +47,8 @@ function statusLabel(status: string): string {
 
 const ThreadSidebar: Component<ThreadSidebarProps> = (props) => {
   return (
-    <div class="flex flex-col h-full border-r border-border bg-card">
-      <div class="flex items-center justify-between px-3 py-3 border-b border-border">
+    <div class="flex flex-1 min-h-0 flex-col overflow-hidden border-r border-border bg-card">
+      <div class="flex shrink-0 items-center justify-between px-3 py-3 border-b border-border">
         <span class="chassis-label">Threads</span>
         <Show when={props.threads.length > 0}>
           <span class="text-[10px] text-muted-foreground font-mono">

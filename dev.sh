@@ -168,7 +168,14 @@ build_shell_assets() {
     echo "Building local shell assets..."
     bun run vite:build 2>&1 | tee -a "$LOG_FILE"
     if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
-        echo "Frontend build failed!"
+        echo "Shell assets build failed!"
+        exit 1
+    fi
+
+    echo "Building webui SPA..."
+    (cd "$SCRIPT_DIR/webui" && bun run build) 2>&1 | tee -a "$LOG_FILE"
+    if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
+        echo "WebUI build failed!"
         exit 1
     fi
 }
