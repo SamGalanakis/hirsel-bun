@@ -112,9 +112,9 @@ const NewProjectPage: Component = () => {
 
   return (
     <div class="min-h-screen bg-background text-foreground">
-      <header class="flex items-center justify-between border-b border-border bg-card px-4 py-3">
+      <header class="flex h-[54px] shrink-0 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur">
         <div class="flex items-center gap-2">
-          <a href="#" class="font-display text-base tracking-tight">HIRSEL</a>
+          <a href="#" class="font-display text-base font-semibold tracking-tight text-foreground">HIRSEL</a>
           <span class="text-xs text-muted-foreground">/</span>
           <span class="text-sm font-medium">New project</span>
         </div>
@@ -196,7 +196,7 @@ const NewProjectPage: Component = () => {
               <span>
                 {probe()!.has_root_flake
                   ? "Ready to start -- threads can run immediately."
-                  : "Shepherd will create a flake before starting threads."}
+                  : "Setup will have shepherd create a flake before the project is marked ready."}
               </span>
             </div>
           </Show>

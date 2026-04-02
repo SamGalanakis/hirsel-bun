@@ -12,8 +12,8 @@ pub struct ShepherdTaskFocus {
 pub enum ShepherdScope {
     #[serde(rename = "general")]
     General,
-    #[serde(rename = "project")]
-    Project {
+    #[serde(rename = "shepherd")]
+    Shepherd {
         #[serde(rename = "projectId")]
         project_id: i64,
         #[serde(rename = "workspacePath", default)]

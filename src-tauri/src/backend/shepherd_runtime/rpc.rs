@@ -96,6 +96,10 @@ pub enum ServerControlRequest {
         project_id: i64,
         thread_id: String,
     },
+    PromoteThread {
+        project_id: i64,
+        thread_id: String,
+    },
     DeleteThread {
         project_id: i64,
         thread_id: String,

@@ -4,6 +4,7 @@ version = "0.3.2"
 description = "Herd your AI coding agents"
 edition = "2021"
 autobins = false
+default-run = "hirsel-desktop"
 
 [lib]
 name = "hirsel_lib"

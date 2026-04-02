@@ -136,12 +136,25 @@ export interface ThreadPageData {
   plan: PlanSnapshot | null;
 }
 
+export interface WorkspaceFileSlice {
+  workspace: string;
+  path: string;
+  line_start: number;
+  line_end: number;
+  total_lines: number;
+  truncated: boolean;
+  content: string;
+}
+
 export interface SettingsResponse {
   provider: "codex" | "openrouter";
   openrouter_key_masked: string | null;
   openrouter_base_url: string | null;
   codex_configured: boolean;
   codex_source: "env" | "store" | null;
+  github_configured: boolean;
+  github_token_masked: string | null;
+  github_source: "env" | "store" | null;
   tavily_required: boolean;
   tavily_configured: boolean;
   tavily_key_masked: string | null;
@@ -208,6 +221,33 @@ export async function getThreadPage(
 ): Promise<ThreadPageData> {
   const res = await apiFetch(`/projects/${projectId}/threads/${threadId}/page`);
   return parseJson<ThreadPageData>(res);
+}
+
+export async function getWorkspaceFileSlice(
+  projectId: number,
+  data: {
+    path: string;
+    workspace?: string;
+    lineStart?: number;
+    lineEnd?: number;
+    signal?: AbortSignal;
+  },
+): Promise<WorkspaceFileSlice> {
+  const params = new URLSearchParams();
+  params.set("path", data.path);
+  if (data.workspace?.trim()) {
+    params.set("workspace", data.workspace.trim());
+  }
+  if (Number.isFinite(data.lineStart) && (data.lineStart ?? 0) > 0) {
+    params.set("line_start", String(data.lineStart));
+  }
+  if (Number.isFinite(data.lineEnd) && (data.lineEnd ?? 0) > 0) {
+    params.set("line_end", String(data.lineEnd));
+  }
+  const res = await apiFetch(`/projects/${projectId}/workspace/file?${params.toString()}`, {
+    signal: data.signal,
+  });
+  return parseJson<WorkspaceFileSlice>(res);
 }
 
 export async function sendChatMessage(
@@ -317,6 +357,14 @@ export async function saveTavilyKey(api_key: string): Promise<void> {
   const res = await apiFetch("/settings/tavily", {
     method: "POST",
     body: JSON.stringify({ api_key }),
+  });
+  await parseJson<{ ok: true }>(res);
+}
+
+export async function saveGithubToken(token: string): Promise<void> {
+  const res = await apiFetch("/settings/github", {
+    method: "POST",
+    body: JSON.stringify({ token }),
   });
   await parseJson<{ ok: true }>(res);
 }

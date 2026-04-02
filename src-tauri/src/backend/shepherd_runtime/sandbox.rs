@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use git2::{ObjectType, Oid};
+
 use super::rpc::{server_control_socket_path, wait_for_worker_socket};
 use super::runtime::resolve_scope_workspace;
 use super::session::{ShepherdScopeSession, ShepherdSessionStore};
@@ -54,7 +56,7 @@ fn quote_shell(value: &str) -> String {
 pub(crate) fn scope_key(scope: &ShepherdScope) -> String {
     match scope {
         ShepherdScope::General => "general".to_string(),
-        ShepherdScope::Project { project_id, .. } => format!("project-{project_id}"),
+        ShepherdScope::Shepherd { project_id, .. } => format!("shepherd-{project_id}"),
         ShepherdScope::Thread { thread_id, .. } => format!("thread-{thread_id}"),
     }
 }
@@ -167,7 +169,7 @@ fi
         return Ok(script);
     }
 
-    if matches!(scope, ShepherdScope::Project { .. }) {
+    if matches!(scope, ShepherdScope::Shepherd { .. }) {
         Ok(script)
     } else {
         let message = match scope {
@@ -181,11 +183,47 @@ fi
     }
 }
 
-fn pass_env(args: &mut Vec<String>, key: &str) {
-    if let Ok(value) = std::env::var(key) {
+fn push_env(args: &mut Vec<String>, key: &str, value: &str) {
+    if !value.trim().is_empty() {
         args.push("-e".to_string());
         args.push(format!("{key}={value}"));
     }
+}
+
+fn current_env_fingerprint(
+    work_dir: &Path,
+    bootstrap_flake: bool,
+) -> Result<Option<String>, String> {
+    if bootstrap_flake {
+        return Ok(Some("bootstrap".to_string()));
+    }
+
+    let flake = work_dir.join("flake.nix");
+    let lock = work_dir.join("flake.lock");
+    if !flake.is_file() && !lock.is_file() {
+        return Ok(None);
+    }
+
+    let mut bytes = Vec::new();
+    if flake.is_file() {
+        bytes.extend_from_slice(b"flake.nix\0");
+        bytes.extend_from_slice(
+            &std::fs::read(&flake)
+                .map_err(|error| format!("failed to read '{}': {}", flake.display(), error))?,
+        );
+    }
+    bytes.extend_from_slice(b"\0");
+    if lock.is_file() {
+        bytes.extend_from_slice(b"flake.lock\0");
+        bytes.extend_from_slice(
+            &std::fs::read(&lock)
+                .map_err(|error| format!("failed to read '{}': {}", lock.display(), error))?,
+        );
+    }
+
+    let oid = Oid::hash_object(ObjectType::Blob, &bytes)
+        .map_err(|error| format!("failed to fingerprint scope environment: {}", error))?;
+    Ok(Some(oid.to_string()))
 }
 
 async fn load_sandbox_config(scope: &ShepherdScope) -> Result<SandboxConfig, String> {
@@ -195,7 +233,7 @@ async fn load_sandbox_config(scope: &ShepherdScope) -> Result<SandboxConfig, Str
 
     let project_id = match scope {
         ShepherdScope::General => None,
-        ShepherdScope::Project { project_id, .. } => Some(*project_id),
+        ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
         ShepherdScope::Thread { project_id, .. } => Some(*project_id),
     };
 
@@ -233,7 +271,7 @@ async fn prepare_scope_runtime(
     }
     let work_dir = resolve_scope_workspace(scope).await?;
     let allow_bootstrap =
-        matches!(scope, ShepherdScope::Project { .. }) && !work_dir.join("flake.nix").exists();
+        matches!(scope, ShepherdScope::Shepherd { .. }) && !work_dir.join("flake.nix").exists();
     if matches!(scope, ShepherdScope::Thread { .. }) && !work_dir.join("flake.nix").exists() {
         return Err(
             "Thread containers require a project flake. Ask shepherd to create flake.nix in the central checkout first."
@@ -326,6 +364,8 @@ fn write_scope_file(scope: &ShepherdScope) -> Result<(), String> {
 
 async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSession, String> {
     let (work_dir, allow_bootstrap, sandbox) = prepare_scope_runtime(scope).await?;
+    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap)?;
+    let forwarded = crate::backend::credentials::load_forwarded_credentials().await;
     let hirsel_root = crate::backend::config::hirsel_dir();
     std::fs::create_dir_all(hirsel_root.join("server"))
         .map_err(|error| format!("failed to create hirsel server dir: {}", error))?;
@@ -364,13 +404,31 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
         "/work".to_string(),
     ];
 
-    pass_env(&mut args, "OPENAI_API_KEY");
-    pass_env(&mut args, "OPENROUTER_API_KEY");
-    pass_env(&mut args, "TAVILY_API_KEY");
-    pass_env(&mut args, "CODEX_ACCESS_TOKEN");
-    pass_env(&mut args, "CODEX_REFRESH_TOKEN");
-    pass_env(&mut args, "CODEX_EXPIRES_AT");
-    pass_env(&mut args, "CODEX_ACCOUNT_ID");
+    if let Some(value) = forwarded.openai_api_key.as_deref() {
+        push_env(&mut args, "OPENAI_API_KEY", value);
+    }
+    if let Some(value) = forwarded.openrouter_api_key.as_deref() {
+        push_env(&mut args, "OPENROUTER_API_KEY", value);
+    }
+    if let Some(value) = forwarded.tavily_api_key.as_deref() {
+        push_env(&mut args, "TAVILY_API_KEY", value);
+    }
+    if let Some(value) = forwarded.github_token.as_deref() {
+        push_env(&mut args, "GITHUB_TOKEN", value);
+        push_env(&mut args, "GH_TOKEN", value);
+    }
+    if let Some(value) = forwarded.codex_access_token.as_deref() {
+        push_env(&mut args, "CODEX_ACCESS_TOKEN", value);
+    }
+    if let Some(value) = forwarded.codex_refresh_token.as_deref() {
+        push_env(&mut args, "CODEX_REFRESH_TOKEN", value);
+    }
+    if let Some(value) = forwarded.codex_expires_at.as_deref() {
+        push_env(&mut args, "CODEX_EXPIRES_AT", value);
+    }
+    if let Some(value) = forwarded.codex_account_id.as_deref() {
+        push_env(&mut args, "CODEX_ACCOUNT_ID", value);
+    }
 
     args.push(sandbox.image.clone());
     args.push("bash".to_string());
@@ -392,12 +450,13 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
         .upsert_session(
             match scope {
                 ShepherdScope::General => None,
-                ShepherdScope::Project { project_id, .. } => Some(*project_id),
+                ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
                 ShepherdScope::Thread { project_id, .. } => Some(*project_id),
             },
             &scope_key,
             &scope_json,
             Some(&work_dir.display().to_string()),
+            env_fingerprint.as_deref(),
             &socket_path.display().to_string(),
             allow_bootstrap,
             Some(&container_name),
@@ -458,6 +517,8 @@ pub(super) async fn ensure_scope_session(
     scope: &ShepherdScope,
 ) -> Result<ShepherdScopeSession, String> {
     let scope_key = scope_key(scope);
+    let (work_dir, allow_bootstrap, _) = prepare_scope_runtime(scope).await?;
+    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap)?;
     let socket_path = worker_socket_path(scope);
     let store = ShepherdSessionStore::open()
         .await
@@ -467,7 +528,8 @@ pub(super) async fn ensure_scope_session(
         .await
         .map_err(|error| format!("failed to load session record: {}", error))?
     {
-        if socket_path.exists()
+        if session.env_fingerprint == env_fingerprint
+            && socket_path.exists()
             && wait_for_worker_socket(&socket_path, Duration::from_millis(200))
                 .await
                 .is_ok()
@@ -516,7 +578,7 @@ mod tests {
 
     #[test]
     fn workspace_scopes_use_path_flakes() {
-        let project_scope = ShepherdScope::Project {
+        let shepherd_scope = ShepherdScope::Shepherd {
             project_id: 1,
             workspace_path: None,
             focus: None,
@@ -529,7 +591,8 @@ mod tests {
             focus: None,
         };
 
-        let bootstrap = build_scope_runtime_script(&project_scope, true).expect("bootstrap script");
+        let bootstrap =
+            build_scope_runtime_script(&shepherd_scope, true).expect("bootstrap script");
         assert!(bootstrap.contains("develop path:/hirsel/bootstrap-flake"));
 
         let thread = build_scope_runtime_script(&thread_scope, false).expect("thread script");

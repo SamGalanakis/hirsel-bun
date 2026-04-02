@@ -95,8 +95,8 @@ pub type ShepherdChatResult<T> = Result<T, ShepherdChatError>;
 pub struct ShepherdChatStore;
 
 impl ShepherdChatStore {
-    pub fn project_scope_key(project_id: i64) -> String {
-        format!("__project__:{project_id}")
+    pub fn shepherd_scope_key(project_id: i64) -> String {
+        format!("__shepherd__:{project_id}")
     }
 
     pub fn thread_scope_key(thread_id: &str) -> String {

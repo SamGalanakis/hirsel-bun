@@ -1,3 +1,4 @@
+use std::path::{Component, Path as FsPath, PathBuf};
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
@@ -9,9 +10,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::config::LlmProvider;
 use crate::backend::credentials::{
-    resolve_codex_oauth_credentials, resolve_tavily_api_key, CredentialStore,
+    resolve_codex_oauth_credentials, resolve_github_token, resolve_tavily_api_key, CredentialStore,
 };
-use crate::backend::{app, shepherd_runtime, ProjectStore, ShepherdThreadStore};
+use crate::backend::{
+    app, ensure_project_workspace, ensure_thread_checkout, shepherd_runtime, ProjectStore,
+    ShepherdThreadStore,
+};
 
 use super::super::AppState;
 use super::support::{
@@ -140,6 +144,20 @@ struct ApiThreadPage {
     plan: Option<serde_json::Value>,
 }
 
+#[derive(Serialize)]
+struct ApiWorkspaceFileSlice {
+    workspace: String,
+    path: String,
+    line_start: usize,
+    line_end: usize,
+    total_lines: usize,
+    truncated: bool,
+    content: String,
+}
+
+const DEFAULT_WORKSPACE_FILE_LINES: usize = 120;
+const MAX_WORKSPACE_FILE_LINES: usize = 400;
+
 fn to_api_project(p: &crate::backend::project::Project) -> ApiProject {
     ApiProject {
         id: p.id,
@@ -232,6 +250,92 @@ fn to_api_thread(t: &crate::backend::ShepherdThread) -> ApiThread {
         updated_at: t.updated_at.clone(),
         last_activity_at: t.last_activity_at.clone(),
     }
+}
+
+fn normalize_workspace_name(raw: Option<&str>) -> String {
+    let value = raw.map(str::trim).unwrap_or_default();
+    let lower = value.to_ascii_lowercase();
+    if lower.is_empty() || lower == "shepherd" || lower == format!("{}{}", "shep", "perd") {
+        "shepherd".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+async fn resolve_workspace_root(project_id: i64, workspace: &str) -> Result<PathBuf, String> {
+    if workspace.eq_ignore_ascii_case("shepherd") {
+        return Ok(ensure_project_workspace(project_id).await?.central_dir);
+    }
+
+    let (path, _) = ensure_thread_checkout(project_id, workspace).await?;
+    let root = PathBuf::from(path);
+    if !root.exists() || !root.is_dir() {
+        return Err(format!(
+            "workspace '{}' points at a missing checkout",
+            workspace
+        ));
+    }
+    Ok(root)
+}
+
+fn resolve_workspace_path(root: &FsPath, relative: &str) -> Result<PathBuf, String> {
+    let trimmed = relative.trim();
+    if trimmed.is_empty() {
+        return Err("path is required".to_string());
+    }
+
+    let path = FsPath::new(trimmed);
+    if path.is_absolute() {
+        return Err("workspace paths must be relative".to_string());
+    }
+
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            _ => {
+                return Err("workspace paths may not escape the selected workspace".to_string());
+            }
+        }
+    }
+
+    Ok(root.join(path))
+}
+
+fn read_workspace_slice(
+    target: &FsPath,
+    line_start: usize,
+    requested_end: usize,
+) -> Result<(String, usize, usize, bool), String> {
+    let content = std::fs::read_to_string(target).map_err(|error| {
+        format!(
+            "failed to read workspace file '{}': {}",
+            target.display(),
+            error
+        )
+    })?;
+
+    let all_lines = content.lines().collect::<Vec<_>>();
+    let total_lines = all_lines.len();
+    let capped_end =
+        requested_end.min(line_start.saturating_add(MAX_WORKSPACE_FILE_LINES.saturating_sub(1)));
+    let truncated = capped_end < requested_end;
+    let slice = if line_start > total_lines {
+        Vec::new()
+    } else {
+        all_lines
+            .iter()
+            .skip(line_start.saturating_sub(1))
+            .take(capped_end.saturating_sub(line_start).saturating_add(1))
+            .map(|line| (*line).to_string())
+            .collect::<Vec<_>>()
+    };
+    let actual_end = if slice.is_empty() {
+        line_start.saturating_sub(1)
+    } else {
+        line_start + slice.len() - 1
+    };
+
+    Ok((slice.join("\n"), actual_end, total_lines, truncated))
 }
 
 /// Extract the latest plan snapshot from a thread's message history.
@@ -387,6 +491,62 @@ pub async fn get_thread_page(
 }
 
 #[derive(Deserialize)]
+pub struct WorkspaceFileQuery {
+    path: String,
+    workspace: Option<String>,
+    line_start: Option<usize>,
+    line_end: Option<usize>,
+}
+
+pub async fn get_workspace_file(
+    Path(project_id): Path<i64>,
+    Query(query): Query<WorkspaceFileQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let workspace = normalize_workspace_name(query.workspace.as_deref());
+    let workspace_root = resolve_workspace_root(project_id, &workspace)
+        .await
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let target = resolve_workspace_path(&workspace_root, &query.path)
+        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    if !target.exists() || !target.is_file() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("workspace file not found: {}", query.path.trim()),
+        ));
+    }
+
+    let line_start = query.line_start.unwrap_or(1).max(1);
+    let requested_end = query
+        .line_end
+        .unwrap_or(line_start.saturating_add(DEFAULT_WORKSPACE_FILE_LINES.saturating_sub(1)));
+    if requested_end < line_start {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "line_end must be greater than or equal to line_start".to_string(),
+        ));
+    }
+
+    let relative_path = target
+        .strip_prefix(&workspace_root)
+        .unwrap_or(&target)
+        .display()
+        .to_string();
+    let (content, line_end, total_lines, truncated) =
+        read_workspace_slice(&target, line_start, requested_end)
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+
+    Ok(Json(ApiWorkspaceFileSlice {
+        workspace,
+        path: relative_path,
+        line_start,
+        line_end,
+        total_lines,
+        truncated,
+        content,
+    }))
+}
+
+#[derive(Deserialize)]
 pub struct ChatSendBody {
     content: String,
 }
@@ -395,7 +555,7 @@ pub async fn send_chat_message(
     Path(project_id): Path<i64>,
     Json(body): Json<ChatSendBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    shepherd_runtime::send_project_message(project_id, Some(body.content), None)
+    shepherd_runtime::send_shepherd_message(project_id, Some(body.content), None)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
     Ok(Json(serde_json::json!({ "ok": true })))
@@ -404,7 +564,7 @@ pub async fn send_chat_message(
 pub async fn stop_chat(
     Path(project_id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let scope = shepherd_runtime::ShepherdScope::Project {
+    let scope = shepherd_runtime::ShepherdScope::Shepherd {
         project_id,
         workspace_path: None,
         focus: None,
@@ -500,6 +660,9 @@ struct ApiSettingsResponse {
     openrouter_base_url: Option<String>,
     codex_configured: bool,
     codex_source: Option<String>,
+    github_configured: bool,
+    github_token_masked: Option<String>,
+    github_source: Option<String>,
     tavily_required: bool,
     tavily_configured: bool,
     tavily_key_masked: Option<String>,
@@ -544,6 +707,7 @@ pub async fn get_settings(
         .ok()
         .map(|value| crate::backend::api_types::mask_credential(&value));
     let codex = resolve_codex_oauth_credentials().await;
+    let github = resolve_github_token().await;
     let tavily = resolve_tavily_api_key().await;
 
     let provider = match config.llm.provider {
@@ -557,6 +721,11 @@ pub async fn get_settings(
         openrouter_base_url: config.llm.openrouter_base_url,
         codex_configured: codex.is_some(),
         codex_source: codex.map(|value| value.source.as_str().to_string()),
+        github_configured: github.is_some(),
+        github_token_masked: github
+            .as_ref()
+            .map(|value| crate::backend::api_types::mask_credential(&value.token)),
+        github_source: github.map(|value| value.source.as_str().to_string()),
         tavily_required: true,
         tavily_configured: tavily.is_some(),
         tavily_key_masked: tavily
@@ -721,6 +890,37 @@ pub async fn save_tavily_key(
         .store("tavily_api_key", api_key)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct SaveGithubTokenBody {
+    token: String,
+}
+
+pub async fn save_github_token(
+    Json(body): Json<SaveGithubTokenBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let token = body.token.trim();
+    if token.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "Enter a GitHub token or set GITHUB_TOKEN / GH_TOKEN in the environment.".to_string(),
+        ));
+    }
+
+    let store = CredentialStore::open()
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    store
+        .store("github_token", token)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    unsafe {
+        std::env::set_var("GITHUB_TOKEN", token);
+        std::env::set_var("GH_TOKEN", token);
+    }
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

@@ -3,9 +3,7 @@
 //! Provides git repository management, worktree operations, branch management,
 //! and merge/diff utilities. Uses git2 crate for native git operations.
 
-use git2::{
-    BranchType, Error as Git2Error, FetchOptions, Oid, RemoteCallbacks, Repository, Signature,
-};
+use git2::{BranchType, Error as Git2Error, FetchOptions, Oid, RemoteCallbacks, Repository};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,6 +37,14 @@ pub enum GitError {
 }
 
 pub type Result<T> = std::result::Result<T, GitError>;
+
+#[derive(Debug, Clone)]
+pub struct PromoteThreadResult {
+    pub central_head: String,
+    pub changed_files: Vec<String>,
+    pub env_changed: bool,
+    pub promoted: bool,
+}
 
 // =============================================================================
 // Remote URL Detection and Cloning
@@ -255,16 +261,7 @@ pub fn remote_branch_has_flake(url: &str, branch: &str) -> Result<bool> {
 }
 
 fn run_git_command(current_dir: &Path, args: &[&str]) -> Result<()> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(current_dir)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env(
-            "GIT_SSH_COMMAND",
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-        )
-        .output()
-        .map_err(|e| GitError::Other(format!("Failed to run git {:?}: {}", args, e)))?;
+    let output = run_git_command_output(current_dir, args)?;
 
     if output.status.success() {
         return Ok(());
@@ -283,6 +280,19 @@ fn run_git_command(current_dir: &Path, args: &[&str]) -> Result<()> {
         "git {:?} failed: {}",
         args, detail
     )))
+}
+
+fn run_git_command_output(current_dir: &Path, args: &[&str]) -> Result<std::process::Output> {
+    Command::new("git")
+        .args(args)
+        .current_dir(current_dir)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        )
+        .output()
+        .map_err(|e| GitError::Other(format!("Failed to run git {:?}: {}", args, e)))
 }
 
 /// Create a missing remote branch, either from an existing visible branch or by
@@ -500,6 +510,133 @@ pub fn get_current_branch(work_dir: &Path) -> Result<String> {
     }
 }
 
+fn trim_command_output(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !stderr.is_empty() {
+        return stderr;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn git_output_lines(current_dir: &Path, args: &[&str]) -> Result<Vec<String>> {
+    let output = run_git_command_output(current_dir, args)?;
+    if !output.status.success() {
+        return Err(GitError::Other(trim_command_output(&output)));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect())
+}
+
+fn tree_entry_fingerprint(
+    repo: &Repository,
+    commit: Oid,
+    path: &str,
+) -> Result<Option<(Oid, i32)>> {
+    let tree = repo.find_commit(commit)?.tree()?;
+    Ok(tree
+        .get_path(Path::new(path))
+        .ok()
+        .map(|entry| (entry.id(), entry.filemode())))
+}
+
+pub fn promote_thread_checkout(
+    central_dir: &Path,
+    thread_dir: &Path,
+    checkout_name: &str,
+) -> Result<PromoteThreadResult> {
+    let central_repo = Repository::open(central_dir)
+        .map_err(|_| GitError::NotARepository(central_dir.to_path_buf()))?;
+    let thread_repo = Repository::open(thread_dir)
+        .map_err(|_| GitError::NotARepository(thread_dir.to_path_buf()))?;
+
+    if is_dirty(&central_repo)? {
+        return Err(GitError::Other(
+            "central checkout has uncommitted changes; reconcile them before promoting a thread"
+                .to_string(),
+        ));
+    }
+
+    if is_dirty(&thread_repo)? {
+        snapshot_worktree(&thread_repo, "hirsel: snapshot thread before promotion")?;
+    }
+
+    let current_branch = get_current_branch(central_dir)?;
+    if current_branch != "central" {
+        return Err(GitError::Other(format!(
+            "central checkout is on '{}' instead of 'central'",
+            current_branch
+        )));
+    }
+
+    let before = central_repo
+        .head()?
+        .target()
+        .ok_or_else(|| GitError::Other("central HEAD has no target".to_string()))?;
+    let thread_path = thread_dir
+        .to_str()
+        .ok_or_else(|| GitError::Other("thread path is not valid utf-8".to_string()))?;
+    let fetch_ref =
+        format!("refs/heads/{checkout_name}:refs/remotes/hirsel-promote/{checkout_name}");
+    let merge_ref = format!("refs/remotes/hirsel-promote/{checkout_name}");
+
+    run_git_command(
+        central_dir,
+        &["fetch", "--no-tags", thread_path, &fetch_ref],
+    )?;
+
+    let merge_output = run_git_command_output(central_dir, &["merge", "--no-edit", &merge_ref])?;
+    if !merge_output.status.success() {
+        let conflicts = git_output_lines(central_dir, &["diff", "--name-only", "--diff-filter=U"])
+            .unwrap_or_default();
+        let _ = run_git_command(central_dir, &["merge", "--abort"]);
+        let _ = run_git_command(central_dir, &["update-ref", "-d", &merge_ref]);
+        if !conflicts.is_empty() {
+            return Err(GitError::MergeConflict(conflicts));
+        }
+        return Err(GitError::Other(trim_command_output(&merge_output)));
+    }
+
+    let after_repo = Repository::open(central_dir)?;
+    let after = after_repo
+        .head()?
+        .target()
+        .ok_or_else(|| GitError::Other("central HEAD has no target after promotion".to_string()))?;
+    let changed_files = if before == after {
+        Vec::new()
+    } else {
+        git_output_lines(
+            central_dir,
+            &[
+                "diff",
+                "--name-only",
+                &before.to_string(),
+                &after.to_string(),
+            ],
+        )?
+    };
+    let env_changed = if before == after {
+        false
+    } else {
+        let before_flake = tree_entry_fingerprint(&central_repo, before, "flake.nix")?;
+        let after_flake = tree_entry_fingerprint(&after_repo, after, "flake.nix")?;
+        let before_lock = tree_entry_fingerprint(&central_repo, before, "flake.lock")?;
+        let after_lock = tree_entry_fingerprint(&after_repo, after, "flake.lock")?;
+        before_flake != after_flake || before_lock != after_lock
+    };
+    let _ = run_git_command(central_dir, &["update-ref", "-d", &merge_ref]);
+
+    Ok(PromoteThreadResult {
+        central_head: after.to_string(),
+        env_changed,
+        promoted: before != after,
+        changed_files,
+    })
+}
+
 /// Create the main workspace directory with the central checkout.
 ///
 /// Copies the project to `workspaces/<workspace_name>/work/central/` with full git history,
@@ -527,8 +664,7 @@ pub fn create_workspace(
 
     // Commit any uncommitted changes first
     if is_dirty(&repo)? {
-        add_all(&repo)?;
-        commit(&repo, "hirsel: snapshot uncommitted changes")?;
+        snapshot_worktree(&repo, "hirsel: snapshot uncommitted changes")?;
     }
 
     // Force create "central" branch from current HEAD (whatever branch we're on)
@@ -704,41 +840,17 @@ fn is_dirty(repo: &Repository) -> Result<bool> {
     Ok(!statuses.is_empty())
 }
 
-/// Add all files to index
-fn add_all(repo: &Repository) -> Result<()> {
-    let mut index = repo.index()?;
-    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)?;
-    index.write()?;
-    Ok(())
-}
-
-/// Create a commit
-fn commit(repo: &Repository, message: &str) -> Result<Oid> {
-    let sig = get_signature(repo)?;
-    let tree_id = repo.index()?.write_tree()?;
-    let tree = repo.find_tree(tree_id)?;
-
-    let parent = repo.head()?.peel_to_commit()?;
-    let oid = repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent])?;
-
-    Ok(oid)
-}
-
-/// Get signature for commits
-fn get_signature(repo: &Repository) -> Result<Signature<'static>> {
-    // Try to get from repo config first
-    if let Ok(config) = repo.config() {
-        let name = config
-            .get_string("user.name")
-            .unwrap_or_else(|_| "hirsel".to_string());
-        let email = config
-            .get_string("user.email")
-            .unwrap_or_else(|_| "hirsel@localhost".to_string());
-        return Ok(Signature::now(&name, &email)?);
-    }
-
-    // Fallback
-    Ok(Signature::now("hirsel", "hirsel@localhost")?)
+fn snapshot_worktree(repo: &Repository, message: &str) -> Result<Oid> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| GitError::Other("repository has no working directory".to_string()))?;
+    run_git_command(workdir, &["add", "--all"])?;
+    run_git_command(workdir, &["config", "user.name", "hirsel"])?;
+    run_git_command(workdir, &["config", "user.email", "hirsel@localhost"])?;
+    run_git_command(workdir, &["commit", "--no-gpg-sign", "-m", message])?;
+    repo.head()?
+        .target()
+        .ok_or_else(|| GitError::Other("HEAD has no target after snapshot commit".to_string()))
 }
 
 #[cfg(test)]
@@ -753,7 +865,7 @@ mod tests {
         let repo = Repository::init(dir.path()).unwrap();
 
         // Create initial commit
-        let sig = Signature::now("test", "test@test.com").unwrap();
+        let sig = git2::Signature::now("test", "test@test.com").unwrap();
         {
             let mut index = repo.index().unwrap();
 
@@ -813,5 +925,57 @@ mod tests {
             origin.url().unwrap(),
             central_dir.canonicalize().unwrap().display().to_string()
         );
+    }
+
+    #[test]
+    fn promote_thread_checkout_snapshots_dirty_thread_and_updates_central() {
+        let (source_dir, _repo) = create_test_repo();
+        let workspaces = TempDir::new().unwrap();
+        let central_dir =
+            create_workspace("project-1", source_dir.path(), workspaces.path()).unwrap();
+        let checkout_dir = create_thread_checkout(
+            "project-1",
+            &central_dir,
+            "thread-promote",
+            Some(&central_dir),
+            workspaces.path(),
+        )
+        .unwrap();
+
+        std::fs::write(checkout_dir.join("test.txt"), "thread change\n").unwrap();
+        std::fs::write(
+            checkout_dir.join("flake.nix"),
+            "{ description = \"test\"; }\n",
+        )
+        .unwrap();
+
+        let result =
+            promote_thread_checkout(&central_dir, &checkout_dir, "thread-promote").unwrap();
+
+        assert!(
+            result.promoted,
+            "expected thread promotion to update central"
+        );
+        assert!(
+            result.env_changed,
+            "expected flake change to mark env_changed; result={:?}, central_has_flake={}",
+            result,
+            central_dir.join("flake.nix").is_file()
+        );
+        assert!(
+            result.changed_files.iter().any(|path| path == "test.txt"),
+            "expected promoted file list to include test.txt, got {:?}",
+            result.changed_files
+        );
+        assert!(
+            result.changed_files.iter().any(|path| path == "flake.nix"),
+            "expected promoted file list to include flake.nix, got {:?}",
+            result.changed_files
+        );
+        assert_eq!(
+            std::fs::read_to_string(central_dir.join("test.txt")).unwrap(),
+            "thread change\n"
+        );
+        assert!(central_dir.join("flake.nix").is_file());
     }
 }

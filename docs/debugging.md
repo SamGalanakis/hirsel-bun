@@ -80,7 +80,7 @@ find ~/.hirsel/workspaces -path '*/work/central' -type d
 find ~/.hirsel/workspaces -path '*/work/central/flake.nix' -type f
 ```
 
-If a project has no `flake.nix`, shepherd can still answer directly and can bootstrap the flake from project scope, but thread scopes will fail until that file exists.
+If a project has no `flake.nix`, shepherd can still answer directly and can bootstrap the flake from the shepherd session, but thread scopes will fail until that file exists.
 
 ## Rust Logging
 

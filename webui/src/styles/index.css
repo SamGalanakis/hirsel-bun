@@ -9,64 +9,92 @@
 /* ── Hirsel Light (default) ── */
 :root,
 [data-theme="hirsel"] {
-  --background: 42 20% 95%;
-  --foreground: 30 8% 10%;
+  --background: 45 4% 96%;
+  --foreground: 0 0% 7%;
   --card: 0 0% 100%;
-  --card-foreground: 30 8% 10%;
+  --card-foreground: 0 0% 7%;
   --popover: 0 0% 100%;
-  --popover-foreground: 30 8% 10%;
-  --primary: 30 8% 10%;
-  --primary-foreground: 42 20% 95%;
-  --secondary: 40 10% 90%;
-  --secondary-foreground: 30 8% 18%;
-  --muted: 40 8% 92%;
-  --muted-foreground: 30 5% 45%;
-  --accent: 40 10% 90%;
-  --accent-foreground: 30 8% 10%;
+  --popover-foreground: 0 0% 7%;
+  --primary: 0 0% 7%;
+  --primary-foreground: 45 4% 96%;
+  --secondary: 40 5% 94%;
+  --secondary-foreground: 0 0% 23%;
+  --muted: 40 5% 94%;
+  --muted-foreground: 240 4% 46%;
+  --accent: 40 5% 94%;
+  --accent-foreground: 0 0% 7%;
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  --border: 35 10% 85%;
-  --input: 35 10% 85%;
-  --ring: 36 80% 50%;
-  --ink-2: 30 5% 30%;
+  --border: 45 4% 82%;
+  --input: 45 4% 82%;
+  --ring: 217 91% 60%;
+  --ink-2: 0 0% 23%;
   --signal-red: 0 84% 60%;
   --signal-blue: 217 91% 60%;
-  --signal-amber: 36 90% 50%;
+  --signal-amber: 37 90% 44%;
   --signal-green: 142 72% 29%;
+  --radius: 0px;
+  --border-light: 40 6% 91%;
+  --node: #c4c4c0;
+  --node-highlight: #a0a09c;
+  --on-signal: #ffffff;
+  --red-bg: #fef2f2;
+  --red-border: rgba(220, 38, 38, 0.25);
+  --blue-bg: rgba(37, 99, 235, 0.06);
+  --blue-border: rgba(37, 99, 235, 0.25);
+  --amber-bg: rgba(217, 119, 6, 0.06);
+  --amber-border: rgba(217, 119, 6, 0.25);
+  --green-bg: rgba(22, 163, 74, 0.08);
+  --green-border: rgba(22, 163, 74, 0.2);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
   --shadow-lift: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --grid-line: rgba(0, 0, 0, 0.04);
 }
 
 /* ── Hirsel Dark ── */
 [data-theme="hirsel-dark"] {
-  --background: 40 8% 6%;
-  --foreground: 40 10% 88%;
-  --card: 40 6% 9%;
-  --card-foreground: 40 10% 88%;
-  --popover: 40 6% 9%;
-  --popover-foreground: 40 10% 88%;
-  --primary: 40 10% 88%;
-  --primary-foreground: 40 8% 6%;
-  --secondary: 40 5% 14%;
-  --secondary-foreground: 40 8% 72%;
-  --muted: 40 4% 14%;
-  --muted-foreground: 40 5% 50%;
-  --accent: 40 5% 14%;
-  --accent-foreground: 40 10% 88%;
+  --background: 0 0% 7%;
+  --foreground: 40 6% 90%;
+  --card: 0 0% 10%;
+  --card-foreground: 40 6% 90%;
+  --popover: 0 0% 10%;
+  --popover-foreground: 40 6% 90%;
+  --primary: 40 6% 90%;
+  --primary-foreground: 0 0% 7%;
+  --secondary: 0 0% 14%;
+  --secondary-foreground: 40 6% 80%;
+  --muted: 0 0% 14%;
+  --muted-foreground: 0 0% 55%;
+  --accent: 0 0% 14%;
+  --accent-foreground: 40 6% 90%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 40 5% 16%;
-  --input: 40 5% 16%;
-  --ring: 36 80% 50%;
-  --ink-2: 40 6% 62%;
+  --border: 0 0% 20%;
+  --input: 0 0% 20%;
+  --ring: 0 72% 51%;
+  --ink-2: 0 0% 70%;
   --signal-red: 0 72% 51%;
-  --signal-blue: 217 80% 60%;
-  --signal-amber: 36 85% 55%;
-  --signal-green: 142 55% 42%;
+  --signal-blue: 217 91% 60%;
+  --signal-amber: 37 90% 50%;
+  --signal-green: 142 72% 45%;
+  --radius: 0px;
+  --border-light: 0 0% 16%;
+  --node: #3a3a3a;
+  --node-highlight: #555;
+  --on-signal: #ffffff;
+  --red-bg: rgba(220, 38, 38, 0.12);
+  --red-border: rgba(220, 38, 38, 0.30);
+  --blue-bg: rgba(37, 99, 235, 0.10);
+  --blue-border: rgba(37, 99, 235, 0.30);
+  --amber-bg: rgba(217, 119, 6, 0.10);
+  --amber-border: rgba(217, 119, 6, 0.30);
+  --green-bg: rgba(22, 163, 74, 0.12);
+  --green-border: rgba(22, 163, 74, 0.25);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.25);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
   --shadow-lift: 0 8px 28px rgba(0, 0, 0, 0.4);
+  --grid-line: rgba(255, 255, 255, 0.03);
 }
 
 /* ── Midnight (deep indigo) ── */
@@ -172,7 +200,30 @@ body, #root {
    ═══════════════════════════════════════ */
 
 .chassis-label {
-  @apply font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground;
+  @apply font-mono text-[11px] uppercase tracking-[0.12em] text-muted-foreground;
+}
+
+.workspace-shell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top left, hsl(var(--signal-amber) / 0.1), transparent 28%),
+    linear-gradient(to bottom, transparent, hsl(var(--background)) 45%);
+  opacity: 0.9;
+}
+
+.workspace-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, hsl(var(--grid-line)) 1px, transparent 1px),
+    linear-gradient(to bottom, hsl(var(--grid-line)) 1px, transparent 1px);
+  background-size: 26px 26px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.18), transparent 40%);
 }
 
 /* Markdown body inside chat messages */
@@ -208,3 +259,1180 @@ body, #root {
   @apply px-2 py-1 border border-border;
 }
 .markdown-body th { @apply font-semibold text-foreground; }
+
+/* ═══════════════════════════════════════
+   Canvas — Base Element Styling
+   ═══════════════════════════════════════ */
+
+.canvas-html {
+  color: hsl(var(--foreground));
+  line-height: 1.65;
+}
+
+.canvas-html :where(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.7rem;
+  font-family: "Bricolage Grotesque", serif;
+  letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html :where(h1) { font-size: 1.6rem; }
+.canvas-html :where(h2) { font-size: 1.25rem; }
+.canvas-html :where(h3) { font-size: 1.05rem; }
+.canvas-html :where(p, ul, ol, blockquote, pre, table) { margin: 0 0 1rem; }
+.canvas-html :where(ul, ol) { padding-left: 1.25rem; }
+.canvas-html :where(a) { color: hsl(var(--signal-blue)); }
+.canvas-html :where(code) {
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.85em;
+  background: hsl(var(--secondary));
+  padding: 0.1rem 0.3rem;
+}
+.canvas-html :where(pre) {
+  overflow-x: auto;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  padding: 1rem;
+}
+.canvas-html :where(pre code) {
+  background: transparent;
+  padding: 0;
+}
+.canvas-html :where(blockquote) {
+  border-left: 2px solid hsl(var(--signal-amber));
+  padding-left: 1rem;
+  color: hsl(var(--muted-foreground));
+}
+.canvas-html :where(table) {
+  border-collapse: collapse;
+  width: 100%;
+}
+.canvas-html :where(th, td) {
+  border: 1px solid hsl(var(--border));
+  padding: 0.55rem 0.7rem;
+  text-align: left;
+}
+
+/* ═══════════════════════════════════════
+   Canvas — Native HTML Styling
+   ═══════════════════════════════════════ */
+
+.canvas-html :where(img, svg, canvas) {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 1rem;
+}
+
+.canvas-html :where(img) {
+  height: auto;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.canvas-html :where(svg, canvas) {
+  overflow: visible;
+}
+
+.canvas-html :where(hr) {
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  margin: 1rem 0;
+}
+
+.canvas-html :where(form, fieldset, nav) {
+  margin: 0 0 1rem;
+}
+
+.canvas-html :where(fieldset) {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  padding: 1rem;
+}
+
+.canvas-html :where(legend) {
+  padding: 0 0.3rem;
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html :where(label) {
+  display: block;
+  margin: 0 0 0.35rem;
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html :where(button, input, select, textarea) {
+  width: auto;
+  max-width: 100%;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  color: hsl(var(--foreground));
+  font: inherit;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.canvas-html :where(button) {
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.canvas-html :where(button:hover) {
+  background: hsl(var(--secondary));
+}
+
+.canvas-html :where(button:disabled, input:disabled, select:disabled, textarea:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.canvas-html :where(button, input, select, textarea):focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.canvas-html :where(textarea) {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.canvas-html :where(details) {
+  margin: 0 0 1rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.canvas-html :where(summary) {
+  cursor: pointer;
+  padding: 0.85rem 1rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html :where(details > :not(summary)) {
+  margin-top: 0;
+  padding: 0 1rem 1rem;
+}
+
+/* ═══════════════════════════════════════
+   Canvas — Host Components
+   ═══════════════════════════════════════ */
+
+.canvas-html :where(
+  hirsel-card,
+  hirsel-callout,
+  hirsel-code,
+  hirsel-codediff,
+  hirsel-coderef,
+  hirsel-dia,
+  hirsel-diagram,
+  hirsel-disclosure,
+  hirsel-filelist,
+  hirsel-patchset,
+  hirsel-progress,
+  hirsel-stat-grid,
+  hirsel-tabs
+) {
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.canvas-html :where(hirsel-fileref) {
+  display: inline-block;
+  margin: 0 0.2rem 0.2rem 0;
+  vertical-align: middle;
+}
+
+.canvas-html hirsel-stat {
+  display: block;
+}
+
+.canvas-html .hirsel-card-shell,
+.canvas-html .hirsel-diagram-shell,
+.canvas-html .hirsel-filelist-shell,
+.canvas-html .hirsel-patchset-shell,
+.canvas-html .hirsel-tabs-shell,
+.canvas-html .hirsel-disclosure-shell,
+.canvas-html .hirsel-progress-shell,
+.canvas-html .hirsel-stat-shell {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.canvas-html .hirsel-card-shell[data-tone="muted"],
+.canvas-html .hirsel-tabs-shell[data-tone="muted"],
+.canvas-html .hirsel-disclosure-shell[data-tone="muted"],
+.canvas-html .hirsel-progress-shell[data-tone="muted"],
+.canvas-html .hirsel-stat-shell[data-tone="muted"] {
+  background: hsl(var(--secondary));
+}
+
+.canvas-html .hirsel-card-shell[data-tone="info"],
+.canvas-html .hirsel-tabs-shell[data-tone="info"],
+.canvas-html .hirsel-disclosure-shell[data-tone="info"],
+.canvas-html .hirsel-progress-shell[data-tone="info"],
+.canvas-html .hirsel-stat-shell[data-tone="info"] {
+  border-color: var(--blue-border);
+}
+
+.canvas-html .hirsel-card-shell[data-tone="success"],
+.canvas-html .hirsel-tabs-shell[data-tone="success"],
+.canvas-html .hirsel-disclosure-shell[data-tone="success"],
+.canvas-html .hirsel-progress-shell[data-tone="success"],
+.canvas-html .hirsel-stat-shell[data-tone="success"] {
+  border-color: var(--green-border);
+}
+
+.canvas-html .hirsel-card-shell[data-tone="warning"],
+.canvas-html .hirsel-tabs-shell[data-tone="warning"],
+.canvas-html .hirsel-disclosure-shell[data-tone="warning"],
+.canvas-html .hirsel-progress-shell[data-tone="warning"],
+.canvas-html .hirsel-stat-shell[data-tone="warning"] {
+  border-color: var(--amber-border);
+}
+
+.canvas-html .hirsel-card-shell[data-tone="danger"],
+.canvas-html .hirsel-tabs-shell[data-tone="danger"],
+.canvas-html .hirsel-disclosure-shell[data-tone="danger"],
+.canvas-html .hirsel-progress-shell[data-tone="danger"],
+.canvas-html .hirsel-stat-shell[data-tone="danger"] {
+  border-color: var(--red-border);
+}
+
+.canvas-html .hirsel-card-shell {
+  padding: 1rem;
+}
+
+.canvas-html .hirsel-card-header {
+  margin-bottom: 0.85rem;
+}
+
+.canvas-html .hirsel-card-eyebrow {
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+  margin-bottom: 0.3rem;
+}
+
+.canvas-html .hirsel-card-heading {
+  font-family: "Bricolage Grotesque", serif;
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-card-body > :last-child,
+.canvas-html .hirsel-callout-body > :last-child,
+.canvas-html .hirsel-tabs-panel > :last-child,
+.canvas-html .hirsel-disclosure-body > :last-child {
+  margin-bottom: 0;
+}
+
+.canvas-html .hirsel-callout-shell {
+  border: 1px solid hsl(var(--border));
+  padding: 0.9rem 1rem;
+  background: hsl(var(--card));
+}
+
+.canvas-html .hirsel-callout-shell[data-tone="info"] {
+  border-color: var(--blue-border);
+  background: var(--blue-bg);
+}
+
+.canvas-html .hirsel-callout-shell[data-tone="success"] {
+  border-color: var(--green-border);
+  background: var(--green-bg);
+}
+
+.canvas-html .hirsel-callout-shell[data-tone="warning"] {
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
+}
+
+.canvas-html .hirsel-callout-shell[data-tone="danger"] {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+}
+
+.canvas-html .hirsel-callout-title {
+  margin-bottom: 0.3rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html hirsel-stat-grid {
+  --hirsel-stat-min: 132px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--hirsel-stat-min), 1fr));
+  gap: 0.85rem;
+}
+
+.canvas-html .hirsel-stat-shell {
+  padding: 0.9rem 1rem;
+}
+
+.canvas-html .hirsel-stat-shell[data-tone="info"] .hirsel-stat-value {
+  color: hsl(var(--signal-blue));
+}
+
+.canvas-html .hirsel-stat-shell[data-tone="success"] .hirsel-stat-value {
+  color: hsl(var(--signal-green));
+}
+
+.canvas-html .hirsel-stat-shell[data-tone="warning"] .hirsel-stat-value {
+  color: hsl(var(--signal-amber));
+}
+
+.canvas-html .hirsel-stat-shell[data-tone="danger"] .hirsel-stat-value {
+  color: hsl(var(--signal-red));
+}
+
+.canvas-html .hirsel-stat-label,
+.canvas-html .hirsel-progress-label,
+.canvas-html .hirsel-progress-detail,
+.canvas-html .hirsel-tab-button {
+  font-family: "Martian Mono", ui-monospace, monospace;
+}
+
+.canvas-html .hirsel-stat-label {
+  margin-bottom: 0.35rem;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-stat-value {
+  font-family: "Bricolage Grotesque", serif;
+  font-size: 1.65rem;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-stat-detail {
+  margin-top: 0.45rem;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-tabs-shell {
+  overflow: hidden;
+}
+
+.canvas-html .hirsel-tabs-nav {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--secondary) / 0.7);
+  padding: 0.6rem;
+}
+
+.canvas-html .hirsel-tab-button {
+  flex: 0 0 auto;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 0.38rem 0.7rem;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: hsl(var(--muted-foreground));
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+
+.canvas-html .hirsel-tab-button[aria-selected="true"] {
+  border-color: hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-tab-button:hover {
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-tab-button:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.canvas-html .hirsel-tabs-body {
+  padding: 1rem;
+}
+
+.canvas-html .hirsel-tabs-panel[hidden] {
+  display: none;
+}
+
+.canvas-html .hirsel-disclosure-shell {
+  overflow: hidden;
+}
+
+.canvas-html .hirsel-disclosure-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  cursor: pointer;
+  list-style: none;
+  padding: 0.9rem 1rem;
+}
+
+.canvas-html .hirsel-disclosure-summary::-webkit-details-marker {
+  display: none;
+}
+
+.canvas-html .hirsel-disclosure-title {
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-disclosure-chevron {
+  display: flex;
+  height: 0.9rem;
+  width: 0.9rem;
+  align-items: center;
+  justify-content: center;
+  color: hsl(var(--muted-foreground));
+  transition: transform 120ms ease;
+}
+
+.canvas-html .hirsel-disclosure-shell[open] .hirsel-disclosure-chevron {
+  transform: rotate(180deg);
+}
+
+.canvas-html .hirsel-disclosure-chevron svg {
+  height: 100%;
+  width: 100%;
+}
+
+.canvas-html .hirsel-disclosure-body {
+  border-top: 1px solid hsl(var(--border));
+  padding: 0.9rem 1rem 1rem;
+}
+
+.canvas-html .hirsel-progress-shell {
+  padding: 0.85rem 1rem 1rem;
+}
+
+.canvas-html .hirsel-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+}
+
+.canvas-html .hirsel-progress-label,
+.canvas-html .hirsel-progress-detail {
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.canvas-html .hirsel-progress-label {
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-progress-detail {
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-progress-track {
+  overflow: hidden;
+  height: 0.42rem;
+  background: hsl(var(--border));
+}
+
+.canvas-html .hirsel-progress-fill {
+  height: 100%;
+  background: hsl(var(--signal-green));
+  transition: width 180ms ease;
+}
+
+.canvas-html .hirsel-progress-shell[data-tone="info"] .hirsel-progress-fill {
+  background: hsl(var(--signal-blue));
+}
+
+.canvas-html .hirsel-progress-shell[data-tone="warning"] .hirsel-progress-fill {
+  background: hsl(var(--signal-amber));
+}
+
+.canvas-html .hirsel-progress-shell[data-tone="danger"] .hirsel-progress-fill {
+  background: hsl(var(--signal-red));
+}
+
+.canvas-html .hirsel-progress-footer {
+  margin-top: 0.55rem;
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-code-shell,
+.canvas-html .hirsel-diff-shell {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.canvas-html .hirsel-code-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+  border-bottom: 1px solid hsl(var(--border));
+  background: linear-gradient(
+    180deg,
+    hsl(var(--secondary) / 0.95),
+    hsl(var(--secondary) / 0.55)
+  );
+  padding: 0.8rem 0.95rem;
+}
+
+.canvas-html .hirsel-code-shell[data-expanded="false"] .hirsel-code-header,
+.canvas-html .hirsel-diff-shell[data-expanded="false"] .hirsel-code-header {
+  border-bottom: none;
+}
+
+.canvas-html .hirsel-code-meta {
+  min-width: 0;
+}
+
+.canvas-html .hirsel-code-title {
+  font-family: "Bricolage Grotesque", serif;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-code-caption,
+.canvas-html .hirsel-code-badge,
+.canvas-html .hirsel-code-action,
+.canvas-html .hirsel-code-gutter,
+.canvas-html .hirsel-code-line {
+  font-family: "Martian Mono", ui-monospace, monospace;
+}
+
+.canvas-html .hirsel-code-caption {
+  margin-top: 0.2rem;
+  font-size: 0.63rem;
+  line-height: 1.6;
+  letter-spacing: 0.04em;
+  color: hsl(var(--muted-foreground));
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.canvas-html .hirsel-code-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.canvas-html .hirsel-code-badge,
+.canvas-html .hirsel-code-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.75rem;
+  border: 1px solid hsl(var(--border));
+  padding: 0.2rem 0.52rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.canvas-html .hirsel-code-badge {
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-code-badge[data-status="new"] {
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  color: hsl(var(--signal-green));
+}
+
+.canvas-html .hirsel-code-badge[data-status="modified"] {
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
+  color: hsl(var(--signal-amber));
+}
+
+.canvas-html .hirsel-code-badge[data-status="deleted"] {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: hsl(var(--signal-red));
+}
+
+.canvas-html .hirsel-code-badge[data-status="moved"] {
+  border-color: var(--blue-border);
+  background: var(--blue-bg);
+  color: hsl(var(--signal-blue));
+}
+
+.canvas-html .hirsel-code-action {
+  background: transparent;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-code-action:hover:not(:disabled) {
+  background: hsl(var(--background));
+}
+
+.canvas-html .hirsel-code-action:disabled {
+  opacity: 0.45;
+}
+
+.canvas-html .hirsel-code-body {
+  background: linear-gradient(
+    180deg,
+    hsl(var(--card)),
+    hsl(var(--background) / 0.82)
+  );
+}
+
+.canvas-html .hirsel-code-scroll {
+  overflow: auto;
+}
+
+.canvas-html .hirsel-code-rows {
+  min-width: max-content;
+  tab-size: 2;
+}
+
+.canvas-html .hirsel-code-row {
+  display: grid;
+  grid-template-columns: minmax(3.5rem, auto) 1fr;
+  gap: 0.9rem;
+  border-top: 1px solid hsl(var(--border) / 0.7);
+  padding: 0 0.95rem;
+}
+
+.canvas-html .hirsel-code-row:first-child {
+  border-top: none;
+}
+
+.canvas-html .hirsel-code-row:hover {
+  background: hsl(var(--secondary) / 0.5);
+}
+
+.canvas-html .hirsel-code-gutter {
+  display: block;
+  padding: 0.45rem 0;
+  text-align: right;
+  font-size: 0.68rem;
+  line-height: 1.75;
+  color: hsl(var(--muted-foreground));
+  user-select: none;
+}
+
+.canvas-html .hirsel-code-line {
+  display: block;
+  padding: 0.45rem 0;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 0.74rem;
+  line-height: 1.75;
+  white-space: pre;
+}
+
+.canvas-html .hirsel-code-empty,
+.canvas-html .hirsel-code-loading {
+  padding: 0.9rem 0.95rem 1rem;
+}
+
+.canvas-html .hirsel-code-empty {
+  font-size: 0.84rem;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-code-empty[data-tone="danger"] {
+  color: hsl(var(--signal-red));
+  background: var(--red-bg);
+}
+
+.canvas-html .hirsel-code-loading {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.canvas-html .hirsel-diff-body {
+  background: linear-gradient(
+    180deg,
+    hsl(var(--card)),
+    hsl(var(--background) / 0.82)
+  );
+}
+
+.canvas-html .hirsel-diff-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.8);
+  padding: 0.8rem 0.95rem;
+}
+
+.canvas-html .hirsel-diff-origin,
+.canvas-html .hirsel-diff-origin-arrow,
+.canvas-html .hirsel-diff-number,
+.canvas-html .hirsel-diff-marker,
+.canvas-html .hirsel-diff-line,
+.canvas-html .hirsel-diff-skip {
+  font-family: "Martian Mono", ui-monospace, monospace;
+}
+
+.canvas-html .hirsel-diff-origin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.65rem;
+  border: 1px solid hsl(var(--border));
+  padding: 0.15rem 0.5rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-diff-origin[data-kind="remove"] {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+}
+
+.canvas-html .hirsel-diff-origin[data-kind="add"] {
+  border-color: var(--green-border);
+  background: var(--green-bg);
+}
+
+.canvas-html .hirsel-diff-origin-arrow {
+  font-size: 0.72rem;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-diff-scroll {
+  overflow: auto;
+}
+
+.canvas-html .hirsel-diff-rows {
+  min-width: max-content;
+}
+
+.canvas-html .hirsel-diff-row {
+  display: grid;
+  grid-template-columns: minmax(3.25rem, auto) minmax(3.25rem, auto) 1.35rem 1fr;
+  gap: 0.75rem;
+  border-top: 1px solid hsl(var(--border) / 0.7);
+  padding: 0 0.95rem;
+}
+
+.canvas-html .hirsel-diff-row:first-child {
+  border-top: none;
+}
+
+.canvas-html .hirsel-diff-row[data-kind="same"] {
+  background: hsl(var(--background) / 0.25);
+}
+
+.canvas-html .hirsel-diff-row[data-kind="remove"] {
+  background: linear-gradient(90deg, var(--red-bg), transparent 70%);
+}
+
+.canvas-html .hirsel-diff-row[data-kind="add"] {
+  background: linear-gradient(90deg, var(--green-bg), transparent 70%);
+}
+
+.canvas-html .hirsel-diff-row:hover {
+  filter: brightness(0.985);
+}
+
+.canvas-html .hirsel-diff-number,
+.canvas-html .hirsel-diff-marker {
+  display: block;
+  padding: 0.45rem 0;
+  font-size: 0.68rem;
+  line-height: 1.75;
+  text-align: right;
+  color: hsl(var(--muted-foreground));
+  user-select: none;
+}
+
+.canvas-html .hirsel-diff-marker {
+  text-align: center;
+}
+
+.canvas-html .hirsel-diff-row[data-kind="remove"] .hirsel-diff-marker {
+  color: hsl(var(--signal-red));
+}
+
+.canvas-html .hirsel-diff-row[data-kind="add"] .hirsel-diff-marker {
+  color: hsl(var(--signal-green));
+}
+
+.canvas-html .hirsel-diff-row[data-kind="same"] .hirsel-diff-marker {
+  color: hsl(var(--border));
+}
+
+.canvas-html .hirsel-diff-line {
+  display: block;
+  padding: 0.45rem 0;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font-size: 0.74rem;
+  line-height: 1.75;
+  white-space: pre;
+}
+
+.canvas-html .hirsel-diff-skip {
+  border-top: 1px solid hsl(var(--border) / 0.7);
+  padding: 0.65rem 0.95rem;
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--secondary) / 0.45);
+  text-align: center;
+}
+
+.canvas-html .hirsel-file-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.55rem;
+  border: 1px solid hsl(var(--border));
+  padding: 0.08rem 0.45rem;
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-file-status[data-status="new"] {
+  border-color: var(--green-border);
+  background: var(--green-bg);
+  color: hsl(var(--signal-green));
+}
+
+.canvas-html .hirsel-file-status[data-status="modified"] {
+  border-color: var(--amber-border);
+  background: var(--amber-bg);
+  color: hsl(var(--signal-amber));
+}
+
+.canvas-html .hirsel-file-status[data-status="deleted"] {
+  border-color: var(--red-border);
+  background: var(--red-bg);
+  color: hsl(var(--signal-red));
+}
+
+.canvas-html .hirsel-file-status[data-status="moved"] {
+  border-color: var(--blue-border);
+  background: var(--blue-bg);
+  color: hsl(var(--signal-blue));
+}
+
+.canvas-html .hirsel-fileref-shell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.55rem;
+  max-width: 100%;
+}
+
+.canvas-html .hirsel-fileref-pill {
+  display: inline-flex;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  padding: 0.32rem 0.42rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.canvas-html .hirsel-fileref-pill[data-status="modified"] {
+  border-color: var(--amber-border);
+}
+
+.canvas-html .hirsel-fileref-pill[data-status="new"] {
+  border-color: var(--green-border);
+}
+
+.canvas-html .hirsel-fileref-pill[data-status="deleted"] {
+  border-color: var(--red-border);
+}
+
+.canvas-html .hirsel-fileref-pill[data-status="moved"] {
+  border-color: var(--blue-border);
+}
+
+.canvas-html .hirsel-fileref-label,
+.canvas-html .hirsel-fileref-path,
+.canvas-html .hirsel-fileref-range {
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.canvas-html .hirsel-fileref-label {
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-fileref-path,
+.canvas-html .hirsel-fileref-range {
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-fileref-preview {
+  width: min(100%, 44rem);
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+  box-shadow: var(--shadow-md);
+}
+
+.canvas-html .hirsel-fileref-preview-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 0.6rem 0.8rem;
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-filelist-shell,
+.canvas-html .hirsel-patchset-shell {
+  overflow: hidden;
+}
+
+.canvas-html .hirsel-filelist-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.9rem;
+  border-bottom: 1px solid hsl(var(--border));
+  background: linear-gradient(
+    180deg,
+    hsl(var(--secondary) / 0.95),
+    hsl(var(--secondary) / 0.55)
+  );
+  padding: 0.85rem 0.95rem;
+}
+
+.canvas-html .hirsel-filelist-meta {
+  min-width: 0;
+}
+
+.canvas-html .hirsel-filelist-body,
+.canvas-html .hirsel-patchset-body {
+  padding: 0.85rem 0.95rem 1rem;
+}
+
+.canvas-html .hirsel-filelist-item + .hirsel-filelist-item {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid hsl(var(--border) / 0.7);
+}
+
+.canvas-html .hirsel-filelist-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.55rem;
+}
+
+.canvas-html .hirsel-filelist-detail {
+  margin-top: 0.45rem;
+  padding-left: 0.1rem;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-filelist-detail > :last-child {
+  margin-bottom: 0;
+}
+
+.canvas-html .hirsel-patchset-item {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.canvas-html .hirsel-patchset-item + .hirsel-patchset-item {
+  margin-top: 0.9rem;
+}
+
+.canvas-html .hirsel-patchset-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.85rem 0.95rem;
+}
+
+.canvas-html .hirsel-patchset-summary::-webkit-details-marker {
+  display: none;
+}
+
+.canvas-html .hirsel-patchset-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.canvas-html .hirsel-patchset-title {
+  font-family: "Bricolage Grotesque", serif;
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: hsl(var(--foreground));
+}
+
+.canvas-html .hirsel-patchset-note,
+.canvas-html .hirsel-patchset-path {
+  margin-top: 0.3rem;
+}
+
+.canvas-html .hirsel-patchset-note {
+  font-size: 0.84rem;
+  line-height: 1.55;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-patchset-path {
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.62rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.canvas-html .hirsel-patchset-item-body {
+  border-top: 1px solid hsl(var(--border));
+  padding: 0.85rem 0.95rem 0.95rem;
+}
+
+.canvas-html .hirsel-diagram-shell {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card));
+}
+
+.canvas-html .hirsel-diagram-shell[data-expanded="false"] .hirsel-code-header {
+  border-bottom: none;
+}
+
+.canvas-html .hirsel-diagram-body {
+  padding: 0.9rem;
+  background: linear-gradient(
+    180deg,
+    hsl(var(--card)),
+    hsl(var(--background) / 0.82)
+  );
+}
+
+.canvas-html .hirsel-diagram-frame {
+  overflow: auto;
+  border: 1px solid hsl(var(--border));
+  background:
+    linear-gradient(180deg, transparent, hsl(var(--background) / 0.55)),
+    linear-gradient(90deg, hsl(var(--grid-line)) 1px, transparent 1px),
+    linear-gradient(hsl(var(--grid-line)) 1px, transparent 1px);
+  background-size: auto, 22px 22px, 22px 22px;
+  padding: 1rem;
+}
+
+.canvas-html .hirsel-diagram-frame svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-width: 28rem;
+}
+
+.canvas-html .hirsel-diagram-frame :where(text, tspan) {
+  font-family: "Bricolage Grotesque", serif;
+}
+
+@media (max-width: 720px) {
+  .canvas-html .hirsel-diff-row {
+    grid-template-columns: 2.8rem 2.8rem 1.15rem 1fr;
+    gap: 0.55rem;
+    padding: 0 0.7rem;
+  }
+
+  .canvas-html .hirsel-diff-legend {
+    flex-wrap: wrap;
+    padding: 0.7rem;
+  }
+
+  .canvas-html .hirsel-filelist-header {
+    flex-direction: column;
+    padding: 0.7rem;
+  }
+
+  .canvas-html .hirsel-filelist-body,
+  .canvas-html .hirsel-patchset-body,
+  .canvas-html .hirsel-patchset-item-body,
+  .canvas-html .hirsel-patchset-summary,
+  .canvas-html .hirsel-diagram-body {
+    padding-left: 0.7rem;
+    padding-right: 0.7rem;
+  }
+
+  .canvas-html .hirsel-diagram-frame svg {
+    min-width: 20rem;
+  }
+}
+
+/* ═══════════════════════════════════════
+   Animations
+   ═══════════════════════════════════════ */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--muted)) 25%,
+    hsl(var(--muted-foreground) / 0.06) 50%,
+    hsl(var(--muted)) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes canvas-slide-in {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.canvas-enter {
+  animation: canvas-slide-in 0.15s ease-out;
+}

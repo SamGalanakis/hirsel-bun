@@ -246,10 +246,10 @@ pub(super) async fn load_scope_messages(
 
     let mut messages = match scope {
         ShepherdScope::General => store.get_messages(None).await.str_err()?,
-        ShepherdScope::Project { project_id, .. } => store
+        ShepherdScope::Shepherd { project_id, .. } => store
             .get_scope_messages(
                 Some(*project_id),
-                Some(&ShepherdChatStore::project_scope_key(*project_id)),
+                Some(&ShepherdChatStore::shepherd_scope_key(*project_id)),
                 limit,
             )
             .await
@@ -270,7 +270,7 @@ pub(super) async fn load_scope_messages(
 
     if !matches!(
         scope,
-        ShepherdScope::Project { .. } | ShepherdScope::Thread { .. }
+        ShepherdScope::Shepherd { .. } | ShepherdScope::Thread { .. }
     ) && messages.len() > limit
     {
         let start = messages.len().saturating_sub(limit);
@@ -288,10 +288,10 @@ pub(super) async fn save_message(
     let store = ShepherdChatStore::open().await.str_err()?;
     match scope {
         ShepherdScope::General => store.save_message(None, role, chunks_json).await.str_err(),
-        ShepherdScope::Project { project_id, .. } => store
+        ShepherdScope::Shepherd { project_id, .. } => store
             .save_scope_message(
                 Some(*project_id),
-                Some(&ShepherdChatStore::project_scope_key(*project_id)),
+                Some(&ShepherdChatStore::shepherd_scope_key(*project_id)),
                 role,
                 chunks_json,
             )
@@ -319,10 +319,10 @@ pub(super) async fn load_scope_live_turn(
     let store = ShepherdChatStore::open().await.str_err()?;
     match scope {
         ShepherdScope::General => store.get_live_turn(None, "general").await.str_err(),
-        ShepherdScope::Project { project_id, .. } => store
+        ShepherdScope::Shepherd { project_id, .. } => store
             .get_live_turn(
                 Some(*project_id),
-                &ShepherdChatStore::project_scope_key(*project_id),
+                &ShepherdChatStore::shepherd_scope_key(*project_id),
             )
             .await
             .str_err(),

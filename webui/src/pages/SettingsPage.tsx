@@ -10,6 +10,7 @@ import {
   type SettingsResponse,
   getSettings,
   pollCodexDeviceFlow,
+  saveGithubToken,
   saveOpenRouterSettings,
   saveSettingsProvider,
   saveTavilyKey,
@@ -41,6 +42,9 @@ const SettingsPage: Component = () => {
   const [tavilyKey, setTavilyKey] = createSignal("");
   const [tavilySaving, setTavilySaving] = createSignal(false);
   const [tavilyStatus, setTavilyStatus] = createSignal("");
+  const [githubToken, setGithubToken] = createSignal("");
+  const [githubSaving, setGithubSaving] = createSignal(false);
+  const [githubStatus, setGithubStatus] = createSignal("");
   let codexPollTimer: number | undefined;
 
   const clearCodexPollTimer = () => {
@@ -151,6 +155,22 @@ const SettingsPage: Component = () => {
     }
   };
 
+  const handleSaveGithub = async () => {
+    setGithubSaving(true);
+    setGithubStatus("");
+    try {
+      await saveGithubToken(githubToken().trim());
+      setGithubToken("");
+      setGithubStatus("Saved");
+      setTimeout(() => setGithubStatus(""), 2000);
+      await reloadSettings();
+    } catch (err) {
+      setGithubStatus(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setGithubSaving(false);
+    }
+  };
+
   // Derived state
   const codexReady = () => settings()?.codex_configured && settings()?.provider === "codex";
   const codexFromEnv = () => settings()?.codex_source === "env";
@@ -158,9 +178,9 @@ const SettingsPage: Component = () => {
 
   return (
     <div class="min-h-screen bg-background text-foreground">
-      <header class="flex items-center justify-between border-b border-border bg-card px-4 py-3">
+      <header class="flex h-[54px] shrink-0 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur">
         <div class="flex items-center gap-2">
-          <a href="#" class="font-display text-base tracking-tight">HIRSEL</a>
+          <a href="#" class="font-display text-base font-semibold tracking-tight text-foreground">HIRSEL</a>
           <span class="text-xs text-muted-foreground">/</span>
           <span class="text-sm font-medium">Settings</span>
         </div>
@@ -320,6 +340,54 @@ const SettingsPage: Component = () => {
           {/* ── Tools ── */}
           <TabsContent value="tools">
             <div class="space-y-5">
+              <div class="flex items-center gap-2">
+                <Label class="flex-1">GitHub Publishing</Label>
+                <Show when={settings()?.github_configured}>
+                  <Badge variant="success">Configured</Badge>
+                </Show>
+                <Show when={settings()?.github_source === "env"}>
+                  <Badge>Env</Badge>
+                </Show>
+              </div>
+
+              <div class="space-y-1.5">
+                <Label for="github-token">Token</Label>
+                <Show when={settings()?.github_token_masked}>
+                  <p class="font-mono text-xs text-muted-foreground">
+                    Current: {settings()!.github_token_masked}
+                  </p>
+                </Show>
+                <Input
+                  id="github-token"
+                  type="password"
+                  placeholder="github_pat_..."
+                  value={githubToken()}
+                  onInput={(e) => setGithubToken(e.currentTarget.value)}
+                />
+                <p class="text-xs text-muted-foreground">
+                  Hirsel forwards this into shepherd containers as{" "}
+                  <code class="mx-0.5 bg-muted px-1 py-px text-[11px]">GITHUB_TOKEN</code> and{" "}
+                  <code class="mx-0.5 bg-muted px-1 py-px text-[11px]">GH_TOKEN</code>. Host
+                  environment values still win if present.
+                </p>
+              </div>
+
+              <div class="flex items-center gap-3">
+                <Button
+                  size="sm"
+                  loading={githubSaving()}
+                  onClick={handleSaveGithub}
+                  disabled={!githubToken().trim()}
+                >
+                  Save
+                </Button>
+                <Show when={githubStatus()}>
+                  <span class="text-xs text-muted-foreground">{githubStatus()}</span>
+                </Show>
+              </div>
+
+              <div class="border-t border-border/70 pt-5" />
+
               <div class="flex items-center gap-2">
                 <Label class="flex-1">Tavily Search</Label>
                 <Show when={settings()?.tavily_configured}>

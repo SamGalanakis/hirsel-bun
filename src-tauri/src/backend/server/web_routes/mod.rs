@@ -28,6 +28,10 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/api/projects/{project_id}/page",
             get(api::get_project_page),
         )
+        .route(
+            "/api/projects/{project_id}/workspace/file",
+            get(api::get_workspace_file),
+        )
         .route("/api/projects/{project_id}", delete(api::delete_project))
         .route(
             "/api/projects/{project_id}/settings",
@@ -61,5 +65,6 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             post(api::poll_codex_device_flow),
         )
         .route("/api/settings/openrouter", post(api::save_openrouter_key))
+        .route("/api/settings/github", post(api::save_github_token))
         .route("/api/settings/tavily", post(api::save_tavily_key))
 }

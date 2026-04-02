@@ -20,7 +20,7 @@ use super::runtime::{
     build_user_turn_text, resolve_scope_project_id, resolve_scope_workspace,
     shepherd_prompt_overrides,
 };
-use super::tools::ShepherdToolProvider;
+use super::tools::{NoopToolProvider, ShepherdToolProvider};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::backend::app::ResultExt;
 use crate::backend::credentials::require_tavily_api_key;
@@ -31,9 +31,9 @@ use crate::backend::{ShepherdChatMessage, ShepherdChatStore, ShepherdThreadStore
 fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
     match scope {
         ShepherdScope::General => (None, None),
-        ShepherdScope::Project { project_id, .. } => (
+        ShepherdScope::Shepherd { project_id, .. } => (
             Some(*project_id),
-            Some(ShepherdChatStore::project_scope_key(*project_id)),
+            Some(ShepherdChatStore::shepherd_scope_key(*project_id)),
         ),
         ShepherdScope::Thread {
             project_id,
@@ -53,6 +53,7 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         "rename_thread" => ("Rename Thread".to_string(), Some("edit".to_string())),
         "set_thread_status" => ("Thread Status".to_string(), Some("edit".to_string())),
         "archive_thread" => ("Archive Thread".to_string(), Some("execute".to_string())),
+        "promote_thread" => ("Promote Thread".to_string(), Some("execute".to_string())),
         "delete_thread" => ("Delete Thread".to_string(), Some("execute".to_string())),
         "send_thread_message" => ("Message Thread".to_string(), Some("execute".to_string())),
         "read_thread_updates" => ("Thread Updates".to_string(), Some("search".to_string())),
@@ -187,22 +188,29 @@ impl SessionPlugin for EmbeddedPlanTrackerPlugin {
 }
 
 async fn build_runtime_services(
+    scope: &ShepherdScope,
     default_project_id: Option<i64>,
     workspace_root: Option<PathBuf>,
     agent_id: &str,
     execution_mode: ExecutionMode,
 ) -> Result<RuntimeServices, String> {
-    let tools: Arc<dyn ToolProvider> = Arc::new(ShepherdToolProvider::new(
-        None,
-        default_project_id,
-        workspace_root,
-    ));
+    let tools: Arc<dyn ToolProvider> = match scope {
+        ShepherdScope::General => Arc::new(NoopToolProvider),
+        ShepherdScope::Shepherd { .. } => Arc::new(ShepherdToolProvider::new(
+            None,
+            default_project_id,
+            workspace_root,
+        )),
+        ShepherdScope::Thread { .. } => Arc::new(NoopToolProvider),
+    };
     let mut plugin_factories = embedded_tool_plugin_factories(
         "hirsel_shepherd_tools",
         Arc::clone(&tools),
         require_tavily_api_key().await?.api_key,
     );
-    plugin_factories.push(Arc::new(EmbeddedPlanTrackerPluginFactory));
+    if matches!(scope, ShepherdScope::Shepherd { .. }) {
+        plugin_factories.push(Arc::new(EmbeddedPlanTrackerPluginFactory));
+    }
     let plugin_host = PluginHost::new(plugin_factories).with_dynamic_tools();
     let root_plugins = plugin_host
         .build_session(agent_id, execution_mode, None)
@@ -244,10 +252,10 @@ async fn load_scope_messages(
     let store = ShepherdChatStore::open().await.str_err()?;
     let mut messages = match scope {
         ShepherdScope::General => store.get_messages(None).await.str_err()?,
-        ShepherdScope::Project { project_id, .. } => store
+        ShepherdScope::Shepherd { project_id, .. } => store
             .get_scope_messages(
                 Some(*project_id),
-                Some(&ShepherdChatStore::project_scope_key(*project_id)),
+                Some(&ShepherdChatStore::shepherd_scope_key(*project_id)),
                 limit,
             )
             .await
@@ -308,6 +316,7 @@ async fn create_runtime_from_history(
         ..AgentStateEnvelope::default()
     };
     let services = build_runtime_services(
+        scope,
         scope_project_id,
         Some(cwd.to_path_buf()),
         &state.agent_id,
@@ -338,6 +347,7 @@ async fn create_runtime_from_state(
         ..RuntimeHostConfig::default()
     };
     let services = build_runtime_services(
+        scope,
         scope_project_id,
         Some(cwd.to_path_buf()),
         &state.agent_id,
@@ -347,7 +357,7 @@ async fn create_runtime_from_state(
 
     LashRuntime::from_state(session_policy, host_config, services, state)
         .await
-        .map_err(|e| format!("failed to create shepherd scope runtime: {}", e))
+        .map_err(|e| format!("failed to create shepherd runtime: {}", e))
 }
 
 async fn emit_stream_event(
@@ -416,7 +426,9 @@ async fn run_scope_turn(
     cancel: CancellationToken,
 ) -> Result<(Vec<ShepherdMessageChunk>, String, String), String> {
     let focus = focus.or_else(|| match scope {
-        ShepherdScope::Project { focus, .. } | ShepherdScope::Thread { focus, .. } => focus.clone(),
+        ShepherdScope::Shepherd { focus, .. } | ShepherdScope::Thread { focus, .. } => {
+            focus.clone()
+        }
         _ => None,
     });
     let user_images_png = decode_png_images(&user_chunks)?;

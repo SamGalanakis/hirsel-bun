@@ -80,6 +80,8 @@ pub struct ForwardedCredentials {
     pub openrouter_api_key: Option<String>,
     /// API key for Tavily web search/fetch tools (TAVILY_API_KEY)
     pub tavily_api_key: Option<String>,
+    /// GitHub token for git/gh auth (GITHUB_TOKEN / GH_TOKEN)
+    pub github_token: Option<String>,
     /// Codex OAuth access token (CODEX_ACCESS_TOKEN)
     pub codex_access_token: Option<String>,
     /// Codex OAuth refresh token (CODEX_REFRESH_TOKEN)
@@ -101,6 +103,13 @@ pub enum CredentialSource {
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedTavilyApiKey {
     pub api_key: String,
+    pub source: CredentialSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedGithubToken {
+    pub token: String,
     pub source: CredentialSource,
 }
 
@@ -138,6 +147,7 @@ impl ForwardedCredentials {
         self.openai_api_key.is_some()
             || self.openrouter_api_key.is_some()
             || self.tavily_api_key.is_some()
+            || self.github_token.is_some()
             || self.codex_access_token.is_some()
             || self.codex_refresh_token.is_some()
             || self.codex_expires_at.is_some()
@@ -150,6 +160,7 @@ impl ForwardedCredentials {
             openai_api_key: self.openai_api_key.or(other.openai_api_key),
             openrouter_api_key: self.openrouter_api_key.or(other.openrouter_api_key),
             tavily_api_key: self.tavily_api_key.or(other.tavily_api_key),
+            github_token: self.github_token.or(other.github_token),
             codex_access_token: self.codex_access_token.or(other.codex_access_token),
             codex_refresh_token: self.codex_refresh_token.or(other.codex_refresh_token),
             codex_expires_at: self.codex_expires_at.or(other.codex_expires_at),
@@ -163,6 +174,8 @@ impl ForwardedCredentials {
             openai_api_key: read_env_credential("OPENAI_API_KEY"),
             openrouter_api_key: read_env_credential("OPENROUTER_API_KEY"),
             tavily_api_key: read_env_credential("TAVILY_API_KEY"),
+            github_token: read_env_credential("GITHUB_TOKEN")
+                .or_else(|| read_env_credential("GH_TOKEN")),
             codex_access_token: read_env_credential("CODEX_ACCESS_TOKEN"),
             codex_refresh_token: read_env_credential("CODEX_REFRESH_TOKEN"),
             codex_expires_at: read_env_credential("CODEX_EXPIRES_AT"),
@@ -199,6 +212,29 @@ pub async fn resolve_tavily_api_key() -> Option<ResolvedTavilyApiKey> {
 
     Some(ResolvedTavilyApiKey {
         api_key: trimmed.to_string(),
+        source: CredentialSource::Store,
+    })
+}
+
+pub async fn resolve_github_token() -> Option<ResolvedGithubToken> {
+    if let Some(token) =
+        read_env_credential("GITHUB_TOKEN").or_else(|| read_env_credential("GH_TOKEN"))
+    {
+        return Some(ResolvedGithubToken {
+            token,
+            source: CredentialSource::Env,
+        });
+    }
+
+    let store = CredentialStore::open().await.ok()?;
+    let token = store.load("github_token").await.ok()?;
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(ResolvedGithubToken {
+        token: trimmed.to_string(),
         source: CredentialSource::Store,
     })
 }
@@ -411,6 +447,7 @@ impl CredentialStore {
             openai_api_key: self.load("openai_api_key").await.ok(),
             openrouter_api_key: self.load("openrouter_api_key").await.ok(),
             tavily_api_key: self.load("tavily_api_key").await.ok(),
+            github_token: self.load("github_token").await.ok(),
             codex_access_token: self.load("codex_access_token").await.ok(),
             codex_refresh_token: self.load("codex_refresh_token").await.ok(),
             codex_expires_at: self.load("codex_expires_at").await.ok(),
@@ -430,6 +467,9 @@ impl CredentialStore {
         }
         if let Some(ref key) = creds.tavily_api_key {
             self.store("tavily_api_key", key).await?;
+        }
+        if let Some(ref token) = creds.github_token {
+            self.store("github_token", token).await?;
         }
         if let Some(ref token) = creds.codex_access_token {
             self.store("codex_access_token", token).await?;

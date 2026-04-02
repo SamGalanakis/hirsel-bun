@@ -11,6 +11,7 @@ use tracing::info;
 use super::types::{FileEntry, StartingPoint, WorkspaceInfo};
 use super::workspace::WorkspaceProvider;
 use crate::backend::config;
+use crate::backend::credentials::resolve_github_token;
 use crate::backend::error::{HirselError, HirselResult};
 use crate::backend::git::{clone_remote_with_branch, get_current_branch};
 
@@ -168,6 +169,14 @@ impl WorkspaceProvider for LocalWorkspaceProvider {
                         )));
                     }
                     fs::remove_dir_all(&workspace_dir)?;
+                }
+                if std::env::var("GITHUB_TOKEN").is_err() && std::env::var("GH_TOKEN").is_err() {
+                    if let Some(token) = resolve_github_token().await.map(|value| value.token) {
+                        unsafe {
+                            std::env::set_var("GITHUB_TOKEN", &token);
+                            std::env::set_var("GH_TOKEN", &token);
+                        }
+                    }
                 }
                 clone_remote_with_branch(url, &workspace_dir, branch.as_deref())
                     .map_err(|e| HirselError::GitOp(e.to_string()))?;

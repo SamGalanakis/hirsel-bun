@@ -1,4 +1,4 @@
-import { type Component, createMemo, For, Index, Show } from "solid-js";
+import { type Component, type JSX, createMemo, For, Index, Show } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { cn } from "@/lib/cn";
 import { renderMarkdown } from "@/lib/markdown";
@@ -159,22 +159,72 @@ function isFailed(status: string | undefined): boolean {
   return s === "failed" || s === "error";
 }
 
+/* ── SVG tool icons (12px display, 16px viewBox) ── */
+
+const svgBase = "h-3 w-3";
+const svgAttrs = { viewBox: "0 0 16 16", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" } as const;
+
+function IcoFile() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/></svg>;
+}
+function IcoSearch() {
+  return <svg class={svgBase} {...svgAttrs}><circle cx="7" cy="7" r="3.5"/><path d="M10 10l3 3"/></svg>;
+}
+function IcoList() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M3 4h10M3 8h10M3 12h6"/></svg>;
+}
+function IcoPatch() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M3 13l1-4L12 1l2 2-8 8z"/></svg>;
+}
+function IcoGlobe() {
+  return <svg class={svgBase} {...svgAttrs}><circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11"/><ellipse cx="8" cy="8" rx="2.5" ry="5.5"/></svg>;
+}
+function IcoLink() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M5 11L11 5M7 5h4v4"/></svg>;
+}
+function IcoThread() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M3 3h10v7H7l-3 3v-3H3z"/></svg>;
+}
+function IcoPencil() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M10 3l3 3-8 8H2v-3z"/></svg>;
+}
+function IcoChecklist() {
+  return <svg class={svgBase} {...svgAttrs}><rect x="2" y="2" width="12" height="12"/><path d="M5 8l2 2 4-4"/></svg>;
+}
+function IcoFrame() {
+  return <svg class={svgBase} {...svgAttrs}><rect x="2" y="2" width="12" height="12"/><path d="M2 6h12M6 2v12"/></svg>;
+}
+function IcoLayers() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M8 2l6 3.5L8 9 2 5.5z"/><path d="M2 8l6 3.5L14 8"/><path d="M2 11l6 3 6-3"/></svg>;
+}
+function IcoCircle() {
+  return <svg class={svgBase} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="4.5"/></svg>;
+}
+function IcoCompass() {
+  return <svg class={svgBase} {...svgAttrs}><circle cx="8" cy="8" r="5.5"/><path d="M10.5 5.5l-2 3-3 1.5 2-3z" fill="currentColor"/></svg>;
+}
+
+/* ── Shared styles ── */
+
+const toolTrigger = "flex w-full items-center gap-2 px-1.5 py-1 -mx-1.5 text-left text-muted-foreground transition-colors hover:bg-secondary/30";
+const toolPanel = "mt-1 ml-5 border border-border/40 bg-background/60 overflow-hidden";
+
 /* ── Expandable detail panel ── */
 
 const DetailPanel: Component<{ tool: ToolChunk; borderColor?: string }> = (props) => (
-  <div class={cn("ml-[22px] border-l pl-3 py-1 space-y-1", props.borderColor ?? "border-border/50")}>
+  <div class={cn(toolPanel, props.borderColor && `border-l-2 ${props.borderColor}`)}>
     <Show when={props.tool.input}>
-      <div>
+      <div class="px-2.5 pt-2">
         <span class="chassis-label">Input</span>
-        <pre class="mt-0.5 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+        <pre class="mt-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
           {formatJson(props.tool.input!)}
         </pre>
       </div>
     </Show>
     <Show when={props.tool.output}>
-      <div>
+      <div class={props.tool.input ? "border-t border-border/30 px-2.5 py-2" : "px-2.5 py-2"}>
         <span class="chassis-label">Output</span>
-        <pre class="mt-0.5 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+        <pre class="mt-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
           {formatJson(props.tool.output!)}
         </pre>
       </div>
@@ -210,20 +260,20 @@ const ShellBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => toggle(props.tool.id)}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", failed() ? "bg-signal-red" : statusDot(props.tool.status))} />
-        <span class={cn("font-mono text-[11px] shrink-0", failed() ? "text-signal-red" : "text-muted-foreground")}>$</span>
-        <span class="font-mono text-[11px] truncate">{snippet(cmd(), 80)}</span>
+        <span class={cn("font-mono text-xs shrink-0", failed() ? "text-signal-red" : "text-muted-foreground")}>$</span>
+        <span class="font-mono text-xs truncate">{snippet(cmd(), 80)}</span>
         <Show when={exitCode() !== null && exitCode() !== 0}>
-          <span class="font-mono text-[10px] text-signal-red shrink-0">exit {exitCode()}</span>
+          <span class="font-mono text-[11px] text-signal-red shrink-0">exit {exitCode()}</span>
         </Show>
-        <Chevron open={expanded()} />
+        <span class="ml-auto"><Chevron open={expanded()} /></span>
       </button>
       <Show when={expanded() && shellOutput()}>
-        <div class="ml-[22px] border-l border-border/50 pl-3 py-1">
-          <pre class="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+        <div class={cn(toolPanel, failed() && "border-l-2 border-l-signal-red/40")}>
+          <pre class="p-2.5 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
             {shellOutput()}
           </pre>
         </div>
@@ -267,27 +317,26 @@ const PatchBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => toggle(props.tool.id)}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] shrink-0 text-signal-green">&#9658;</span>
+        <span class="shrink-0 text-signal-green"><IcoPatch /></span>
         <span class="font-body text-xs">{summary()}</span>
-        <Chevron open={expanded()} />
+        <span class="ml-auto"><Chevron open={expanded()} /></span>
       </button>
       <Show when={expanded()}>
-        <div class="ml-[22px] border-l border-signal-green/30 pl-3 py-1 space-y-1">
+        <div class={cn(toolPanel, "border-l-2 border-l-signal-green/30")}>
           <For each={files()}>
             {(f) => (
-              <div>
-                <div class="flex items-center gap-2">
-                  <span class="font-mono text-[11px] text-foreground">{f.path}</span>
-                  <span class="font-mono text-[10px] text-signal-green">+{f.added}</span>
-                  <span class="font-mono text-[10px] text-signal-red">-{f.removed}</span>
-                  <span class="text-[10px] text-muted-foreground">{f.status}</span>
+              <div class="border-b border-border/30 last:border-b-0">
+                <div class="flex items-center gap-2 bg-secondary/30 px-2.5 py-1.5">
+                  <span class="font-mono text-[11px] font-medium text-foreground">{f.path}</span>
+                  <span class="font-mono text-[11px] text-signal-green">+{f.added}</span>
+                  <span class="font-mono text-[11px] text-signal-red">-{f.removed}</span>
                 </div>
                 <Show when={f.diff}>
-                  <pre class="mt-0.5 font-mono text-[11px] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                  <pre class="px-2.5 py-1.5 font-mono text-[11px] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
                     <For each={f.diff!.split("\n")}>
                       {(line) => {
                         const color = line.startsWith("+") ? "text-signal-green"
@@ -326,23 +375,26 @@ const WebSearchBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => toggle(props.tool.id)}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] shrink-0">&#9670;</span>
-        <span class="font-body text-xs">searched web for "{snippet(query(), 50)}"</span>
-        <Chevron open={expanded()} />
+        <span class="shrink-0"><IcoGlobe /></span>
+        <span class="font-body text-xs">searched "{snippet(query(), 50)}"</span>
+        <span class="ml-auto"><Chevron open={expanded()} /></span>
       </button>
       <Show when={expanded()}>
-        <div class="ml-[22px] border-l border-border/50 pl-3 py-1 space-y-0.5">
+        <div class={cn(toolPanel, "p-2.5 space-y-1")}>
           <Show when={answer()}>
-            <div class="text-[11px] text-muted-foreground">{snippet(answer()!, 120)}</div>
+            <div class="text-[11px] text-muted-foreground leading-relaxed">{snippet(answer()!, 200)}</div>
           </Show>
           <For each={results()}>
             {(r) => (
-              <div class="text-[11px] text-muted-foreground truncate">
-                {r.title ? snippet(r.title, 48) : ""}{r.title && r.url ? " · " : ""}{r.url ? displayUrl(r.url) : ""}
+              <div class="flex items-baseline gap-1.5 text-[11px]">
+                <span class="truncate text-foreground/80">{r.title ? snippet(r.title, 48) : ""}</span>
+                <Show when={r.url}>
+                  <span class="shrink-0 font-mono text-muted-foreground/50">{displayUrl(r.url)}</span>
+                </Show>
               </div>
             )}
           </For>
@@ -369,19 +421,19 @@ const FetchBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => toggle(props.tool.id)}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] shrink-0">&#8599;</span>
+        <span class="shrink-0"><IcoLink /></span>
         <span class="font-body text-xs">fetch {displayUrl(url())}</span>
         <Show when={text()}>
-          <Chevron open={expanded()} />
+          <span class="ml-auto"><Chevron open={expanded()} /></span>
         </Show>
       </button>
       <Show when={expanded() && text()}>
-        <div class="ml-[22px] border-l border-border/50 pl-3 py-1">
-          <pre class="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+        <div class={toolPanel}>
+          <pre class="p-2.5 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
             {snippet(text()!, 2000)}
           </pre>
         </div>
@@ -393,7 +445,7 @@ const FetchBlock: Component<{ tool: ToolChunk }> = (props) => {
 /* ── Thread tools ── */
 
 const ThreadBlock: Component<{ tool: ToolChunk }> = (props) => {
-  const m = () => TOOL_META[props.tool.title] ?? { icon: "⚙", label: props.tool.title };
+  const m = () => TOOL_META[props.tool.title] ?? { icon: IcoCircle, label: props.tool.title };
   const expanded = () => isExpanded(props.tool.id);
   const hasDetail = () => !!(props.tool.input || props.tool.output);
   const out = () => parseOutput(props.tool);
@@ -405,25 +457,25 @@ const ThreadBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left transition-colors text-signal-blue/80 hover:text-foreground"
+        class={cn(toolTrigger, "text-signal-blue/80 hover:text-foreground")}
         onClick={() => hasDetail() && toggle(props.tool.id)}
         disabled={!hasDetail()}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] w-3.5 text-center shrink-0">{m().icon}</span>
+        <span class="flex w-3.5 items-center justify-center shrink-0">{m().icon()}</span>
         <span class="font-body text-xs">{m().label}</span>
         <Show when={threadTitle()}>
           <span class="font-medium text-foreground truncate">{threadTitle()}</span>
         </Show>
         <Show when={threadStatus()}>
-          <span class="font-mono text-[10px] text-muted-foreground">{threadStatus()}</span>
+          <span class="font-mono text-[11px] text-muted-foreground">{threadStatus()}</span>
         </Show>
         <Show when={hasDetail()}>
-          <Chevron open={expanded()} />
+          <span class="ml-auto"><Chevron open={expanded()} /></span>
         </Show>
       </button>
       <Show when={expanded()}>
-        <DetailPanel tool={props.tool} borderColor="border-signal-blue/20" />
+        <DetailPanel tool={props.tool} borderColor="border-l-signal-blue/20" />
       </Show>
     </div>
   );
@@ -440,19 +492,19 @@ const CanvasBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => hasDetail() && toggle(props.tool.id)}
         disabled={!hasDetail()}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] shrink-0">&#9678;</span>
+        <span class="shrink-0"><IcoFrame /></span>
         <span class="font-body text-xs">{isUpdate() ? "Updated canvas" : "Read canvas"}</span>
         <Show when={hasDetail()}>
-          <Chevron open={expanded()} />
+          <span class="ml-auto"><Chevron open={expanded()} /></span>
         </Show>
       </button>
       <Show when={expanded()}>
-        <DetailPanel tool={props.tool} borderColor="border-signal-green/30" />
+        <DetailPanel tool={props.tool} borderColor="border-l-signal-green/30" />
       </Show>
     </div>
   );
@@ -469,15 +521,15 @@ const ContextBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => hasDetail() && toggle(props.tool.id)}
         disabled={!hasDetail()}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] shrink-0">&#8801;</span>
+        <span class="shrink-0"><IcoLayers /></span>
         <span class="font-body text-xs">{isUpdate() ? "Updated retained context" : "Read retained context"}</span>
         <Show when={hasDetail()}>
-          <Chevron open={expanded()} />
+          <span class="ml-auto"><Chevron open={expanded()} /></span>
         </Show>
       </button>
       <Show when={expanded()}>
@@ -498,15 +550,15 @@ const GenericBlock: Component<{ tool: ToolChunk }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => hasDetail() && toggle(props.tool.id)}
         disabled={!hasDetail()}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] shrink-0">&#9675;</span>
+        <span class="shrink-0"><IcoCircle /></span>
         <span class="font-body text-xs">{label()}</span>
         <Show when={hasDetail()}>
-          <Chevron open={expanded()} />
+          <span class="ml-auto"><Chevron open={expanded()} /></span>
         </Show>
       </button>
       <Show when={expanded()}>
@@ -518,22 +570,22 @@ const GenericBlock: Component<{ tool: ToolChunk }> = (props) => {
 
 /* ── Tool metadata (for exploration + thread blocks) ── */
 
-const TOOL_META: Record<string, { icon: string; label: string }> = {
-  list_threads:       { icon: "◫", label: "List threads" },
-  create_thread:      { icon: "+", label: "Create thread" },
-  rename_thread:      { icon: "✎", label: "Rename thread" },
-  set_thread_status:  { icon: "◉", label: "Set status" },
-  archive_thread:     { icon: "⊟", label: "Archive thread" },
-  delete_thread:      { icon: "×", label: "Delete thread" },
-  send_thread_message:{ icon: "↗", label: "Message thread" },
-  read_thread_updates:{ icon: "↓", label: "Read thread" },
-  list_workspace:     { icon: "⌸", label: "List" },
-  read_workspace_file:{ icon: "◻", label: "Read" },
-  grep_workspace:     { icon: "⌕", label: "Search" },
-  read_file:          { icon: "◻", label: "Read" },
-  grep:               { icon: "⌕", label: "Search" },
-  glob:               { icon: "⌕", label: "Glob" },
-  ls:                 { icon: "⌸", label: "List" },
+const TOOL_META: Record<string, { icon: () => JSX.Element; label: string }> = {
+  list_threads:       { icon: IcoThread, label: "List threads" },
+  create_thread:      { icon: IcoThread, label: "Create thread" },
+  rename_thread:      { icon: IcoPencil, label: "Rename thread" },
+  set_thread_status:  { icon: IcoThread, label: "Set status" },
+  archive_thread:     { icon: IcoThread, label: "Archive thread" },
+  delete_thread:      { icon: IcoThread, label: "Delete thread" },
+  send_thread_message:{ icon: IcoThread, label: "Message thread" },
+  read_thread_updates:{ icon: IcoThread, label: "Read thread" },
+  list_workspace:     { icon: IcoList,   label: "List" },
+  read_workspace_file:{ icon: IcoFile,   label: "Read" },
+  grep_workspace:     { icon: IcoSearch, label: "Search" },
+  read_file:          { icon: IcoFile,   label: "Read" },
+  grep:               { icon: IcoSearch, label: "Search" },
+  glob:               { icon: IcoSearch, label: "Glob" },
+  ls:                 { icon: IcoList,   label: "List" },
 };
 
 /* ── Exploration group: merged consecutive reads/greps/lists ── */
@@ -579,16 +631,16 @@ const ExplorationGroup: Component<{ tools: ToolChunk[] }> = (props) => {
     <div class="text-xs">
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-0.5 text-left text-muted-foreground hover:text-foreground transition-colors"
+        class={cn(toolTrigger, "hover:text-foreground")}
         onClick={() => toggle(groupId())}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", allDone() ? "bg-signal-green" : "bg-signal-amber animate-pulse-dot")} />
-        <span class="font-mono text-[11px] w-3.5 text-center shrink-0">&#9671;</span>
+        <span class="flex w-3.5 items-center justify-center shrink-0"><IcoCompass /></span>
         <span class="font-body text-xs truncate">{summary()}</span>
-        <Chevron open={expanded()} />
+        <span class="ml-auto"><Chevron open={expanded()} /></span>
       </button>
       <Show when={expanded()}>
-        <div class="ml-[22px] border-l border-border/50 pl-3 py-0.5 space-y-0">
+        <div class={cn(toolPanel, "py-0.5")}>
           <For each={props.tools}>
             {(tool) => <ExplorationLine tool={tool} />}
           </For>
@@ -599,7 +651,7 @@ const ExplorationGroup: Component<{ tools: ToolChunk[] }> = (props) => {
 };
 
 const ExplorationLine: Component<{ tool: ToolChunk }> = (props) => {
-  const m = () => TOOL_META[props.tool.title] ?? { icon: "◻", label: props.tool.title };
+  const m = () => TOOL_META[props.tool.title] ?? { icon: IcoFile, label: props.tool.title };
   const inp = () => parseInput(props.tool);
   const subj = () => inp()?.path ?? inp()?.pattern ?? null;
   const expanded = () => isExpanded(props.tool.id);
@@ -609,21 +661,27 @@ const ExplorationLine: Component<{ tool: ToolChunk }> = (props) => {
     <div>
       <button
         type="button"
-        class="flex w-full items-center gap-1.5 py-px text-left text-muted-foreground hover:text-foreground transition-colors text-[11px]"
+        class="flex w-full items-center gap-2 px-2.5 py-1 text-left text-muted-foreground transition-colors hover:bg-secondary/30 text-xs"
         onClick={() => hasDetail() && toggle(props.tool.id)}
         disabled={!hasDetail()}
       >
-        <span class="font-mono w-3.5 text-center shrink-0">{m().icon}</span>
-        <span class="font-body">{m().label}</span>
+        <span class="flex w-3.5 items-center justify-center shrink-0 text-muted-foreground/60">{m().icon()}</span>
+        <span class="font-body text-xs">{m().label}</span>
         <Show when={subj()}>
-          <span class="font-mono text-muted-foreground truncate">{subj()}</span>
+          <span class="font-mono text-muted-foreground/60 truncate">{subj()}</span>
         </Show>
         <Show when={hasDetail()}>
-          <Chevron open={expanded()} />
+          <span class="ml-auto"><Chevron open={expanded()} /></span>
         </Show>
       </button>
       <Show when={expanded()}>
-        <DetailPanel tool={props.tool} />
+        <div class="mx-2 mb-1 border border-border/30 bg-background/40 overflow-hidden">
+          <Show when={props.tool.output}>
+            <pre class="p-2 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+              {formatJson(props.tool.output!)}
+            </pre>
+          </Show>
+        </div>
       </Show>
     </div>
   );
@@ -664,13 +722,13 @@ const PlanBlock: Component<{ tool: ToolChunk }> = (props) => {
 
   return (
     <div class="text-xs">
-      <div class="flex items-center gap-1.5 py-0.5 text-muted-foreground">
+      <div class={cn(toolTrigger, "cursor-default")}>
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="font-mono text-[11px] shrink-0">&#9744;</span>
+        <span class="shrink-0"><IcoChecklist /></span>
         <span class="font-body text-xs">Plan updated</span>
-        <span class="font-mono text-[10px]">{completed()}/{total()}</span>
+        <span class="font-mono text-[11px] text-muted-foreground/60">{completed()}/{total()}</span>
         <Show when={activeStep()}>
-          <span class="text-[11px] text-foreground truncate">
+          <span class="text-xs text-foreground truncate">
             — {activeStep()!.step}
           </span>
         </Show>
@@ -716,22 +774,39 @@ const ChatMessage: Component<{ role: string; chunksJson: string; timestamp: stri
   const isUser = () => props.role === "user";
 
   return (
-    <div class={cn("group relative px-4 py-3", isUser() && "bg-muted/40", !isUser() && "border-l-2 border-signal-amber")}>
+    <div
+      class={cn(
+        "group relative px-4 py-3 shadow-sm transition-colors",
+        isUser() ? "ml-10 bg-foreground text-background" : "border border-border bg-card",
+      )}
+    >
       <div class="flex items-baseline gap-2 mb-1">
-        <span class="chassis-label">{isUser() ? "you" : "shepherd"}</span>
-        <span class={cn("text-[10px] text-muted-foreground", isUser() && "ml-auto")}>{formatTime(props.timestamp)}</span>
+        <span class={cn("chassis-label", isUser() && "text-background/65")}>
+          {isUser() ? "you" : "shepherd"}
+        </span>
+        <span class={cn("text-[11px] text-muted-foreground", isUser() ? "ml-auto text-background/50" : "")}>
+          {formatTime(props.timestamp)}
+        </span>
       </div>
-      <div class="space-y-0.5">
+      <div class="space-y-1">
         <Index each={blocks()}>
           {(block) => {
             const b = block();
             switch (b.kind) {
               case "text":
-                return <div class="markdown-body text-sm text-foreground leading-relaxed" innerHTML={renderMarkdown(b.content)} />;
+                return (
+                  <div
+                    class={cn(
+                      "markdown-body text-sm leading-relaxed",
+                      isUser() ? "text-background" : "text-foreground",
+                    )}
+                    innerHTML={renderMarkdown(b.content)}
+                  />
+                );
               case "thinking":
                 return (
                   <details class="group/think">
-                    <summary class="flex items-center gap-1.5 cursor-pointer text-xs text-muted-foreground hover:text-foreground transition-colors py-0.5">
+                    <summary class="flex cursor-pointer items-center gap-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
                       <svg class="h-3 w-3 transition-transform group-open/think:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="9 6 15 12 9 18" />
                       </svg>

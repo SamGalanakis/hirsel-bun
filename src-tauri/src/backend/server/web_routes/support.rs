@@ -220,8 +220,8 @@ pub(super) async fn load_project_page_state(project_id: i64) -> Result<ProjectPa
     for item in thread_panels {
         resolved_threads.push(item.await?);
     }
-    let history = shepherd_runtime::get_project_conversation(project_id).await?;
-    let activity = shepherd_runtime::get_project_activity(project_id).await?;
+    let history = shepherd_runtime::get_shepherd_conversation(project_id).await?;
+    let activity = shepherd_runtime::get_shepherd_activity(project_id).await?;
 
     Ok(ProjectPageState {
         projects,

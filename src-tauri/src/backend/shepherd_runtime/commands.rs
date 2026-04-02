@@ -22,10 +22,11 @@ use super::sandbox::{
 use super::session::{ShepherdScopeSession, ShepherdSessionStore};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::backend::app::ResultExt;
+use crate::backend::git::{promote_thread_checkout, GitError};
 use crate::backend::ProjectStore;
 use crate::backend::{
-    prepare_thread_checkout, ShepherdChatMessage, ShepherdChatStore, ShepherdLiveTurn,
-    ShepherdThread, ShepherdThreadStore,
+    ensure_project_workspace, prepare_thread_checkout, ShepherdChatMessage, ShepherdChatStore,
+    ShepherdLiveTurn, ShepherdThread, ShepherdThreadStore,
 };
 
 const PROJECT_SURVEY_THREAD_TITLE: &str = "Project survey";
@@ -66,6 +67,16 @@ pub struct SendShepherdMessageResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PromoteThreadResponse {
+    pub promoted: bool,
+    pub thread_id: String,
+    pub central_head: String,
+    pub changed_files: Vec<String>,
+    pub env_changed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ShepherdScopeActivity {
     pub session: Option<ShepherdScopeSession>,
     pub live_turn: Option<ShepherdLiveTurn>,
@@ -75,9 +86,9 @@ pub struct ShepherdScopeActivity {
 fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
     match scope {
         ShepherdScope::General => (None, None),
-        ShepherdScope::Project { project_id, .. } => (
+        ShepherdScope::Shepherd { project_id, .. } => (
             Some(*project_id),
-            Some(ShepherdChatStore::project_scope_key(*project_id)),
+            Some(ShepherdChatStore::shepherd_scope_key(*project_id)),
         ),
         ShepherdScope::Thread {
             project_id,
@@ -506,13 +517,13 @@ pub async fn send_scope_message(
     dispatch_scope_message_local(scope, user_chunks, focus).await
 }
 
-pub async fn send_project_message(
+pub async fn send_shepherd_message(
     project_id: i64,
     content: Option<String>,
     chunks: Option<Vec<ShepherdMessageChunk>>,
 ) -> Result<SendShepherdMessageResponse, String> {
     send_scope_message(
-        ShepherdScope::Project {
+        ShepherdScope::Shepherd {
             project_id,
             workspace_path: None,
             focus: None,
@@ -524,8 +535,8 @@ pub async fn send_project_message(
     .await
 }
 
-pub async fn prepare_project_scope_session(project_id: i64) -> Result<(), String> {
-    let scope = ShepherdScope::Project {
+pub async fn prepare_shepherd_session(project_id: i64) -> Result<(), String> {
+    let scope = ShepherdScope::Shepherd {
         project_id,
         workspace_path: None,
         focus: None,
@@ -600,6 +611,23 @@ pub async fn create_thread(
     create_thread_local(project_id, title, objective, &summary).await
 }
 
+pub async fn promote_thread(
+    project_id: i64,
+    thread_id: &str,
+) -> Result<PromoteThreadResponse, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        let payload = send_server_control_request(&ServerControlRequest::PromoteThread {
+            project_id,
+            thread_id: thread_id.to_string(),
+        })
+        .await?
+        .ok_or_else(|| "server control reply did not include a promotion payload".to_string())?;
+        return serde_json::from_value(payload)
+            .map_err(|error| format!("failed to decode promotion response: {}", error));
+    }
+    promote_thread_local(project_id, thread_id).await
+}
+
 pub async fn get_project_threads(project_id: i64) -> Result<Vec<ShepherdThread>, String> {
     let store = ShepherdThreadStore::open()
         .await
@@ -610,9 +638,11 @@ pub async fn get_project_threads(project_id: i64) -> Result<Vec<ShepherdThread>,
         .map_err(|e| format!("failed to load project threads: {}", e))
 }
 
-pub async fn get_project_conversation(project_id: i64) -> Result<Vec<ShepherdChatMessage>, String> {
+pub async fn get_shepherd_conversation(
+    project_id: i64,
+) -> Result<Vec<ShepherdChatMessage>, String> {
     load_scope_messages(
-        &ShepherdScope::Project {
+        &ShepherdScope::Shepherd {
             project_id,
             workspace_path: None,
             focus: None,
@@ -645,8 +675,8 @@ pub async fn get_scope_activity(scope: ShepherdScope) -> Result<ShepherdScopeAct
     scope_activity(&scope).await
 }
 
-pub async fn get_project_activity(project_id: i64) -> Result<ShepherdScopeActivity, String> {
-    scope_activity(&ShepherdScope::Project {
+pub async fn get_shepherd_activity(project_id: i64) -> Result<ShepherdScopeActivity, String> {
+    scope_activity(&ShepherdScope::Shepherd {
         project_id,
         workspace_path: None,
         focus: None,
@@ -675,7 +705,7 @@ pub async fn get_shepherd_history(
 ) -> Result<Vec<ShepherdChatMessage>, String> {
     let messages = load_scope_messages(&scope, limit).await?;
     Ok(match scope {
-        ShepherdScope::Project { .. } | ShepherdScope::Thread { .. } => messages,
+        ShepherdScope::Shepherd { .. } | ShepherdScope::Thread { .. } => messages,
         _ => messages.into_iter().take(limit).collect(),
     })
 }
@@ -688,7 +718,7 @@ fn project_survey_objective(project_name: &str) -> String {
 
 fn project_survey_prompt(project_name: &str) -> String {
     format!(
-        "Survey the `{project_name}` codebase from your shepherd container. Read the workspace, refresh the canvas HTML artifact if it is stale or incomplete, refresh retained context if it is stale, and summarize the architecture, pressure points, and next useful threads. Use `update_plan` so the thread card stays legible."
+        "Survey the `{project_name}` codebase from your isolated checkout. Read the workspace, refresh the canvas HTML artifact if it is stale or incomplete, refresh retained context if it is stale, and summarize the architecture, pressure points, and next useful threads."
     )
 }
 
@@ -797,6 +827,87 @@ pub async fn launch_project_survey_thread(project_id: i64) -> Result<ShepherdThr
     Ok(thread)
 }
 
+async fn promote_thread_local(
+    project_id: i64,
+    thread_id: &str,
+) -> Result<PromoteThreadResponse, String> {
+    let thread_store = ShepherdThreadStore::open()
+        .await
+        .map_err(|error| format!("failed to open shepherd thread store: {}", error))?;
+    let thread = thread_store
+        .get_thread(thread_id)
+        .await
+        .map_err(|error| format!("failed to load thread {}: {}", thread_id, error))?;
+    if thread.project_id != project_id {
+        return Err(format!(
+            "thread {} does not belong to project {}",
+            thread_id, project_id
+        ));
+    }
+    let activity = get_thread_activity(project_id, &thread.id, &thread.title).await?;
+    if activity.has_active_turn {
+        return Err(format!(
+            "thread '{}' is still running; wait for it to finish before promoting",
+            thread.title
+        ));
+    }
+
+    let checkout_path = thread
+        .workspace_path
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("thread {} has no workspace path", thread_id))?;
+    let checkout_name = thread
+        .checkout_name
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("thread {} has no checkout name", thread_id))?;
+    let workspace = ensure_project_workspace(project_id).await?;
+
+    let promote = promote_thread_checkout(
+        workspace.central_dir.as_path(),
+        checkout_path.as_path(),
+        checkout_name,
+    )
+    .map_err(|error| match error {
+        GitError::MergeConflict(files) => {
+            format!("promotion hit merge conflicts in: {}", files.join(", "))
+        }
+        other => other.to_string(),
+    })?;
+
+    if promote.promoted {
+        let summary = if promote.changed_files.is_empty() {
+            "Promoted to central.".to_string()
+        } else {
+            format!(
+                "Promoted to central: {}",
+                truncate_copy(&promote.changed_files.join(", "), 180)
+            )
+        };
+        let _ = thread_store
+            .update_thread(
+                &thread.id,
+                None,
+                None,
+                Some(&summary),
+                Some("done"),
+                None,
+                None,
+            )
+            .await;
+    }
+
+    Ok(PromoteThreadResponse {
+        promoted: promote.promoted,
+        thread_id: thread.id,
+        central_head: promote.central_head,
+        changed_files: promote.changed_files,
+        env_changed: promote.env_changed,
+    })
+}
+
 async fn archive_thread_local(project_id: i64, thread_id: &str) -> Result<(), String> {
     let store = ShepherdThreadStore::open()
         .await
@@ -896,6 +1007,15 @@ async fn handle_server_control_request(
         } => {
             archive_thread_local(project_id, &thread_id).await?;
             Ok(None)
+        }
+        ServerControlRequest::PromoteThread {
+            project_id,
+            thread_id,
+        } => {
+            let response = promote_thread_local(project_id, &thread_id).await?;
+            Ok(Some(serde_json::to_value(response).map_err(|error| {
+                format!("failed to encode promotion response: {}", error)
+            })?))
         }
         ServerControlRequest::DeleteThread {
             project_id,

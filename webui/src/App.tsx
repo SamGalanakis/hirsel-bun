@@ -1,12 +1,11 @@
 import { type Component, createSignal, onCleanup, onMount, Show } from "solid-js";
 import ConnectPage from "@/pages/ConnectPage";
-import ProjectPage from "@/pages/ProjectPage";
-import ThreadDetailPage from "@/pages/ThreadDetailPage";
+import WorkspacePage from "@/pages/WorkspacePage";
 import SettingsPage from "@/pages/SettingsPage";
 import NewProjectPage from "@/pages/NewProjectPage";
 import { listProjects } from "@/lib/api";
 
-type Route =
+type ScreenState =
   | { page: "connect" }
   | { page: "project"; projectId: number }
   | { page: "thread"; projectId: number; threadId: string }
@@ -14,7 +13,7 @@ type Route =
   | { page: "new" }
   | { page: "loading" };
 
-function parseHash(hash: string): Route | null {
+function parseHash(hash: string): ScreenState | null {
   const h = hash.replace(/^#\/?/, "");
 
   if (h === "connect") return { page: "connect" };
@@ -36,12 +35,12 @@ function parseHash(hash: string): Route | null {
 }
 
 const App: Component = () => {
-  const [route, setRoute] = createSignal<Route>({ page: "loading" });
+  const [screen, setScreen] = createSignal<ScreenState>({ page: "loading" });
 
   const navigate = () => {
     const parsed = parseHash(window.location.hash);
     if (parsed) {
-      setRoute(parsed);
+      setScreen(parsed);
     } else {
       // Default: try to redirect to first project
       listProjects()
@@ -66,30 +65,30 @@ const App: Component = () => {
 
   return (
     <div class="fixed inset-0 flex min-h-0 flex-col overflow-hidden">
-      <Show when={route().page === "connect"}>
+      <Show when={screen().page === "connect"}>
         <ConnectPage />
       </Show>
 
-      <Show when={route().page === "project"}>
-        <ProjectPage projectId={(route() as { projectId: number }).projectId} />
+      <Show when={screen().page === "project"}>
+        <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
       </Show>
 
-      <Show when={route().page === "thread"}>
-        <ThreadDetailPage
-          projectId={(route() as { projectId: number }).projectId}
-          threadId={(route() as { threadId: string }).threadId}
+      <Show when={screen().page === "thread"}>
+        <WorkspacePage
+          projectId={(screen() as { projectId: number }).projectId}
+          threadId={(screen() as { threadId: string }).threadId}
         />
       </Show>
 
-      <Show when={route().page === "settings"}>
+      <Show when={screen().page === "settings"}>
         <SettingsPage />
       </Show>
 
-      <Show when={route().page === "new"}>
+      <Show when={screen().page === "new"}>
         <NewProjectPage />
       </Show>
 
-      <Show when={route().page === "loading"}>
+      <Show when={screen().page === "loading"}>
         <div class="flex flex-1 items-center justify-center bg-background">
           <span class="text-muted-foreground text-xs font-mono">loading...</span>
         </div>

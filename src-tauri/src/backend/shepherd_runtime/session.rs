@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS shepherd_sessions (
     scope_key TEXT NOT NULL PRIMARY KEY,
     scope_json TEXT NOT NULL,
     workspace_path TEXT,
+    env_fingerprint TEXT,
     status TEXT NOT NULL,
     container_name TEXT,
     socket_path TEXT NOT NULL,
@@ -30,6 +31,19 @@ async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     SCHEMA_INIT
         .get_or_try_init(|| async {
             sqlx::raw_sql(SCHEMA).execute(pool).await?;
+            if let Err(error) =
+                sqlx::query("ALTER TABLE shepherd_sessions ADD COLUMN env_fingerprint TEXT")
+                    .execute(pool)
+                    .await
+            {
+                let duplicate_column = error
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("duplicate column name");
+                if !duplicate_column {
+                    return Err(error);
+                }
+            }
             Ok::<(), sqlx::Error>(())
         })
         .await?;
@@ -43,6 +57,7 @@ pub struct ShepherdScopeSession {
     pub scope_key: String,
     pub scope_json: String,
     pub workspace_path: Option<String>,
+    pub env_fingerprint: Option<String>,
     pub status: String,
     pub container_name: Option<String>,
     pub socket_path: String,
@@ -80,6 +95,7 @@ impl ShepherdSessionStore {
             scope_key: row.get("scope_key"),
             scope_json: row.get("scope_json"),
             workspace_path: row.get("workspace_path"),
+            env_fingerprint: row.get("env_fingerprint"),
             status: row.get("status"),
             container_name: row.get("container_name"),
             socket_path: row.get("socket_path"),
@@ -98,7 +114,7 @@ impl ShepherdSessionStore {
         let pool = self.pool().await;
         let row = sqlx::query(
             "SELECT project_id, scope_key, scope_json, workspace_path, status, container_name,
-                    socket_path, bootstrap_flake, last_error, created_at, updated_at, last_seen_at
+                    env_fingerprint, socket_path, bootstrap_flake, last_error, created_at, updated_at, last_seen_at
              FROM shepherd_sessions
              WHERE scope_key = ?",
         )
@@ -114,6 +130,7 @@ impl ShepherdSessionStore {
         scope_key: &str,
         scope_json: &str,
         workspace_path: Option<&str>,
+        env_fingerprint: Option<&str>,
         socket_path: &str,
         bootstrap_flake: bool,
         container_name: Option<&str>,
@@ -124,14 +141,15 @@ impl ShepherdSessionStore {
         let now = utc_now();
         sqlx::query(
             "INSERT INTO shepherd_sessions (
-                project_id, scope_key, scope_json, workspace_path, status, container_name,
-                socket_path, bootstrap_flake, last_error, created_at, updated_at, last_seen_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                project_id, scope_key, scope_json, workspace_path, env_fingerprint, status,
+                container_name, socket_path, bootstrap_flake, last_error, created_at, updated_at, last_seen_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
              ON CONFLICT(scope_key)
              DO UPDATE SET
                 project_id = excluded.project_id,
                 scope_json = excluded.scope_json,
                 workspace_path = excluded.workspace_path,
+                env_fingerprint = excluded.env_fingerprint,
                 status = excluded.status,
                 container_name = excluded.container_name,
                 socket_path = excluded.socket_path,
@@ -143,6 +161,7 @@ impl ShepherdSessionStore {
         .bind(scope_key)
         .bind(scope_json)
         .bind(workspace_path)
+        .bind(env_fingerprint)
         .bind(status)
         .bind(container_name)
         .bind(socket_path)

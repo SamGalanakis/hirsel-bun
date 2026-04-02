@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 
 use super::commands::{
     archive_thread, create_thread, delete_thread, get_thread_activity, get_thread_conversation,
-    send_scope_message,
+    promote_thread, send_scope_message,
 };
 use super::types::{ShepherdMessageChunk, ShepherdScope};
 
@@ -50,14 +50,14 @@ macro_rules! tool_definition {
     };
 }
 
-pub(super) struct ShepherdToolProvider {
+struct ToolContext {
     app: Option<DesktopAppHandle>,
     default_project_id: Option<i64>,
     workspace_root: Option<PathBuf>,
 }
 
-impl ShepherdToolProvider {
-    pub(super) fn new(
+impl ToolContext {
+    fn new(
         app: Option<DesktopAppHandle>,
         default_project_id: Option<i64>,
         workspace_root: Option<PathBuf>,
@@ -82,7 +82,7 @@ impl ShepherdToolProvider {
             return Ok(project_id);
         }
         self.default_project_id
-            .ok_or_else(|| "project_id is required outside project scope".to_string())
+            .ok_or_else(|| "project_id is required outside the shepherd session".to_string())
     }
 
     fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -519,6 +519,25 @@ impl ShepherdToolProvider {
         }
     }
 
+    async fn promote_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let thread = match self.resolve_thread(project_id, args).await {
+            Ok(thread) => thread,
+            Err(error) => return error,
+        };
+        match promote_thread(project_id, &thread.id).await {
+            Ok(result) => ToolResult::ok(json!({
+                "thread": thread,
+                "promotion": result,
+                "message": if result.promoted {
+                    format!("Promoted thread '{}' into central.", thread.title)
+                } else {
+                    format!("Thread '{}' had no new workspace changes to promote.", thread.title)
+                },
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error })),
+        }
+    }
+
     async fn delete_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -724,6 +743,24 @@ impl ShepherdToolProvider {
     }
 }
 
+pub(super) struct ShepherdToolProvider {
+    common: ToolContext,
+}
+
+impl ShepherdToolProvider {
+    pub(super) fn new(
+        app: Option<DesktopAppHandle>,
+        default_project_id: Option<i64>,
+        workspace_root: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            common: ToolContext::new(app, default_project_id, workspace_root),
+        }
+    }
+}
+
+pub(super) struct NoopToolProvider;
+
 #[async_trait::async_trait]
 impl ToolProvider for ShepherdToolProvider {
     fn definitions(&self) -> Vec<ToolDefinition> {
@@ -836,7 +873,21 @@ impl ToolProvider for ShepherdToolProvider {
             },
         ];
 
-        if self.workspace_root.is_some() {
+        definitions.push(tool_definition! {
+            name: "promote_thread".to_string(),
+            description: "Merge a completed thread checkout back into the central checkout.".to_string(),
+            params: vec![
+                ToolParam::optional("thread_id", "str"),
+                ToolParam::optional("title", "str"),
+                ToolParam::optional("project_id", "int"),
+            ],
+            returns: "dict".to_string(),
+            examples: vec![],
+            enabled: true,
+            injected: true,
+        });
+
+        if self.common.workspace_root.is_some() {
             definitions.extend([
                 tool_definition! {
                     name: "list_workspace".to_string(),
@@ -884,7 +935,7 @@ impl ToolProvider for ShepherdToolProvider {
         definitions.extend([
             tool_definition! {
                 name: "read_project_focus_view".to_string(),
-                description: "Read the current project-focus HTML artifact for this project.".to_string(),
+                description: "Read the current project canvas HTML fragment for this project.".to_string(),
                 params: vec![ToolParam::optional("project_id", "int")],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -893,7 +944,7 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "read_canvas".to_string(),
-                description: "Read the current canvas HTML artifact for this project.".to_string(),
+                description: "Read the current project canvas HTML fragment for this project.".to_string(),
                 params: vec![ToolParam::optional("project_id", "int")],
                 returns: "dict".to_string(),
                 examples: vec![],
@@ -902,7 +953,7 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "update_project_focus_view".to_string(),
-                description: "Replace the project-focus HTML artifact for this project with a full HTML document.".to_string(),
+                description: "Replace the current project canvas HTML fragment for this project.".to_string(),
                 params: vec![
                     ToolParam::typed("html", "str"),
                     ToolParam::optional("source", "str"),
@@ -915,7 +966,7 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "update_canvas".to_string(),
-                description: "Replace the current canvas HTML artifact for this project with a full HTML document.".to_string(),
+                description: "Replace the current project canvas HTML fragment for this project.".to_string(),
                 params: vec![
                     ToolParam::typed("html", "str"),
                     ToolParam::optional("source", "str"),
@@ -954,34 +1005,53 @@ impl ToolProvider for ShepherdToolProvider {
     }
 
     async fn execute(&self, name: &str, args: &Value) -> ToolResult {
-        let project_id = match self.resolve_project_id(args) {
+        let project_id = match self.common.resolve_project_id(args) {
             Ok(project_id) => project_id,
             Err(error) => return ToolResult::err(json!({ "error": error })),
         };
 
         match name {
-            "list_threads" => self.list_threads_tool(project_id).await,
-            "create_thread" => self.create_thread_tool(project_id, args).await,
-            "rename_thread" => self.rename_thread_tool(project_id, args).await,
-            "set_thread_status" => self.set_thread_status_tool(project_id, args).await,
-            "archive_thread" => self.archive_thread_tool(project_id, args).await,
-            "delete_thread" => self.delete_thread_tool(project_id, args).await,
-            "send_thread_message" => self.send_thread_message_tool(project_id, args).await,
-            "read_thread_updates" => self.read_thread_updates_tool(project_id, args).await,
+            "list_threads" => self.common.list_threads_tool(project_id).await,
+            "create_thread" => self.common.create_thread_tool(project_id, args).await,
+            "rename_thread" => self.common.rename_thread_tool(project_id, args).await,
+            "set_thread_status" => self.common.set_thread_status_tool(project_id, args).await,
+            "archive_thread" => self.common.archive_thread_tool(project_id, args).await,
+            "promote_thread" => self.common.promote_thread_tool(project_id, args).await,
+            "delete_thread" => self.common.delete_thread_tool(project_id, args).await,
+            "send_thread_message" => self.common.send_thread_message_tool(project_id, args).await,
+            "read_thread_updates" => self.common.read_thread_updates_tool(project_id, args).await,
             "read_project_focus_view" | "read_canvas" => {
-                self.read_project_focus_view(project_id).await
+                self.common.read_project_focus_view(project_id).await
             }
             "update_project_focus_view" | "update_canvas" => {
-                self.update_project_focus_view(project_id, args).await
+                self.common
+                    .update_project_focus_view(project_id, args)
+                    .await
             }
-            "read_project_retained_context" => self.read_project_retained_context(project_id).await,
+            "read_project_retained_context" => {
+                self.common.read_project_retained_context(project_id).await
+            }
             "update_project_retained_context" => {
-                self.update_project_retained_context(project_id, args).await
+                self.common
+                    .update_project_retained_context(project_id, args)
+                    .await
             }
-            "list_workspace" => self.list_workspace(args).await,
-            "read_workspace_file" => self.read_workspace_file(args).await,
-            "grep_workspace" => self.grep_workspace(args).await,
+            "list_workspace" => self.common.list_workspace(args).await,
+            "read_workspace_file" => self.common.read_workspace_file(args).await,
+            "grep_workspace" => self.common.grep_workspace(args).await,
             _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
         }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolProvider for NoopToolProvider {
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        vec![]
+    }
+
+    async fn execute(&self, name: &str, args: &Value) -> ToolResult {
+        let _ = args;
+        ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) }))
     }
 }

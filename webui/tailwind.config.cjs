@@ -66,9 +66,9 @@ module.exports = {
         },
       },
       fontFamily: {
-        display: ['"Fraunces"', "serif"],
+        display: ['"Bricolage Grotesque"', "serif"],
         body: ['"Outfit"', "system-ui", "sans-serif"],
-        mono: ['"Chivo Mono"', "ui-monospace", "monospace"],
+        mono: ['"Martian Mono"', "ui-monospace", "monospace"],
       },
       borderWidth: {
         DEFAULT: "1.5px",
