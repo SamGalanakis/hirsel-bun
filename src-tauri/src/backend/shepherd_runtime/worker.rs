@@ -76,8 +76,6 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
             "Close Port Forward".to_string(),
             Some("execute".to_string()),
         ),
-        "read_canvas" => ("Canvas".to_string(), Some("read".to_string())),
-        "update_canvas" => ("Canvas Update".to_string(), Some("edit".to_string())),
         "read_project_retained_context" => {
             ("Retained Context".to_string(), Some("read".to_string()))
         }
@@ -406,7 +404,7 @@ async fn create_runtime_from_history(
     let host_config = RuntimeHostConfig {
         host_profile: HostProfile::Embedded,
         base_dir: Some(cwd.to_path_buf()),
-        prompt_overrides: shepherd_prompt_overrides(scope, focus, cwd),
+        prompt_overrides: shepherd_prompt_overrides(scope, focus, cwd).await,
         ..RuntimeHostConfig::default()
     };
     let state = AgentStateEnvelope {
@@ -443,7 +441,7 @@ async fn create_runtime_from_state(
     let host_config = RuntimeHostConfig {
         host_profile: HostProfile::Embedded,
         base_dir: Some(cwd.to_path_buf()),
-        prompt_overrides: shepherd_prompt_overrides(scope, focus, cwd),
+        prompt_overrides: shepherd_prompt_overrides(scope, focus, cwd).await,
         ..RuntimeHostConfig::default()
     };
     let services = build_runtime_services(

@@ -1,12 +1,13 @@
 //! Librarian — knowledge graph agent backed by SurrealDB.
 //!
 //! The Librarian only gets project-scoped access to the knowledge graph tables:
-//! - `kg_node` for entities such as modules, functions, features, decisions, and risks
+//! - `kg_node` for entities such as artifacts, features, issues, decisions, and documents
 //! - `kg_edge` for graph relations via `RELATE`
 //! - `librarian_event` for the inbound event queue
 
 use std::sync::OnceLock;
 
+use chrono::{DateTime, Duration, Utc};
 use lash::ToolResult;
 use regex::Regex;
 use serde_json::{json, Map, Value};
@@ -25,7 +26,6 @@ const FORBIDDEN_GRAPH_KEYWORDS: &[&str] = &[
 const FORBIDDEN_GRAPH_TABLES: &[&str] = &[
     "counter",
     "project",
-    "project_focus_view",
     "project_retained_context",
     "project_runtime_preparation",
     "shepherd_chat_message",
@@ -54,11 +54,12 @@ Allowed tables:
 - `kg_edge`
 
 Canonical node record IDs:
-- `type::record('kg_node', [$project_id, 'module', 'src/auth.rs'])`
+- `type::record('kg_node', [$project_id, 'artifact', 'src/auth.rs'])`
 - `type::record('kg_node', [$project_id, 'feature', 'auth'])`
+- `type::record('kg_node', [$project_id, 'document', 'canvas'])`
 
 Keep node shape stable:
-- `project_id`, `kind`, `node_id`, `label`, `summary`, `confidence`, `source`, `metadata`, `updated_at`
+- `project_id`, `kind`, `node_id`, `label`, `summary`, `source`, `metadata`, `updated_at`
 
 Keep edge shape stable:
 - `project_id`, `relation`, `metadata`, `created_at`
@@ -90,7 +91,10 @@ pub async fn enqueue_event(project_id: i64, event: Value) -> Result<String, Stri
         .unwrap_or("unknown");
     let summary = event.get("summary").and_then(|v| v.as_str()).unwrap_or("");
     let files = event.get("files").cloned().unwrap_or(json!([]));
-    let conversation_tail = event.get("conversation_tail").cloned().unwrap_or(json!([]));
+    let timestamp = event
+        .get("timestamp")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     let mut result = db
         .query(
@@ -99,7 +103,7 @@ pub async fn enqueue_event(project_id: i64, event: Value) -> Result<String, Stri
                 kind = $kind,
                 summary = $summary,
                 files = $files,
-                conversation_tail = $conversation_tail,
+                timestamp = $timestamp,
                 processed = false,
                 created_at = time::now()",
         )
@@ -107,7 +111,7 @@ pub async fn enqueue_event(project_id: i64, event: Value) -> Result<String, Stri
         .bind(("kind", kind.to_string()))
         .bind(("summary", summary.to_string()))
         .bind(("files", files))
-        .bind(("conversation_tail", conversation_tail))
+        .bind(("timestamp", timestamp.to_string()))
         .await
         .map_err(|e| format!("failed to enqueue event: {e}"))?;
 
@@ -157,9 +161,15 @@ pub async fn drain_pending_events(project_id: i64) -> Result<Option<String>, Str
     .map_err(|e| format!("failed to mark events processed: {e}"))?;
 
     let mut message = format!(
-        "Process these {} knowledge event(s). Read relevant files if needed, then update the knowledge graph with `graph_surql`. Use `edit_graph_node_text` only when you need to patch a long existing text field in place.\n\n",
+        "Process these {} knowledge event(s). Read relevant files if needed, then update the knowledge graph with `graph_surql`. Use `edit_graph_node_text` only when you need to patch a long existing text field in place. Shared chat context for the batch appears once below.\n\n",
         events.len()
     );
+
+    if let Some(context) = build_batch_context(project_id, &events).await? {
+        message.push_str("Context:\n");
+        message.push_str(&context);
+        message.push_str("\n\n");
+    }
 
     for event in &events {
         let kind = event
@@ -182,38 +192,73 @@ pub async fn drain_pending_events(project_id: i64) -> Result<Option<String>, Str
         if !files.is_empty() {
             message.push_str(&format!("Files: {files}\n"));
         }
-
-        if let Some(tail) = event.get("conversation_tail").and_then(|v| v.as_array()) {
-            if !tail.is_empty() {
-                message.push_str("Context:\n");
-                for msg in tail {
-                    let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("?");
-                    let chunks = msg
-                        .get("chunks_json")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    if let Ok(chunks) = serde_json::from_str::<Vec<Value>>(chunks) {
-                        for chunk in &chunks {
-                            if chunk.get("type").and_then(|v| v.as_str()) == Some("text") {
-                                if let Some(content) = chunk.get("content").and_then(|v| v.as_str())
-                                {
-                                    let truncated = if content.len() > 300 {
-                                        format!("{}...", &content[..300])
-                                    } else {
-                                        content.to_string()
-                                    };
-                                    message.push_str(&format!("  [{role}]: {truncated}\n"));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
         message.push('\n');
     }
 
     Ok(Some(message))
+}
+
+async fn build_batch_context(project_id: i64, events: &[Value]) -> Result<Option<String>, String> {
+    let Some(latest) = latest_event_timestamp(events) else {
+        return Ok(None);
+    };
+    let window_end = latest + Duration::seconds(90);
+    let history = crate::backend::shepherd_runtime::get_shepherd_history(
+        crate::backend::shepherd_runtime::ShepherdScope::Shepherd {
+            project_id,
+            workspace_path: None,
+            focus: None,
+        },
+        24,
+    )
+    .await?;
+
+    let mut out = String::new();
+    for msg in history {
+        let Ok(ts) = DateTime::parse_from_rfc3339(&msg.timestamp) else {
+            continue;
+        };
+        let ts = ts.with_timezone(&Utc);
+        if ts > window_end {
+            continue;
+        }
+        append_message_context(&mut out, &msg.role, &msg.chunks_json);
+    }
+
+    if out.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(out))
+    }
+}
+
+fn latest_event_timestamp(events: &[Value]) -> Option<DateTime<Utc>> {
+    events
+        .iter()
+        .filter_map(|event| event.get("timestamp").and_then(|v| v.as_str()))
+        .filter_map(|value| DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.with_timezone(&Utc))
+        .max()
+}
+
+fn append_message_context(out: &mut String, role: &str, chunks_json: &str) {
+    let Ok(chunks) = serde_json::from_str::<Vec<Value>>(chunks_json) else {
+        return;
+    };
+    for chunk in &chunks {
+        if chunk.get("type").and_then(|v| v.as_str()) != Some("text") {
+            continue;
+        }
+        let Some(content) = chunk.get("content").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let truncated = if content.len() > 300 {
+            format!("{}...", &content[..300])
+        } else {
+            content.to_string()
+        };
+        out.push_str(&format!("  [{role}]: {truncated}\n"));
+    }
 }
 
 pub async fn pending_event_count(project_id: i64) -> usize {
@@ -420,8 +465,8 @@ pub async fn trigger_scan(project_id: i64) -> Result<(), String> {
 
     let message = "\
         Full scan. Explore the codebase, read entry points, configs, and main modules. \
-        Build or refresh the knowledge graph with modules, functions, features, dependencies, \
-        decisions, and risks. Prune stale graph state that no longer matches the workspace."
+        Build or refresh the knowledge graph with artifacts, features, issues, decisions, documents, and dependencies. \
+        Prune stale graph state that no longer matches the workspace."
         .to_string();
 
     send_scope_message(scope, Some(message), None, None).await?;

@@ -2,9 +2,11 @@ import {
   type Component,
   For,
   Show,
+  Suspense,
   createEffect,
   createMemo,
   createSignal,
+  lazy,
   on,
 } from "solid-js";
 import {
@@ -25,9 +27,10 @@ import {
   type WorkspaceSearchResult,
   type WorkspaceTreeEntry,
 } from "@/lib/api";
-import MonacoDiffEditor from "@/components/MonacoDiffEditor";
-import MonacoTextEditor from "@/components/MonacoTextEditor";
 import { cn } from "@/lib/cn";
+
+const MonacoDiffEditor = lazy(() => import("@/components/MonacoDiffEditor"));
+const MonacoTextEditor = lazy(() => import("@/components/MonacoTextEditor"));
 
 interface WorkspaceBrowserProps {
   projectId: number;
@@ -972,12 +975,14 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
                               </Show>
                             }
                           >
-                            <MonacoTextEditor
-                              path={file().path}
-                              value={draft()}
-                              revealLine={revealLine()}
-                              onChange={setDraft}
-                            />
+                            <Suspense fallback={<div class="flex h-full items-center justify-center text-xs text-muted-foreground/60">Loading editor…</div>}>
+                              <MonacoTextEditor
+                                path={file().path}
+                                value={draft()}
+                                revealLine={revealLine()}
+                                onChange={setDraft}
+                              />
+                            </Suspense>
                           </Show>
                         )}
                       </Show>
@@ -1181,11 +1186,13 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
                                       </div>
                                     }
                                   >
-                                    <MonacoDiffEditor
-                                      path={diffAccessor().path}
-                                      originalValue={diffAccessor().left?.content ?? ""}
-                                      modifiedValue={diffAccessor().right?.content ?? ""}
-                                    />
+                                    <Suspense fallback={<div class="flex h-full items-center justify-center text-xs text-muted-foreground/60">Loading diff…</div>}>
+                                      <MonacoDiffEditor
+                                        path={diffAccessor().path}
+                                        originalValue={diffAccessor().left?.content ?? ""}
+                                        modifiedValue={diffAccessor().right?.content ?? ""}
+                                      />
+                                    </Suspense>
                                   </Show>
                                 </Show>
                               </Show>

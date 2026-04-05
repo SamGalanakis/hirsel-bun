@@ -3,6 +3,18 @@ import { cn } from "@/lib/cn";
 import { sanitizeCanvasHtml, scopeCanvasCss } from "@/lib/canvas-html";
 
 let nextCanvasInstance = 0;
+let canvasComponentsPromise: Promise<void> | null = null;
+
+function ensureCanvasComponents(): Promise<void> {
+  if (!canvasComponentsPromise) {
+    canvasComponentsPromise = import("@/lib/canvas-components").then(
+      ({ registerCanvasComponents }) => {
+        registerCanvasComponents();
+      },
+    );
+  }
+  return canvasComponentsPromise;
+}
 
 function dispatchCanvasTeardown(root: HTMLDivElement): void {
   root.dispatchEvent(new CustomEvent("hirsel-canvas-teardown"));
@@ -44,6 +56,7 @@ const CanvasSurface: Component<{ html: string; projectId: number; class?: string
   let rootRef: HTMLDivElement | undefined;
   let lastHtml: string | undefined;
   let lastProjectId: number | undefined;
+  let renderVersion = 0;
   const instanceId = `hirsel-canvas-${++nextCanvasInstance}`;
   const scopeSelector = `[data-canvas-instance="${instanceId}"]`;
 
@@ -59,13 +72,22 @@ const CanvasSurface: Component<{ html: string; projectId: number; class?: string
     if (html === lastHtml && projectId === lastProjectId) return;
     lastHtml = html;
     lastProjectId = projectId;
+    const version = ++renderVersion;
 
-    dispatchCanvasTeardown(root);
-    root.dataset.canvasInstance = instanceId;
-    root.dataset.canvasProjectId = String(projectId);
-    root.innerHTML = sanitizeCanvasHtml(html);
-    scopeCanvasStyles(root, scopeSelector);
-    runCanvasScripts(root, scopeSelector);
+    void (async () => {
+      if (html.trim()) {
+        await ensureCanvasComponents();
+      }
+
+      if (version !== renderVersion || rootRef !== root) return;
+
+      dispatchCanvasTeardown(root);
+      root.dataset.canvasInstance = instanceId;
+      root.dataset.canvasProjectId = String(projectId);
+      root.innerHTML = sanitizeCanvasHtml(html);
+      scopeCanvasStyles(root, scopeSelector);
+      runCanvasScripts(root, scopeSelector);
+    })();
   });
 
   onCleanup(() => {

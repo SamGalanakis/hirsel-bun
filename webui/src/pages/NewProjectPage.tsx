@@ -130,9 +130,28 @@ const NewProjectPage: Component = () => {
       </header>
 
       <main class="mx-auto max-w-xl px-6 py-10">
-        <div class="mb-8">
-          <h1 class="font-display text-3xl tracking-tight text-foreground">Add a project</h1>
-        </div>
+        <Show
+          when={hasProjects()}
+          fallback={
+            <div class="mb-10 rounded-sm border border-border bg-card/60 px-5 py-5">
+              <div class="flex items-start gap-4">
+                <div class="flex h-10 w-10 shrink-0 items-center justify-center border border-border bg-background text-signal-amber">
+                  <span class="font-mono text-sm">◎</span>
+                </div>
+                <div class="space-y-1.5">
+                  <h1 class="font-display text-3xl tracking-tight text-foreground">No projects yet</h1>
+                  <p class="max-w-lg text-sm leading-6 text-muted-foreground">
+                    Create your first project to start a shepherd workspace. Add a repository URL and Hirsel will prepare the rest.
+                  </p>
+                </div>
+              </div>
+            </div>
+          }
+        >
+          <div class="mb-8">
+            <h1 class="font-display text-3xl tracking-tight text-foreground">Add a project</h1>
+          </div>
+        </Show>
 
         <form onSubmit={handleSubmit} class="space-y-5">
           <div class="space-y-1.5">

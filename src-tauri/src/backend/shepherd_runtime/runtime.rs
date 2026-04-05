@@ -4,6 +4,7 @@ use lash::{PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 
 use super::history::{chunk_image_count, chunk_text};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
+use crate::backend::db::global_db;
 use crate::backend::librarian::LIBRARIAN_SURREALQL_GUIDE;
 use crate::backend::{ensure_project_workspace, ShepherdThreadStore};
 
@@ -20,7 +21,49 @@ fn scope_label(scope: &ShepherdScope) -> String {
     }
 }
 
-fn build_scope_guidance(
+async fn fetch_project_lore(project_id: i64) -> Vec<(String, String)> {
+    use surrealdb::types::SurrealValue;
+
+    let db = global_db().await;
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct LoreRow {
+        node_id: String,
+        summary: Option<String>,
+        label: Option<String>,
+    }
+
+    let result: Result<Vec<LoreRow>, _> = db
+        .query("SELECT node_id, label, summary FROM kg_node WHERE project_id = $project_id AND kind = 'lore' ORDER BY updated_at DESC LIMIT 40")
+        .bind(("project_id", project_id))
+        .await
+        .and_then(|mut r| r.take(0));
+    let rows = match result {
+        Err(_) => return Vec::new(),
+        Ok(rows) => rows,
+    };
+    rows.into_iter()
+        .filter_map(|row| {
+            let text = row
+                .summary
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| row.label.filter(|s| !s.trim().is_empty()))?;
+            Some((row.node_id, text))
+        })
+        .collect()
+}
+
+fn format_lore_section(lore: &[(String, String)]) -> String {
+    if lore.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("\n## Project Lore\n\nAccumulated practices, preferences, and corrections for this project. Follow these.\n\n");
+    for (id, text) in lore {
+        out.push_str(&format!("- **{}**: {}\n", id, text));
+    }
+    out
+}
+
+async fn build_scope_guidance(
     scope: &ShepherdScope,
     focus: Option<&ShepherdTaskFocus>,
     cwd: &Path,
@@ -37,36 +80,35 @@ fn build_scope_guidance(
             Project: {}\n\
             Workspace root: {}\n\n\
             ## Role\n\n\
-            You are the Librarian — a background agent that maintains the project's knowledge graph. \
+            You are the Librarian — a background agent that maintains the project's knowledge graph and the single canvas document. \
             You receive batches of knowledge events emitted by the Shepherd during conversations with the user. \
-            Your job is to process each event and update the graph.\n\n\
+            Your job is to process the batch, update the graph, and update the canvas document when the batch explicitly calls for an illustration or canvas refresh.\n\n\
             ## How to Process Events\n\n\
-            For each event:\n\
-            1. Read the summary and conversation context to understand what happened.\n\
-            2. If files are referenced, read them to extract code structure (functions, modules, dependencies).\n\
-            3. Update the graph using `graph_surql` with appropriate kinds:\n\
-               - `module` — a file or logical code module\n\
-               - `function` — a function, method, or endpoint\n\
-               - `feature` — a user-facing capability\n\
-               - `bug` — a known defect\n\
-               - `idea` — a future direction or enhancement mentioned by the user\n\
-               - `observation` — something noteworthy about the codebase\n\
+            For each batch:\n\
+            1. Read the event summaries and the provided shared conversation context once. Do not ask the Shepherd to duplicate that context inside an event.\n\
+            2. If files are referenced, read them to extract durable project knowledge.\n\
+            3. Update the graph using a small ontology:\n\
+               - `artifact` — code, config, test, doc, script, or other project artifact\n\
+               - `feature` — a user-facing capability or important subsystem responsibility\n\
+               - `issue` — a bug, risk, defect, or technical problem\n\
                - `decision` — an architectural or design choice and its rationale\n\
-               - `risk` — a potential problem or technical debt\n\
-            4. Create relations in `kg_edge` for concepts like:\n\
-               - `implements` — code that implements a feature\n\
-               - `depends_on` — code dependency\n\
-               - `tested_by` — test coverage\n\
-               - `touches` — code modified by a thread or event\n\
-               - `addresses` — work that fixes a bug or risk\n\
-               - `blocks` — something preventing progress\n\
-               - `relevant_to` — loose association\n\
-               - `part_of` — containment (function part_of module)\n\
-            5. Use `edit_graph_node_text` when refining a long text field on an existing node instead of rewriting the whole node.\n\n\
+               - `lore` — a best practice, preference, correction, anti-pattern, or operational rule learned from experience. Use stable slugs as IDs (e.g. `no_backwards_compat`, `prefer_small_prs`). The `summary` field should be a concise, actionable directive.\n\
+               - `document` — a freeform HTML document, including the singular canvas document\n\
+            4. Prefer these relations:\n\
+               - `part_of`\n\
+               - `implements`\n\
+               - `depends_on`\n\
+               - `addresses`\n\
+               - `documents`\n\
+               - `references`\n\
+            5. Keep facts canonical on non-document nodes. Documents explain or illustrate other nodes; they do not replace them.\n\
+            6. The canvas is the single `document:canvas` node. When a batch asks for an illustration or canvas refresh, update that node's `body_html`.\n\
+            7. Inline node references inside document HTML are canonical. Use components like `<hirsel-node-ref node=\"feature:auth\">`, `<hirsel-node-field node=\"decision:event_queue\" field=\"summary\">`, `<hirsel-node-list node=\"feature:auth\" relation=\"implements\">`, and `<hirsel-doc-target node=\"feature:auth\">`. The backend derives `references` and `documents` edges from these automatically. Do not duplicate that work manually.\n\
+            8. Use `edit_graph_node_text` when refining a long existing text field instead of rewriting the whole node.\n\n\
             ## Guidelines\n\n\
-            - Be precise with node IDs. Use file paths for modules (`src/auth.rs`), function names for functions (`verify_token`), short slugs for concepts (`auth`, `rate_limiting`).\n\
-            - Set `confidence` on ideas and observations: `high` (user was definitive), `medium` (discussed but not committed), `soft` (mentioned in passing).\n\
+            - Be precise with node IDs. Use file paths for artifact files (`src/auth.rs`), stable slugs for features/issues/decisions (`auth`, `event_queue`, `retry_backoff`), and `canvas` for the singular canvas document.\n\
             - Set `source` to `user` or `shepherd` based on who originated the knowledge.\n\
+            - Update the canvas only when the event batch explicitly calls for it. Keeping the canvas current is not the Shepherd's tool job; it is your document-writing job when asked.\n\
             - Be concise. Process the batch and stop. Do not narrate your actions.\n\
             - You have read-only workspace access. You cannot edit files.\n\n\
             {}\n",
@@ -82,7 +124,8 @@ fn build_scope_guidance(
             {}\n\
             Workspace root: {}\n\n\
             ## Hirsel Constraints\n\n\
-            - Do not talk about hidden app plumbing or internal machinery.\n",
+            - Do not talk about hidden app plumbing or internal machinery.\n\
+            - If you discover a reusable practice, gotcha, or correction during your work, emit a knowledge event with `kind: \"lore\"` so the Librarian captures it for future threads.\n",
             title,
             thread_id,
             focus_line,
@@ -118,10 +161,11 @@ fn build_scope_guidance(
             - Use `fetch_url` against the returned shepherd URL when you need to inspect or compare a forwarded preview yourself.\n\
             - Close stale previews with `close_port_forward` when you are done.\n\n\
             ## Canvas\n\n\
-            The canvas is an HTML panel for visual communication with the user. \
+            The canvas is a single project document rendered in the canvas panel. \
             Use it for synthesis, comparisons, diagrams, and status — not decorative filler.\n\n\
             Rules:\n\
-            - Call `read_canvas` before editing. Only call `update_canvas` when project state materially changed.\n\
+            - You do not edit the canvas directly. If the user wants a new illustration, diagram, or visual summary, emit a knowledge event telling the Librarian what the canvas should show.\n\
+            - The Librarian already has the surrounding chat context. Do not duplicate chat context inside the event summary.\n\
             - Write an HTML fragment. No `<html>`, `<head>`, or `<body>` tags.\n\
             - CSS is auto-scoped. Use theme vars: `hsl(var(--background))`, `--foreground`, `--card`, `--border`, `--ring`, `--signal-blue`, `--signal-amber`, `--signal-green`, `--signal-red`.\n\
             - Scripts: inline JS only, no imports or network. `canvasRoot` points to the canvas root. `mermaid` is preloaded.\n\n\
@@ -142,25 +186,52 @@ fn build_scope_guidance(
             | `hirsel-tabs` | — | Contains `<section label=\"...\">` panels |\n\
             | `hirsel-disclosure` | title, tone, open | Collapsible section |\n\
             | `hirsel-progress` | label, value, max, detail, tone | Progress bar |\n\n\
+            | `hirsel-node-ref` | node | Render a linked graph node chip |\n\
+            | `hirsel-node-field` | node, field | Render one field from a graph node |\n\
+            | `hirsel-node-list` | node, relation | Render related graph nodes |\n\
+            | `hirsel-doc-target` | node | Mark what the document is explicitly about |\n\n\
             Prefer `hirsel-fileref` for links, `hirsel-coderef` for file slices, `hirsel-code` for inline examples, \
-            `hirsel-codediff` for comparisons, `hirsel-patchset` for grouped reviews, `hirsel-diagram` for Mermaid.\n",
+            `hirsel-codediff` for comparisons, `hirsel-patchset` for grouped reviews, `hirsel-diagram` for Mermaid.\n\n\
+            ## Capturing Lore\n\n\
+            When the user states a preference, correction, best practice, or rule for how work should be done in this project, \
+            emit a knowledge event so the Librarian stores it as a `lore` node. Examples:\n\
+            - \"always do X\" / \"never do Y\" / \"prefer X over Y\"\n\
+            - \"no need for backwards compatibility\" / \"don't add shims\"\n\
+            - \"we use snake_case for API fields\" / \"tests must hit the real DB\"\n\
+            - Corrections: \"that approach broke last time because...\" / \"don't mock the database here\"\n\n\
+            Emit the event concisely: `kind: \"lore\"`, `summary:` the rule in one sentence. The Librarian will persist it. \
+            You do not need to confirm with the user — just capture and move on.\n",
             scope_label(scope),
             focus_line,
             cwd.display()
         ),
     };
 
-    if bootstrap_flake {
-        format!(
-            "{}\n\n## Bootstrap Mode\n\n- This project central checkout has no project flake yet.\n- Create a valid `flake.nix` in the workspace before doing normal coding work.\n- Do not create or start coding threads until the project flake exists.\n",
-            scope_header
-        )
+    // Fetch and inject project lore for shepherd and thread scopes.
+    let project_id = match scope {
+        ShepherdScope::Shepherd { project_id, .. } | ShepherdScope::Thread { project_id, .. } => {
+            Some(*project_id)
+        }
+        _ => None,
+    };
+    let lore_section = if let Some(pid) = project_id {
+        let lore = fetch_project_lore(pid).await;
+        format_lore_section(&lore)
     } else {
-        scope_header
+        String::new()
+    };
+
+    let mut result = scope_header;
+    if !lore_section.is_empty() {
+        result.push_str(&lore_section);
     }
+    if bootstrap_flake {
+        result.push_str("\n\n## Bootstrap Mode\n\n- This project central checkout has no project flake yet.\n- Create a valid `flake.nix` in the workspace before doing normal coding work.\n- Do not create or start coding threads until the project flake exists.\n");
+    }
+    result
 }
 
-pub(super) fn shepherd_prompt_overrides(
+pub(super) async fn shepherd_prompt_overrides(
     scope: &ShepherdScope,
     focus: Option<&ShepherdTaskFocus>,
     cwd: &Path,
@@ -168,7 +239,7 @@ pub(super) fn shepherd_prompt_overrides(
     vec![PromptSectionOverride {
         section: PromptSectionName::Guidance,
         mode: PromptOverrideMode::Append,
-        content: build_scope_guidance(scope, focus, cwd),
+        content: build_scope_guidance(scope, focus, cwd).await,
     }]
 }
 

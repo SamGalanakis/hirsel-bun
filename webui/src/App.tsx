@@ -1,10 +1,11 @@
-import { type Component, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { type Component, Suspense, createSignal, lazy, onCleanup, onMount, Show } from "solid-js";
 import { ApiError } from "@/lib/api/core";
 import ConnectPage from "@/pages/ConnectPage";
-import WorkspacePage from "@/pages/WorkspacePage";
-import SettingsPage from "@/pages/SettingsPage";
-import NewProjectPage from "@/pages/NewProjectPage";
 import { listProjects } from "@/lib/api";
+
+const WorkspacePage = lazy(() => import("@/pages/WorkspacePage"));
+const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
+const NewProjectPage = lazy(() => import("@/pages/NewProjectPage"));
 
 type ScreenState =
   | { page: "connect" }
@@ -76,41 +77,49 @@ const App: Component = () => {
 
   return (
     <div class="fixed inset-0 flex min-h-0 flex-col overflow-hidden">
-      <Show when={screen().page === "connect"}>
-        <ConnectPage />
-      </Show>
+      <Suspense
+        fallback={
+          <div class="flex flex-1 items-center justify-center bg-background">
+            <span class="text-muted-foreground text-xs font-mono">loading...</span>
+          </div>
+        }
+      >
+        <Show when={screen().page === "connect"}>
+          <ConnectPage />
+        </Show>
 
-      <Show when={screen().page === "project"}>
-        <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
-      </Show>
+        <Show when={screen().page === "project"}>
+          <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
+        </Show>
 
-      <Show when={screen().page === "thread"}>
-        <WorkspacePage
-          projectId={(screen() as { projectId: number }).projectId}
-          threadId={(screen() as { threadId: string }).threadId}
-        />
-      </Show>
+        <Show when={screen().page === "thread"}>
+          <WorkspacePage
+            projectId={(screen() as { projectId: number }).projectId}
+            threadId={(screen() as { threadId: string }).threadId}
+          />
+        </Show>
 
-      <Show when={screen().page === "librarian"}>
-        <WorkspacePage
-          projectId={(screen() as { projectId: number }).projectId}
-          librarianView={true}
-        />
-      </Show>
+        <Show when={screen().page === "librarian"}>
+          <WorkspacePage
+            projectId={(screen() as { projectId: number }).projectId}
+            librarianView={true}
+          />
+        </Show>
 
-      <Show when={screen().page === "settings"}>
-        <SettingsPage />
-      </Show>
+        <Show when={screen().page === "settings"}>
+          <SettingsPage />
+        </Show>
 
-      <Show when={screen().page === "new"}>
-        <NewProjectPage />
-      </Show>
+        <Show when={screen().page === "new"}>
+          <NewProjectPage />
+        </Show>
 
-      <Show when={screen().page === "loading"}>
-        <div class="flex flex-1 items-center justify-center bg-background">
-          <span class="text-muted-foreground text-xs font-mono">loading...</span>
-        </div>
-      </Show>
+        <Show when={screen().page === "loading"}>
+          <div class="flex flex-1 items-center justify-center bg-background">
+            <span class="text-muted-foreground text-xs font-mono">loading...</span>
+          </div>
+        </Show>
+      </Suspense>
     </div>
   );
 };

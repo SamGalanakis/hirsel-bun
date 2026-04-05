@@ -118,8 +118,13 @@ impl ShepherdThreadStore {
         project_id: i64,
     ) -> ShepherdThreadResult<Vec<ShepherdThread>> {
         let db = self.db().await;
-        let mut records: Vec<ShepherdThreadRecord> = db.select(SHEPHERD_THREAD_TABLE).await?;
-        records.retain(|record| record.project_id == project_id && record.archived_at.is_none());
+        let mut result = db
+            .query(
+                "SELECT * FROM shepherd_thread WHERE project_id = $project_id AND archived_at = NONE",
+            )
+            .bind(("project_id", project_id))
+            .await?;
+        let mut records: Vec<ShepherdThreadRecord> = result.take(0)?;
         records.sort_by(|a, b| {
             thread_status_rank(&a.status)
                 .cmp(&thread_status_rank(&b.status))
@@ -139,11 +144,16 @@ impl ShepherdThreadStore {
         title: &str,
     ) -> ShepherdThreadResult<Option<ShepherdThread>> {
         let title_lower = normalize_text(title);
-        let mut threads = self.list_project_threads(project_id).await?;
-        threads.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        Ok(threads
-            .into_iter()
-            .find(|thread| normalize_text(&thread.title) == title_lower))
+        let db = self.db().await;
+        let mut result = db
+            .query(
+                "SELECT * FROM shepherd_thread WHERE project_id = $project_id AND title_lower = $title_lower AND archived_at = NONE ORDER BY updated_at DESC LIMIT 1",
+            )
+            .bind(("project_id", project_id))
+            .bind(("title_lower", title_lower))
+            .await?;
+        let record: Option<ShepherdThreadRecord> = result.take(0)?;
+        Ok(record.map(ShepherdThreadRecord::into_thread))
     }
 
     pub async fn update_thread(

@@ -60,9 +60,6 @@ const EXPLORATION_TOOLS = new Set([
   "grep",
   "glob",
   "ls",
-  "read_project_focus_view",
-  "read_canvas",
-  "Canvas",
   "read_project_retained_context",
   "Retained Context",
 ]);
@@ -86,14 +83,7 @@ const THREAD_TOOLS = new Set([
   "Thread Updates",
 ]);
 
-const CANVAS_TOOLS = new Set([
-  "read_project_focus_view",
-  "read_canvas",
-  "update_project_focus_view",
-  "update_canvas",
-  "Canvas",
-  "Canvas Update",
-]);
+const CANVAS_TOOLS = new Set<string>([]);
 
 const CONTEXT_TOOLS = new Set([
   "read_project_retained_context",

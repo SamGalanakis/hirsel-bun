@@ -236,7 +236,10 @@ const ProjectPreparationScreen: Component<ProjectPreparationScreenProps> = (prop
           </Show>
 
           <div class="space-y-0">
-            <For each={props.preparation.steps}>
+            <For each={[...props.preparation.steps].sort((a, b) => {
+              const order: Record<string, number> = { done: 0, working: 1, failed: 2, pending: 3 };
+              return (order[a.status] ?? 3) - (order[b.status] ?? 3);
+            })}>
               {(step, index) => {
                 const progress = () => Math.round((step.progress ?? 0) * 100);
                 const active = () => step.id === currentStep()?.id;

@@ -8,26 +8,6 @@ use crate::backend::api_types::ConfigResponse;
 use crate::backend::config;
 use tauri::Manager;
 
-async fn backend_health(url: &str, api_key: Option<&str>) -> Result<(), String> {
-    let client = reqwest::Client::new();
-    let mut request = client.get(format!("{}/health", url.trim_end_matches('/')));
-    if let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) {
-        request = request.bearer_auth(api_key);
-    }
-    let response = request
-        .send()
-        .await
-        .map_err(|e| format!("Backend request failed: {}", e))?;
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "Backend health check returned HTTP {}",
-            response.status()
-        ))
-    }
-}
-
 /// Get application configuration stored on this client.
 #[tracing::instrument]
 #[tauri::command]
@@ -69,13 +49,6 @@ pub async fn save_config(updates: ConfigUpdateRequest) -> Result<(), String> {
     Ok(())
 }
 
-/// Check connectivity to a configured Hirsel backend.
-#[tracing::instrument(skip(api_key))]
-#[tauri::command]
-pub async fn check_backend_health(url: String, api_key: Option<String>) -> Result<(), String> {
-    backend_health(&url, api_key.as_deref()).await
-}
-
 /// Navigate the main desktop window directly to the configured backend UI.
 #[tracing::instrument(skip(app))]
 #[tauri::command]
@@ -92,8 +65,6 @@ pub async fn open_backend_window(app: tauri::AppHandle) -> Result<(), String> {
         .api_key
         .clone()
         .filter(|value| !value.trim().is_empty());
-
-    backend_health(&base_url, api_key.as_deref()).await?;
 
     let target = if let Some(api_key) = api_key {
         let mut url = format!("{}/connect/bootstrap", base_url.trim_end_matches('/'))

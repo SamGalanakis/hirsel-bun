@@ -1,7 +1,7 @@
 //! Tauri IPC commands for the thin desktop shell.
 //!
-//! The desktop wrapper only persists backend connection details and performs
-//! basic backend reachability checks before handing off to the backend-served UI.
+//! The desktop wrapper only persists backend connection details before handing
+//! off to the backend-served UI.
 
 mod config_cmd;
 pub mod types;
@@ -31,7 +31,6 @@ pub fn get_handlers() -> impl Fn(tauri::ipc::Invoke) -> bool + Send + Sync + 'st
     tauri::generate_handler![
         config_cmd::get_config,
         config_cmd::save_config,
-        config_cmd::check_backend_health,
         config_cmd::open_backend_window,
         // Stateful product operations intentionally stay on the backend over HTTP/SSE.
     ]

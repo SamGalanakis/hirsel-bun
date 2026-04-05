@@ -908,9 +908,27 @@ const ChatMessage: Component<{ role: string; chunksJson: string; timestamp: stri
     <div
       class={cn(
         "group relative",
-        isUser() ? "ml-16 bg-secondary/30 px-3 py-2" : "py-1.5",
+        isUser()
+          ? "ml-20 border border-border/50 bg-secondary/40 px-4 py-3"
+          : "border-l-2 border-l-muted-foreground/15 pl-4 py-2",
       )}
     >
+      {/* Role + timestamp header */}
+      <div class={cn(
+        "mb-1.5 flex items-center gap-2",
+        isUser() && "justify-end",
+      )}>
+        <span class={cn(
+          "font-mono text-[10px] uppercase tracking-[0.14em]",
+          isUser() ? "text-foreground/50" : "text-muted-foreground/60",
+        )}>
+          {isUser() ? "You" : "Assistant"}
+        </span>
+        <span class="text-[10px] text-muted-foreground/30">
+          {formatTime(props.timestamp)}
+        </span>
+      </div>
+
       <div class={cn("space-y-1", !isUser() && "space-y-0.5")}>
         <Show when={showLiveStatus()}>
           <LiveStatusRow status={props.liveStatus} />
@@ -918,12 +936,6 @@ const ChatMessage: Component<{ role: string; chunksJson: string; timestamp: stri
         <Index each={blocks()}>
           {(block) => renderBlock(block(), isUser())}
         </Index>
-      </div>
-      <div class={cn(
-        "mt-0.5 text-[10px] text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100",
-        isUser() && "text-right",
-      )}>
-        {formatTime(props.timestamp)}
       </div>
     </div>
   );

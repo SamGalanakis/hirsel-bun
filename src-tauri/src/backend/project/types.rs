@@ -5,7 +5,7 @@ use surrealdb::types::SurrealValue;
 
 use crate::backend::draft::StartingPoint;
 
-/// Project - one shepherd, one canvas, many threads.
+/// Project - one shepherd and many execution surfaces around it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Project {
@@ -34,16 +34,6 @@ pub struct Project {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ProjectFocusView {
-    pub project_id: i64,
-    pub html: String,
-    pub updated_at: String,
-    #[serde(default)]
-    pub source: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ProjectRetainedContext {
     pub project_id: i64,
     pub markdown: String,
@@ -55,7 +45,7 @@ pub struct ProjectRetainedContext {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSurfaceSnapshot {
-    pub focus_view: Option<ProjectFocusView>,
+    pub canvas: Option<crate::backend::documents::ProjectCanvasDocument>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]

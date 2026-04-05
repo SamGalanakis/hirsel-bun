@@ -1,30 +1,14 @@
+use crate::backend::{shepherd_runtime, ShepherdThread, ShepherdThreadStore};
 use axum::extract::{Path, Query};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
-use crate::backend::{shepherd_runtime, ShepherdThread, ShepherdThreadStore};
+use serde::Deserialize;
 
 use super::common::{
     extract_latest_plan, plan_progress_from_messages, to_api_activity, to_api_message,
-    to_api_thread, ApiChatMessage, ApiPlanProgress, ApiScopeActivity, ApiThread,
+    to_api_thread, ApiChatMessage, ApiThreadDetail, ApiThreadSummary,
 };
-
-#[derive(Serialize)]
-pub struct ApiThreadSummary {
-    thread: ApiThread,
-    activity: ApiScopeActivity,
-    plan_progress: Option<ApiPlanProgress>,
-}
-
-#[derive(Serialize)]
-pub struct ApiThreadDetail {
-    thread: ApiThread,
-    activity: ApiScopeActivity,
-    plan: Option<Value>,
-}
 
 #[derive(Deserialize)]
 pub struct HistoryQuery {

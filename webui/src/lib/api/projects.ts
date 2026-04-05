@@ -3,12 +3,14 @@ import type {
   ChatMessage,
   ChatSendResponse,
   KnowledgeGraph,
+  KnowledgeGraphNode,
   LiveUpdateEvent,
   Project,
   ProjectCreateProbe,
   ProjectPreparation,
   ProjectSurface,
   ScopeActivity,
+  WorkspaceSnapshot,
 } from "@/lib/api/types";
 
 export async function listProjects(): Promise<Project[]> {
@@ -69,6 +71,26 @@ export async function getProjectHistory(
 export async function getProjectSurface(projectId: number): Promise<ProjectSurface> {
   const res = await apiFetch(`/projects/${projectId}/surface`);
   return parseJson<ProjectSurface>(res);
+}
+
+export async function getWorkspaceSnapshot(
+  projectId: number,
+  data: { threadId?: string; librarian?: boolean } = {},
+): Promise<WorkspaceSnapshot> {
+  const params = new URLSearchParams();
+  if (data.threadId?.trim()) {
+    params.set("thread_id", data.threadId.trim());
+  }
+  if (data.librarian) {
+    params.set("librarian", "true");
+  }
+  const suffix = params.toString();
+  const res = await apiFetch(
+    suffix
+      ? `/projects/${projectId}/workspace-snapshot?${suffix}`
+      : `/projects/${projectId}/workspace-snapshot`,
+  );
+  return parseJson<WorkspaceSnapshot>(res);
 }
 
 export function subscribeProjectEvents(
@@ -144,6 +166,15 @@ export async function triggerKnowledgeScan(projectId: number): Promise<void> {
 export async function getKnowledgeGraph(projectId: number): Promise<KnowledgeGraph> {
   const res = await apiFetch(`/projects/${projectId}/knowledge-graph`);
   return parseJson<KnowledgeGraph>(res);
+}
+
+export async function resolveKnowledgeGraphNode(
+  projectId: number,
+  kind: string,
+  nodeId: string,
+): Promise<KnowledgeGraphNode | null> {
+  const graph = await getKnowledgeGraph(projectId);
+  return graph.nodes.find((node) => node.kind === kind && node.node_id === nodeId) ?? null;
 }
 
 export async function sendChatMessage(projectId: number, content: string): Promise<ChatSendResponse> {

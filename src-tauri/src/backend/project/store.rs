@@ -4,14 +4,13 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
 use super::types::{
-    CreateProjectRequest, Project, ProjectFocusView, ProjectPreparationStep,
-    ProjectRetainedContext, ProjectRuntimePreparation, UpdateProjectRequest,
+    CreateProjectRequest, Project, ProjectPreparationStep, ProjectRetainedContext,
+    ProjectRuntimePreparation, UpdateProjectRequest,
 };
 use crate::backend::db::{global_db, next_sequence, utc_now, DbClient};
 use crate::backend::live_updates::{self, LiveUpdateKind};
 
 const PROJECT_TABLE: &str = "project";
-const PROJECT_FOCUS_VIEW_TABLE: &str = "project_focus_view";
 const PROJECT_RETAINED_CONTEXT_TABLE: &str = "project_retained_context";
 const PROJECT_RUNTIME_PREPARATION_TABLE: &str = "project_runtime_preparation";
 
@@ -30,14 +29,6 @@ struct ProjectRecord {
     sandbox_image: Option<String>,
     x: Option<f64>,
     y: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
-struct ProjectFocusViewRecord {
-    project_id: i64,
-    html: String,
-    source: Option<String>,
-    updated_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -136,11 +127,19 @@ impl ProjectStore {
 
     /// Get a project by name.
     pub async fn get_project_by_name(&self, name: &str) -> ProjectResult<Option<Project>> {
-        let projects = self.load_all_project_records().await?;
-        Ok(projects
-            .into_iter()
-            .find(|project| project.name == name)
-            .map(ProjectRecord::into_project))
+        let db = self.db().await;
+        let normalized = normalize_text(name);
+        let mut result = db
+            .query("SELECT * FROM project WHERE name_lower = $name LIMIT 1")
+            .bind(("name", normalized))
+            .await?;
+        let record: Option<ProjectRecord> = result.take(0)?;
+        match record {
+            Some(record) => Ok(Some(
+                self.hydrate_project_record(record).await?.into_project(),
+            )),
+            None => Ok(None),
+        }
     }
 
     /// List all projects.
@@ -227,7 +226,6 @@ impl ProjectStore {
             }
         }
 
-        let _: Option<ProjectFocusViewRecord> = db.delete((PROJECT_FOCUS_VIEW_TABLE, id)).await?;
         let _: Option<ProjectRetainedContextRecord> =
             db.delete((PROJECT_RETAINED_CONTEXT_TABLE, id)).await?;
         let _: Option<ProjectRuntimePreparationRecord> =
@@ -236,39 +234,6 @@ impl ProjectStore {
         live_updates::publish_project(id, LiveUpdateKind::ProjectChanged);
 
         Ok(())
-    }
-
-    pub async fn get_project_focus_view(&self, id: i64) -> ProjectResult<Option<ProjectFocusView>> {
-        let db = self.db().await;
-        let _ = self.get_project(id).await?;
-
-        let record: Option<ProjectFocusViewRecord> =
-            db.select((PROJECT_FOCUS_VIEW_TABLE, id)).await?;
-        Ok(record.map(ProjectFocusViewRecord::into_focus_view))
-    }
-
-    pub async fn update_project_focus_view(
-        &self,
-        id: i64,
-        html: &str,
-        source: Option<&str>,
-    ) -> ProjectResult<ProjectFocusView> {
-        let db = self.db().await;
-        let _ = self.get_project(id).await?;
-        let record = ProjectFocusViewRecord {
-            project_id: id,
-            html: html.to_string(),
-            source: source.map(ToOwned::to_owned),
-            updated_at: utc_now(),
-        };
-
-        let _: Option<ProjectFocusViewRecord> = db
-            .upsert((PROJECT_FOCUS_VIEW_TABLE, id))
-            .content(record.clone())
-            .await?;
-        live_updates::publish_project(id, LiveUpdateKind::ProjectSurfaceChanged);
-
-        Ok(record.into_focus_view())
     }
 
     pub async fn get_project_retained_context(
@@ -428,17 +393,6 @@ impl ProjectRecord {
             sandbox_image: self.sandbox_image,
             x: self.x,
             y: self.y,
-        }
-    }
-}
-
-impl ProjectFocusViewRecord {
-    fn into_focus_view(self) -> ProjectFocusView {
-        ProjectFocusView {
-            project_id: self.project_id,
-            html: self.html,
-            updated_at: self.updated_at,
-            source: self.source,
         }
     }
 }

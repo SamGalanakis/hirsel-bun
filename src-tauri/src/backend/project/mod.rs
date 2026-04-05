@@ -6,7 +6,7 @@
 //! - one starting point
 //! - one central checkout
 //! - one shepherd conversation
-//! - one canvas artifact
+//! - one canvas document
 //! - many visible threads
 
 mod prepare;
@@ -19,7 +19,6 @@ pub use prepare::{
 };
 pub use store::{ProjectError, ProjectResult, ProjectStore};
 pub use types::{
-    CreateProjectRequest, Project, ProjectFocusView, ProjectPreparationStep,
-    ProjectRetainedContext, ProjectRuntimePreparation, ProjectSurfaceSnapshot,
-    UpdateProjectRequest,
+    CreateProjectRequest, Project, ProjectPreparationStep, ProjectRetainedContext,
+    ProjectRuntimePreparation, ProjectSurfaceSnapshot, UpdateProjectRequest,
 };

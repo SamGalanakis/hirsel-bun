@@ -700,75 +700,6 @@ impl ToolContext {
         }
     }
 
-    async fn read_project_focus_view(&self, project_id: i64) -> ToolResult {
-        let store = match ProjectStore::open().await {
-            Ok(store) => store,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-
-        match store.get_project_focus_view(project_id).await {
-            Ok(Some(view)) => ToolResult::ok(json!({
-                "project_id": view.project_id,
-                "html": view.html,
-                "updated_at": view.updated_at,
-                "source": view.source,
-            })),
-            Ok(None) => ToolResult::ok(json!({
-                "project_id": project_id,
-                "html": null,
-                "updated_at": null,
-                "source": null,
-            })),
-            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
-        }
-    }
-
-    async fn update_project_focus_view(&self, project_id: i64, args: &Value) -> ToolResult {
-        let html = match Self::string_arg(args, "html") {
-            Ok(value) => value,
-            Err(error) => return ToolResult::err(json!({ "error": error })),
-        };
-        let source = args
-            .get("source")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty());
-
-        if html.trim().is_empty() {
-            return ToolResult::err(json!({ "error": "Project canvas HTML cannot be empty" }));
-        }
-
-        let store = match ProjectStore::open().await {
-            Ok(store) => store,
-            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
-        };
-
-        match store
-            .update_project_focus_view(project_id, html, source)
-            .await
-        {
-            Ok(view) => {
-                if let Some(app) = &self.app {
-                    emit_app_event(
-                        app,
-                        "project-focus-view-updated",
-                        json!({
-                            "projectId": project_id,
-                            "updatedAt": view.updated_at,
-                        }),
-                    );
-                }
-                let mut fields = Map::new();
-                fields.insert("updated_at".to_string(), json!(view.updated_at));
-                fields.insert("source".to_string(), json!(view.source));
-                edit_result_with(
-                    format!("Updated project canvas for project {}", project_id),
-                    fields,
-                )
-            }
-            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
-        }
-    }
-
     async fn read_project_retained_context(&self, project_id: i64) -> ToolResult {
         let store = match ProjectStore::open().await {
             Ok(store) => store,
@@ -846,33 +777,11 @@ impl ToolContext {
             })
             .unwrap_or_default();
 
-        // Grab the last 10 messages from shepherd chat for context
-        let shepherd_scope = ShepherdScope::Shepherd {
-            project_id,
-            workspace_path: None,
-            focus: None,
-        };
-        let conversation_tail = match super::queries::get_shepherd_history(shepherd_scope, 10).await
-        {
-            Ok(messages) => messages
-                .into_iter()
-                .map(|m| {
-                    json!({
-                        "role": m.role,
-                        "chunks_json": m.chunks_json,
-                    })
-                })
-                .collect::<Vec<_>>(),
-            Err(_) => vec![],
-        };
-
-        // Enqueue the event for the Librarian
         let event = json!({
             "project_id": project_id,
             "kind": kind,
             "summary": summary,
             "files": files,
-            "conversation_tail": conversation_tail,
             "timestamp": chrono::Utc::now().to_rfc3339(),
             "processed": false,
         });
@@ -961,12 +870,6 @@ async fn execute_shepherd_tool(
         "forward_port" => common.forward_port_tool(project_id, args).await,
         "list_port_forwards" => common.list_port_forwards_tool(project_id, args).await,
         "close_port_forward" => common.close_port_forward_tool(project_id, args).await,
-        "read_project_focus_view" | "read_canvas" => {
-            common.read_project_focus_view(project_id).await
-        }
-        "update_project_focus_view" | "update_canvas" => {
-            common.update_project_focus_view(project_id, args).await
-        }
         "read_project_retained_context" => common.read_project_retained_context(project_id).await,
         "update_project_retained_context" => {
             common
@@ -1338,50 +1241,6 @@ impl ToolProvider for ShepherdToolProvider {
 
         definitions.extend([
             tool_definition! {
-                name: "read_project_focus_view".to_string(),
-                description: "Read the current project canvas HTML fragment for this project.".to_string(),
-                params: vec![ToolParam::optional("project_id", "int")],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "read_canvas".to_string(),
-                description: "Read the current project canvas HTML fragment for this project.".to_string(),
-                params: vec![ToolParam::optional("project_id", "int")],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "update_project_focus_view".to_string(),
-                description: "Replace the current project canvas HTML fragment for this project.".to_string(),
-                params: vec![
-                    ToolParam::typed("html", "str"),
-                    ToolParam::optional("source", "str"),
-                    ToolParam::optional("project_id", "int"),
-                ],
-                returns: "EditResult".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "update_canvas".to_string(),
-                description: "Replace the current project canvas HTML fragment for this project.".to_string(),
-                params: vec![
-                    ToolParam::typed("html", "str"),
-                    ToolParam::optional("source", "str"),
-                    ToolParam::optional("project_id", "int"),
-                ],
-                returns: "EditResult".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
                 name: "read_project_retained_context".to_string(),
                 description: "Read the current project-level retained context markdown for this project.".to_string(),
                 params: vec![ToolParam::optional("project_id", "int")],
@@ -1405,7 +1264,7 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "emit_knowledge_event".to_string(),
-                description: "Signal the Librarian to record a piece of project knowledge — an idea, decision, observation, risk, or bug discovered during conversation. The Librarian will process it asynchronously; this call returns immediately. Use liberally: if the user expresses intent, makes a decision, or you notice something noteworthy about the codebase, emit an event.".to_string(),
+                description: "Signal the Librarian to update the project knowledge graph or canvas document asynchronously. The Librarian already has the surrounding chat history; only send the concise event summary and any relevant file paths. Use this for durable facts, decisions, issues, and requests to illustrate the canvas.".to_string(),
                 params: vec![
                     ToolParam::typed("kind", "str"),
                     ToolParam::typed("summary", "str"),

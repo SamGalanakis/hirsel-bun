@@ -159,11 +159,14 @@ impl ShepherdChatStore {
     ) -> ShepherdChatResult<Vec<ShepherdChatMessage>> {
         let db = self.db().await;
         let lookup_key = chat_lookup_key(project_id, scope_key);
-        let mut records: Vec<ShepherdChatMessageRecord> =
-            db.select(SHEPHERD_CHAT_MESSAGE_TABLE).await?;
-        records.retain(|record| record.lookup_key == lookup_key);
-        records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
-        records.truncate(limit);
+        let mut result = db
+            .query(
+                "SELECT * FROM shepherd_chat_message WHERE lookup_key = $lookup_key ORDER BY timestamp DESC LIMIT $limit",
+            )
+            .bind(("lookup_key", lookup_key))
+            .bind(("limit", limit as i64))
+            .await?;
+        let mut records: Vec<ShepherdChatMessageRecord> = result.take(0)?;
         records.reverse();
         Ok(records
             .into_iter()
@@ -433,7 +436,6 @@ fn publish_history_event(project_id: Option<i64>, scope_key: Option<&str>) {
         return;
     };
     if let Some(thread_id) = live_updates::scope_thread_id(scope_key) {
-        live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
         live_updates::publish_thread(
             project_id,
             thread_id.to_string(),
@@ -451,7 +453,6 @@ fn publish_activity_event(project_id: Option<i64>, scope_key: Option<&str>) {
         return;
     };
     if let Some(thread_id) = live_updates::scope_thread_id(scope_key) {
-        live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
         live_updates::publish_thread(
             project_id,
             thread_id.to_string(),

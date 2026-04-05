@@ -1,4 +1,4 @@
-import { getWorkspaceFile, type WorkspaceFile } from "@/lib/api";
+import { getKnowledgeGraph, getWorkspaceFile, type WorkspaceFile } from "@/lib/api";
 import { renderCanvasMermaid } from "@/lib/canvas-mermaid";
 
 const VALID_TONES = new Set([
@@ -543,6 +543,48 @@ function currentCanvasProjectId(element: Element): number | null {
   const root = element.closest<HTMLElement>("[data-canvas-project-id]");
   const parsed = Number.parseInt(root?.dataset.canvasProjectId ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+type CachedGraphNode = {
+  kind: string;
+  node_id: string;
+  label: string;
+  summary: string;
+  [key: string]: unknown;
+};
+
+const knowledgeGraphCache = new Map<number, Promise<Map<string, CachedGraphNode>>>();
+
+function nodeKey(kind: string, nodeId: string): string {
+  return `${kind}:${nodeId}`;
+}
+
+async function loadGraphNodeMap(projectId: number): Promise<Map<string, CachedGraphNode>> {
+  const cached = knowledgeGraphCache.get(projectId);
+  if (cached) return cached;
+  const pending = getKnowledgeGraph(projectId).then((graph) => {
+    const map = new Map<string, CachedGraphNode>();
+    for (const node of graph.nodes) {
+      map.set(nodeKey(node.kind, node.node_id), node as CachedGraphNode);
+    }
+    return map;
+  });
+  knowledgeGraphCache.set(projectId, pending);
+  return pending;
+}
+
+function parseNodeAttr(value: string | null): { kind: string; nodeId: string } | null {
+  const raw = value?.trim() ?? "";
+  const index = raw.indexOf(":");
+  if (index <= 0 || index === raw.length - 1) return null;
+  return {
+    kind: raw.slice(0, index).trim(),
+    nodeId: raw.slice(index + 1).trim(),
+  };
+}
+
+function renderNodeError(message: string): string {
+  return `<div class="hirsel-code-empty" data-tone="danger">${escapeHtml(message)}</div>`;
 }
 
 function requestedLineRange(element: Element): { lineStart: number; lineEnd?: number } {
@@ -1973,6 +2015,135 @@ class HirselCodeDiffElement extends HirselCodeFrameElement {
   }
 }
 
+class HirselNodeRefElement extends HTMLElement {
+  connectedCallback(): void {
+    void this.render();
+  }
+
+  async attributeChangedCallback(): Promise<void> {
+    void this.render();
+  }
+
+  static get observedAttributes(): string[] {
+    return ["node"];
+  }
+
+  private async render(): Promise<void> {
+    const projectId = currentCanvasProjectId(this);
+    if (!projectId) {
+      this.innerHTML = renderNodeError("Missing canvas project context for node reference.");
+      return;
+    }
+    const parsed = parseNodeAttr(this.getAttribute("node"));
+    if (!parsed) {
+      this.innerHTML = renderNodeError("Invalid node reference. Expected kind:id.");
+      return;
+    }
+    const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));
+    if (!node) {
+      this.innerHTML = renderNodeError(`Unknown graph node ${parsed.kind}:${parsed.nodeId}.`);
+      return;
+    }
+    this.dataset.hirselReady = "true";
+    this.innerHTML = `<span class="hirsel-fileref-shell"><span class="hirsel-fileref-pill" data-status="default"><span class="hirsel-fileref-label">${escapeHtml(node.label || parsed.nodeId)}</span><span class="hirsel-fileref-path">${escapeHtml(parsed.kind)}</span></span></span>`;
+  }
+}
+
+class HirselNodeFieldElement extends HTMLElement {
+  connectedCallback(): void {
+    void this.render();
+  }
+
+  async attributeChangedCallback(): Promise<void> {
+    void this.render();
+  }
+
+  static get observedAttributes(): string[] {
+    return ["field", "node"];
+  }
+
+  private async render(): Promise<void> {
+    const projectId = currentCanvasProjectId(this);
+    if (!projectId) {
+      this.innerHTML = renderNodeError("Missing canvas project context for node field.");
+      return;
+    }
+    const parsed = parseNodeAttr(this.getAttribute("node"));
+    const field = this.getAttribute("field")?.trim() ?? "";
+    if (!parsed || !field) {
+      this.innerHTML = renderNodeError("hirsel-node-field requires node and field attributes.");
+      return;
+    }
+    const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));
+    if (!node) {
+      this.innerHTML = renderNodeError(`Unknown graph node ${parsed.kind}:${parsed.nodeId}.`);
+      return;
+    }
+    const value = node[field];
+    if (value == null) {
+      this.innerHTML = renderNodeError(`Field '${field}' not found on ${parsed.kind}:${parsed.nodeId}.`);
+      return;
+    }
+    this.dataset.hirselReady = "true";
+    this.innerHTML = `<span>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value))}</span>`;
+  }
+}
+
+class HirselNodeListElement extends HTMLElement {
+  connectedCallback(): void {
+    void this.render();
+  }
+
+  async attributeChangedCallback(): Promise<void> {
+    void this.render();
+  }
+
+  static get observedAttributes(): string[] {
+    return ["node", "relation"];
+  }
+
+  private async render(): Promise<void> {
+    const projectId = currentCanvasProjectId(this);
+    if (!projectId) {
+      this.innerHTML = renderNodeError("Missing canvas project context for node list.");
+      return;
+    }
+    const parsed = parseNodeAttr(this.getAttribute("node"));
+    const relation = this.getAttribute("relation")?.trim() ?? "";
+    if (!parsed || !relation) {
+      this.innerHTML = renderNodeError("hirsel-node-list requires node and relation attributes.");
+      return;
+    }
+    const graph = await getKnowledgeGraph(projectId);
+    const nodes = new Map(graph.nodes.map((node) => [nodeKey(node.kind, node.node_id), node as CachedGraphNode]));
+    const selfKey = nodeKey(parsed.kind, parsed.nodeId);
+    const related = graph.edges
+      .filter((edge) => edge.relation === relation)
+      .flatMap((edge) => {
+        const outKey = String(edge.out && typeof edge.out === "object" ? `${(edge.out as { tb?: string }).tb}:${((edge.out as { id?: unknown }).id as unknown[] | undefined)?.join?.(",") ?? ""}` : edge.out);
+        const inKey = String(edge.in && typeof edge.in === "object" ? `${(edge.in as { tb?: string }).tb}:${((edge.in as { id?: unknown }).id as unknown[] | undefined)?.join?.(",") ?? ""}` : edge.in);
+        if (outKey.includes(selfKey)) {
+          return [inKey];
+        }
+        if (inKey.includes(selfKey)) {
+          return [outKey];
+        }
+        return [];
+      })
+      .map((recordKey) => Array.from(nodes.entries()).find(([key]) => recordKey.includes(key))?.[1])
+      .filter((node): node is CachedGraphNode => Boolean(node));
+
+    this.dataset.hirselReady = "true";
+    if (related.length === 0) {
+      this.innerHTML = '<div class="hirsel-code-empty">No related nodes.</div>';
+      return;
+    }
+    this.innerHTML = `<ul>${related.map((node) => `<li>${escapeHtml(node.label || node.node_id)}</li>`).join("")}</ul>`;
+  }
+}
+
+class HirselDocTargetElement extends HirselNodeRefElement {}
+
 function defineElement(name: string, ctor: CustomElementConstructor): void {
   if (!customElements.get(name)) {
     customElements.define(name, ctor);
@@ -1993,6 +2164,10 @@ export function registerCanvasComponents(): void {
   defineElement("hirsel-disclosure", HirselDisclosureElement);
   defineElement("hirsel-fileref", HirselFileRefElement);
   defineElement("hirsel-filelist", HirselFileListElement);
+  defineElement("hirsel-node-ref", HirselNodeRefElement);
+  defineElement("hirsel-node-field", HirselNodeFieldElement);
+  defineElement("hirsel-node-list", HirselNodeListElement);
+  defineElement("hirsel-doc-target", HirselDocTargetElement);
   defineElement("hirsel-patchset", HirselPatchsetElement);
   defineElement("hirsel-progress", HirselProgressElement);
 }

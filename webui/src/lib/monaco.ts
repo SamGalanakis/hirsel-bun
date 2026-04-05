@@ -1,18 +1,32 @@
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import cssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
-import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
-import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 
-type MonacoNamespace = typeof import("monaco-editor");
+import "monaco-editor/esm/vs/editor/edcore.main.js";
 
-declare global {
-  interface Window {
-    MonacoEnvironment?: {
-      getWorker(_: string, label: string): Worker;
-    };
-  }
-}
+import "monaco-editor/esm/vs/basic-languages/cpp/cpp.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/csharp/csharp.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/css/css.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/dockerfile/dockerfile.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/go/go.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/html/html.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/ini/ini.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/java/java.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/python/python.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/ruby/ruby.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/rust/rust.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/shell/shell.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/sql/sql.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/xml/xml.contribution.js";
+import "monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution.js";
+
+import "monaco-editor/esm/vs/language/json/monaco.contribution.js";
+
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js";
+
+type MonacoNamespace = typeof monaco;
 
 let monacoPromise: Promise<MonacoNamespace> | null = null;
 
@@ -23,17 +37,6 @@ function ensureMonacoEnvironment(): void {
       switch (label) {
         case "json":
           return new jsonWorker();
-        case "css":
-        case "scss":
-        case "less":
-          return new cssWorker();
-        case "html":
-        case "handlebars":
-        case "razor":
-          return new htmlWorker();
-        case "typescript":
-        case "javascript":
-          return new tsWorker();
         default:
           return new editorWorker();
       }
@@ -44,7 +47,7 @@ function ensureMonacoEnvironment(): void {
 export async function loadMonaco(): Promise<MonacoNamespace> {
   if (!monacoPromise) {
     ensureMonacoEnvironment();
-    monacoPromise = import("monaco-editor");
+    monacoPromise = Promise.resolve(monaco);
   }
   return monacoPromise;
 }
@@ -59,7 +62,7 @@ export function monacoLanguageForPath(path: string): string {
   const ext = lower.includes(".") ? lower.split(".").pop() ?? lower : lower;
   const aliases: Record<string, string> = {
     cjs: "javascript",
-    cmake: "cmake",
+    cmake: "plaintext",
     coffee: "coffeescript",
     cpp: "cpp",
     cxx: "cpp",

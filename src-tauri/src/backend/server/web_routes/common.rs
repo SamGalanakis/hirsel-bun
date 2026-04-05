@@ -36,7 +36,7 @@ pub struct ApiProjectPreparation {
     pub updated_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ApiChatMessage {
     pub id: i64,
     pub role: String,
@@ -44,27 +44,27 @@ pub struct ApiChatMessage {
     pub timestamp: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ApiLiveTurn {
     pub chunks_json: String,
     pub status: String,
     pub updated_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ApiSession {
     pub status: String,
     pub last_error: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ApiScopeActivity {
     pub session: Option<ApiSession>,
     pub live_turn: Option<ApiLiveTurn>,
     pub has_active_turn: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ApiThread {
     pub id: String,
     pub project_id: i64,
@@ -77,10 +77,37 @@ pub struct ApiThread {
     pub last_activity_at: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct ApiPlanProgress {
     pub completed: usize,
     pub total: usize,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ApiThreadSummary {
+    pub thread: ApiThread,
+    pub activity: ApiScopeActivity,
+    pub plan_progress: Option<ApiPlanProgress>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ApiThreadDetail {
+    pub thread: ApiThread,
+    pub activity: ApiScopeActivity,
+    pub plan: Option<Value>,
+}
+
+#[derive(Serialize)]
+pub struct ApiWorkspaceSnapshot {
+    pub project: ApiProject,
+    pub project_activity: ApiScopeActivity,
+    pub project_history: Vec<ApiChatMessage>,
+    pub surface: crate::backend::server::web_routes::projects::ApiProjectSurface,
+    pub threads: Vec<ApiThreadSummary>,
+    pub thread_detail: Option<ApiThreadDetail>,
+    pub thread_history: Vec<ApiChatMessage>,
+    pub librarian_activity: ApiScopeActivity,
+    pub librarian_history: Vec<ApiChatMessage>,
 }
 
 pub fn to_api_project(project: &Project) -> ApiProject {

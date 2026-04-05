@@ -1633,7 +1633,7 @@ body, #root {
 .inspector-tab-bar {
   display: flex;
   align-items: stretch;
-  height: 2.25rem;
+  height: 2.5rem;
   border-bottom: 1px solid hsl(var(--border));
   background: hsl(var(--card));
   padding: 0 0.25rem;
@@ -2189,6 +2189,114 @@ body, #root {
   font-size: 0.72rem;
   line-height: 1.6;
   color: hsl(var(--muted-foreground) / 0.6);
+}
+
+/* ── Fit-all button ── */
+
+.kg-fit-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card) / 0.8);
+  backdrop-filter: blur(4px);
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.kg-fit-btn:hover {
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--foreground) / 0.3);
+}
+
+/* ── Tooltip hint line ── */
+
+.kg-tooltip-hint {
+  margin-top: 0.35rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid hsl(var(--border) / 0.5);
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.48rem;
+  letter-spacing: 0.04em;
+  color: hsl(var(--muted-foreground) / 0.45);
+}
+
+.kg-tooltip-edge {
+  padding: 0.4rem 0.6rem;
+}
+
+/* ── Context menu ── */
+
+.kg-context-menu {
+  position: absolute;
+  z-index: 50;
+  min-width: 11rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--card) / 0.96);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--hirsel-shadow-lift);
+  padding: 0.3rem;
+  animation: kg-ctx-in 0.1s ease-out;
+}
+
+@keyframes kg-ctx-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.kg-ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0.4rem 0.55rem;
+  font-size: 0.7rem;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  text-align: left;
+  transition: background 80ms ease;
+}
+
+.kg-ctx-item:hover {
+  background: hsl(var(--secondary) / 0.7);
+}
+
+.kg-ctx-item svg {
+  color: hsl(var(--muted-foreground));
+  flex-shrink: 0;
+}
+
+.kg-ctx-sep {
+  height: 1px;
+  margin: 0.2rem 0.3rem;
+  background: hsl(var(--border));
+}
+
+/* ── Minimap ── */
+
+.kg-minimap {
+  position: absolute;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  z-index: 10;
+  width: 140px;
+  height: 100px;
+  border: 1px solid hsl(var(--border) / 0.5);
+  background: hsl(var(--card) / 0.5);
+  pointer-events: none;
+  opacity: 0.6;
+  transition: opacity 200ms ease;
+}
+
+.kg-root:hover .kg-minimap {
+  opacity: 0.85;
 }
 
 /* ═══════════════════════════════════════

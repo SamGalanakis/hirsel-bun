@@ -20,7 +20,6 @@ static COUNTER_LOCK: Mutex<()> = Mutex::const_new(());
 const APP_SCHEMA: &str = r#"
 DEFINE TABLE IF NOT EXISTS counter SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS project SCHEMALESS;
-DEFINE TABLE IF NOT EXISTS project_focus_view SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS project_retained_context SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS project_runtime_preparation SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS shepherd_chat_message SCHEMALESS;
@@ -32,6 +31,10 @@ DEFINE TABLE IF NOT EXISTS credential SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS librarian_event SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS kg_node SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS kg_edge TYPE RELATION SCHEMALESS;
+DEFINE INDEX IF NOT EXISTS project_name_lower_idx ON TABLE project FIELDS name_lower UNIQUE;
+DEFINE INDEX IF NOT EXISTS shepherd_chat_lookup_idx ON TABLE shepherd_chat_message FIELDS lookup_key;
+DEFINE INDEX IF NOT EXISTS shepherd_thread_project_idx ON TABLE shepherd_thread FIELDS project_id;
+DEFINE INDEX IF NOT EXISTS shepherd_thread_title_idx ON TABLE shepherd_thread FIELDS project_id, title_lower;
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]

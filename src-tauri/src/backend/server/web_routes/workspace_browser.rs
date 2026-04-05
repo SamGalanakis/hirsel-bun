@@ -1,9 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Component, Path as FsPath, PathBuf};
 use std::process::Command;
-use std::time::SystemTime;
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::body::Body;
 use axum::extract::{Multipart, Path, Query};
@@ -27,6 +28,7 @@ const MAX_FILE_SLICE_LINES: usize = 600;
 const MAX_TEXT_PREVIEW_BYTES: usize = 2_000_000;
 const TEXT_SNIFF_BYTES: usize = 8_192;
 const MAX_SEARCH_RESULTS: usize = 250;
+const WORKSPACE_INDEX_TTL: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -159,6 +161,32 @@ struct WorkspaceIndexedFile {
     mime: Option<String>,
     is_text: bool,
 }
+
+#[derive(Debug, Clone)]
+struct WorkspaceTreeIndexEntry {
+    path: String,
+    name: String,
+    kind: String,
+    size: Option<u64>,
+    modified_at: Option<String>,
+    mime: Option<String>,
+    is_text: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkspaceRootIndex {
+    directories: BTreeMap<String, Vec<WorkspaceTreeIndexEntry>>,
+    files: BTreeMap<String, WorkspaceIndexedFile>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedWorkspaceIndex {
+    built_at: Instant,
+    index: Arc<WorkspaceRootIndex>,
+}
+
+static WORKSPACE_INDEX_CACHE: OnceLock<StdMutex<HashMap<String, CachedWorkspaceIndex>>> =
+    OnceLock::new();
 
 #[derive(Debug)]
 enum WorkspaceRootRef {
@@ -433,6 +461,131 @@ fn relative_path(root: &FsPath, path: &FsPath) -> String {
         .replace('\\', "/")
 }
 
+fn workspace_index_cache() -> &'static StdMutex<HashMap<String, CachedWorkspaceIndex>> {
+    WORKSPACE_INDEX_CACHE.get_or_init(|| StdMutex::new(HashMap::new()))
+}
+
+fn workspace_cache_key(root: &FsPath) -> String {
+    root.to_string_lossy().to_string()
+}
+
+fn build_tree_index_entry(
+    root: &FsPath,
+    path: &FsPath,
+    metadata: &std::fs::Metadata,
+) -> WorkspaceTreeIndexEntry {
+    let mime = metadata.is_file().then(|| guess_mime(path)).flatten();
+    let is_text = metadata
+        .is_file()
+        .then(|| guess_text_from_mime(mime.as_deref()))
+        .flatten();
+    WorkspaceTreeIndexEntry {
+        path: relative_path(root, path),
+        name: basename(path),
+        kind: if metadata.is_dir() {
+            "directory".to_string()
+        } else {
+            "file".to_string()
+        },
+        size: metadata.is_file().then_some(metadata.len()),
+        modified_at: metadata.modified().ok().map(system_time_to_iso),
+        mime,
+        is_text,
+    }
+}
+
+fn build_workspace_root_index(root: &FsPath) -> Result<WorkspaceRootIndex, String> {
+    let mut directories: BTreeMap<String, Vec<WorkspaceTreeIndexEntry>> = BTreeMap::new();
+    let mut files = BTreeMap::new();
+    directories.entry(String::new()).or_default();
+
+    for entry in WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != OsStr::new(".git"))
+    {
+        let entry =
+            entry.map_err(|error| format!("failed to walk '{}': {}", root.display(), error))?;
+        let path = entry.path();
+        if path == root {
+            continue;
+        }
+
+        let metadata = entry
+            .metadata()
+            .map_err(|error| format!("failed to stat '{}': {}", path.display(), error))?;
+        let relative = relative_path(root, path);
+        let parent = FsPath::new(&relative)
+            .parent()
+            .map(|value| value.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let tree_entry = build_tree_index_entry(root, path, &metadata);
+        directories.entry(parent).or_default().push(tree_entry);
+
+        if metadata.is_dir() {
+            directories.entry(relative).or_default();
+            continue;
+        }
+
+        let mime = guess_mime(path);
+        let is_text = detect_text_from_path(path, mime.as_deref())?;
+        files.insert(
+            relative,
+            WorkspaceIndexedFile {
+                absolute_path: path.to_path_buf(),
+                size: metadata.len(),
+                mime,
+                is_text,
+            },
+        );
+    }
+
+    for entries in directories.values_mut() {
+        entries.sort_by(|left, right| {
+            (if left.kind == "directory" { 0 } else { 1 })
+                .cmp(&(if right.kind == "directory" { 0 } else { 1 }))
+                .then_with(|| {
+                    left.name
+                        .to_ascii_lowercase()
+                        .cmp(&right.name.to_ascii_lowercase())
+                })
+        });
+    }
+
+    Ok(WorkspaceRootIndex { directories, files })
+}
+
+fn workspace_root_index(root: &FsPath) -> Result<Arc<WorkspaceRootIndex>, String> {
+    let key = workspace_cache_key(root);
+    if let Some(cached) = workspace_index_cache()
+        .lock()
+        .map_err(|_| "workspace index cache lock poisoned".to_string())?
+        .get(&key)
+        .cloned()
+        .filter(|cached| cached.built_at.elapsed() < WORKSPACE_INDEX_TTL)
+    {
+        return Ok(cached.index);
+    }
+
+    let index = Arc::new(build_workspace_root_index(root)?);
+    workspace_index_cache()
+        .lock()
+        .map_err(|_| "workspace index cache lock poisoned".to_string())?
+        .insert(
+            key,
+            CachedWorkspaceIndex {
+                built_at: Instant::now(),
+                index: Arc::clone(&index),
+            },
+        );
+    Ok(index)
+}
+
+fn invalidate_workspace_index(root: &FsPath) {
+    if let Ok(mut cache) = workspace_index_cache().lock() {
+        cache.remove(&workspace_cache_key(root));
+    }
+}
+
 fn guess_mime(path: &FsPath) -> Option<String> {
     mime_guess::from_path(path).first_raw().map(str::to_string)
 }
@@ -489,49 +642,53 @@ fn detect_text_from_path(path: &FsPath, mime: Option<&str>) -> Result<bool, Stri
     Ok(detect_text(&buffer, mime))
 }
 
-fn slice_text(
-    content: &str,
-    line_start: Option<usize>,
-    line_end: Option<usize>,
-) -> (String, usize, usize, usize, bool) {
-    let lines = content.lines().collect::<Vec<_>>();
-    let total_lines = lines.len();
-
-    if line_start.is_none() && line_end.is_none() {
-        return (
-            content.to_string(),
-            if total_lines == 0 { 0 } else { 1 },
-            total_lines,
-            total_lines,
-            false,
-        );
-    }
-
+fn resolve_line_bounds(line_start: Option<usize>, line_end: Option<usize>) -> (usize, usize, bool) {
     let start = line_start.unwrap_or(1).max(1);
     let requested_end =
         line_end.unwrap_or(start.saturating_add(DEFAULT_FILE_SLICE_LINES.saturating_sub(1)));
     let capped_end =
         requested_end.min(start.saturating_add(MAX_FILE_SLICE_LINES.saturating_sub(1)));
-    let truncated = capped_end < requested_end;
+    (start, capped_end, capped_end < requested_end)
+}
 
-    let slice = if start > total_lines {
-        Vec::new()
-    } else {
-        lines
-            .iter()
-            .skip(start.saturating_sub(1))
-            .take(capped_end.saturating_sub(start).saturating_add(1))
-            .map(|line| (*line).to_string())
-            .collect::<Vec<_>>()
-    };
+fn read_text_preview_slice(
+    target: &FsPath,
+    line_start: Option<usize>,
+    line_end: Option<usize>,
+) -> Result<(String, usize, usize, usize, bool), String> {
+    let file = std::fs::File::open(target)
+        .map_err(|error| format!("failed to open '{}': {}", target.display(), error))?;
+    let reader = BufReader::new(file);
+    let (start, end, mut truncated) = resolve_line_bounds(line_start, line_end);
+    let mut total_lines = 0usize;
+    let mut selected = Vec::new();
 
-    let actual_end = if slice.is_empty() {
+    for line in reader.lines() {
+        let line =
+            line.map_err(|error| format!("failed to read '{}': {}", target.display(), error))?;
+        total_lines += 1;
+        if total_lines < start {
+            continue;
+        }
+        if total_lines <= end {
+            selected.push(line);
+            continue;
+        }
+        truncated = true;
+    }
+
+    let actual_end = if selected.is_empty() {
         start.saturating_sub(1)
     } else {
-        start + slice.len() - 1
+        start + selected.len() - 1
     };
-
-    (slice.join("\n"), start, actual_end, total_lines, truncated)
+    Ok((
+        selected.join("\n"),
+        start,
+        actual_end,
+        total_lines,
+        truncated,
+    ))
 }
 
 fn basename(path: &FsPath) -> String {
@@ -655,72 +812,21 @@ fn build_download_headers(path: &FsPath, mime: Option<&str>) -> Result<HeaderMap
     Ok(headers)
 }
 
-fn make_tree_entry(
-    root_id: &str,
-    root: &FsPath,
-    path: PathBuf,
-) -> Result<ApiWorkspaceTreeEntry, String> {
-    let metadata = std::fs::metadata(&path)
-        .map_err(|error| format!("failed to stat '{}': {}", path.display(), error))?;
-    let mime = if metadata.is_file() {
-        guess_mime(&path)
-    } else {
-        None
-    };
-    let is_text = if metadata.is_file() {
-        guess_text_from_mime(mime.as_deref())
-    } else {
-        None
-    };
-
-    Ok(ApiWorkspaceTreeEntry {
+fn to_api_tree_entry(root_id: &str, entry: &WorkspaceTreeIndexEntry) -> ApiWorkspaceTreeEntry {
+    ApiWorkspaceTreeEntry {
         root_id: root_id.to_string(),
-        path: relative_path(root, &path),
-        name: basename(&path),
-        kind: if metadata.is_dir() {
-            "directory".to_string()
-        } else {
-            "file".to_string()
-        },
-        size: metadata.is_file().then_some(metadata.len()),
-        modified_at: metadata.modified().ok().map(system_time_to_iso),
-        mime,
-        is_text,
-    })
+        path: entry.path.clone(),
+        name: entry.name.clone(),
+        kind: entry.kind.clone(),
+        size: entry.size,
+        modified_at: entry.modified_at.clone(),
+        mime: entry.mime.clone(),
+        is_text: entry.is_text,
+    }
 }
 
 fn index_workspace_files(root: &FsPath) -> Result<BTreeMap<String, WorkspaceIndexedFile>, String> {
-    let mut files = BTreeMap::new();
-
-    for entry in WalkDir::new(root)
-        .into_iter()
-        .filter_entry(|entry| entry.file_name() != OsStr::new(".git"))
-    {
-        let entry =
-            entry.map_err(|error| format!("failed to walk '{}': {}", root.display(), error))?;
-        if !entry.file_type().is_file() {
-            continue;
-        }
-
-        let absolute_path = entry.path().to_path_buf();
-        let metadata = entry
-            .metadata()
-            .map_err(|error| format!("failed to stat '{}': {}", absolute_path.display(), error))?;
-        let mime = guess_mime(&absolute_path);
-        let is_text = detect_text_from_path(&absolute_path, mime.as_deref())?;
-
-        files.insert(
-            relative_path(root, &absolute_path),
-            WorkspaceIndexedFile {
-                absolute_path,
-                size: metadata.len(),
-                mime,
-                is_text,
-            },
-        );
-    }
-
-    Ok(files)
+    Ok(workspace_root_index(root)?.files.clone())
 }
 
 fn files_identical(left: &FsPath, right: &FsPath) -> Result<bool, String> {
@@ -843,15 +949,8 @@ fn read_workspace_file_payload(
             error
         )
     })?;
-    let bytes = std::fs::read(target).map_err(|error| {
-        format!(
-            "failed to read workspace file '{}': {}",
-            target.display(),
-            error
-        )
-    })?;
     let mime = guess_mime(target);
-    let is_text = detect_text(&bytes, mime.as_deref());
+    let is_text = detect_text_from_path(target, mime.as_deref())?;
     let modified_at = metadata.modified().ok().map(system_time_to_iso);
 
     if !is_text {
@@ -871,7 +970,7 @@ fn read_workspace_file_payload(
         });
     }
 
-    if bytes.len() > MAX_TEXT_PREVIEW_BYTES {
+    if metadata.len() as usize > MAX_TEXT_PREVIEW_BYTES {
         return Ok(ApiWorkspaceFile {
             root_id: root_id.to_string(),
             path: relative_path(root, target),
@@ -888,15 +987,8 @@ fn read_workspace_file_payload(
         });
     }
 
-    let content = String::from_utf8(bytes).map_err(|error| {
-        format!(
-            "failed to decode workspace file '{}': {}",
-            target.display(),
-            error
-        )
-    })?;
     let (content, line_start, line_end, total_lines, truncated) =
-        slice_text(&content, line_start, line_end);
+        read_text_preview_slice(target, line_start, line_end)?;
 
     Ok(ApiWorkspaceFile {
         root_id: root_id.to_string(),
@@ -1194,32 +1286,17 @@ pub async fn list_workspace_tree(
         ));
     }
 
-    let mut entries = std::fs::read_dir(&target)
-        .map_err(|error| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!(
-                    "failed to read workspace directory '{}': {}",
-                    target.display(),
-                    error
-                ),
-            )
-        })?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_name() != OsStr::new(".git"))
-        .map(|entry| make_tree_entry(&query.root_id, &root_path, entry.path()))
-        .collect::<Result<Vec<_>, _>>()
+    let index = workspace_root_index(&root_path)
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-
-    entries.sort_by(|left, right| {
-        (if left.kind == "directory" { 0 } else { 1 })
-            .cmp(&(if right.kind == "directory" { 0 } else { 1 }))
-            .then_with(|| {
-                left.name
-                    .to_ascii_lowercase()
-                    .cmp(&right.name.to_ascii_lowercase())
-            })
-    });
+    let key = relative_path(&root_path, &target);
+    let entries = index
+        .directories
+        .get(&key)
+        .cloned()
+        .unwrap_or_default()
+        .iter()
+        .map(|entry| to_api_tree_entry(&query.root_id, entry))
+        .collect::<Vec<_>>();
 
     Ok(Json(ApiWorkspaceTree {
         root_id: query.root_id,
@@ -1305,6 +1382,7 @@ pub async fn save_workspace_file(
                 ),
             )
         })?;
+    invalidate_workspace_index(&root_path);
 
     Ok(Json(WorkspaceWriteResponse {
         ok: true,
@@ -1402,6 +1480,7 @@ pub async fn upload_workspace_files(
             )
         })?;
     }
+    invalidate_workspace_index(&root_path);
 
     Ok(Json(WorkspaceWriteResponse {
         ok: true,

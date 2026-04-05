@@ -3,9 +3,11 @@ import {
   type Component,
   For,
   Show,
+  Suspense,
   createEffect,
   createMemo,
   createSignal,
+  lazy,
   on,
   onCleanup,
   onMount,
@@ -16,9 +18,6 @@ import ChatComposer from "@/components/ChatComposer";
 import ChatMessage from "@/components/ChatMessage";
 import ProjectPreparationScreen from "@/components/ProjectPreparationScreen";
 import SettingsForm from "@/components/SettingsForm";
-import KnowledgeGraphView from "@/components/KnowledgeGraphView";
-import TerminalPanel from "@/components/TerminalPanel";
-import WorkspaceBrowser from "@/components/WorkspaceBrowser";
 import { matchesAction } from "@/lib/keybindings";
 import {
   type Project,
@@ -27,15 +26,9 @@ import {
   type ScopeActivity,
   type LiveTurn,
   type LiveUpdateEvent,
-  type ThreadDetail,
   type ThreadSummary,
-  getProject,
-  getProjectActivity,
-  getProjectHistory,
   getProjectPreparation,
-  getProjectSurface,
-  getThread,
-  getThreadHistory,
+  getWorkspaceSnapshot,
   listProjects,
   listThreads,
   retryProjectPreparation,
@@ -45,11 +38,15 @@ import {
   stopThreadChat,
   subscribeProjectEvents,
   triggerKnowledgeScan,
-  getLibrarianActivity,
-  getLibrarianHistory,
   sendLibrarianMessage,
   stopLibrarianChat,
+  deleteProject,
+  saveProjectSettings,
 } from "@/lib/api";
+
+const KnowledgeGraphView = lazy(() => import("@/components/KnowledgeGraphView"));
+const TerminalPanel = lazy(() => import("@/components/TerminalPanel"));
+const WorkspaceBrowser = lazy(() => import("@/components/WorkspaceBrowser"));
 
 interface WorkspacePageProps {
   projectId: number;
@@ -286,6 +283,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
   const [sidebarDragging, setSidebarDragging] = createSignal(false);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [projectSettingsOpen, setProjectSettingsOpen] = createSignal(false);
   const [input, setInput] = createSignal("");
   const [optimisticLiveTurn, setOptimisticLiveTurn] = createSignal<LiveTurn | null>(null);
   const [optimisticTurnStartedAt, setOptimisticTurnStartedAt] = createSignal<string | null>(null);
@@ -342,141 +340,36 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     scheduledRefreshes.set(key, timer);
   };
 
-  const loadProjectShell = async (): Promise<boolean> => {
+  const loadWorkspaceSnapshotResource = async (): Promise<boolean> => {
     try {
-      const [projectList, currentProject, currentThreads] = await Promise.all([
+      const [projectList, snapshot] = await Promise.all([
         listProjects(),
-        getProject(props.projectId),
-        listThreads(props.projectId),
+        getWorkspaceSnapshot(props.projectId, {
+          threadId: props.threadId,
+          librarian: props.librarianView,
+        }),
       ]);
       setProjects(projectList);
-      setProject(currentProject);
-      setThreads(currentThreads);
+      setProject(snapshot.project);
+      setProjectActivity(snapshot.project_activity);
+      setProjectHistory(snapshot.project_history);
+      setProjectSurface(snapshot.surface);
+      setThreads(snapshot.threads);
+      setThreadDetail(snapshot.thread_detail);
+      setThreadHistory(snapshot.thread_history);
+      setLibrarianActivity(snapshot.librarian_activity);
+      setLibrarianHistory(snapshot.librarian_history);
       setConnectionOk(true);
       return true;
     } catch (err) {
       setConnectionOk(false);
-      setError(err instanceof Error ? err.message : "Failed to load project shell");
-      return false;
-    }
-  };
-
-  const loadProjectActivityResource = async (): Promise<boolean> => {
-    try {
-      const activity = await getProjectActivity(props.projectId);
-      setProjectActivity(activity);
-      setConnectionOk(true);
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
-      setError(err instanceof Error ? err.message : "Failed to load project activity");
-      return false;
-    }
-  };
-
-  const loadProjectHistoryResource = async (): Promise<boolean> => {
-    try {
-      const history = await getProjectHistory(props.projectId, { limit: 100 });
-      setProjectHistory(history);
-      setConnectionOk(true);
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
-      setError(err instanceof Error ? err.message : "Failed to load project history");
-      return false;
-    }
-  };
-
-  const loadProjectSurfaceResource = async (): Promise<boolean> => {
-    try {
-      const surface = await getProjectSurface(props.projectId);
-      setProjectSurface(surface);
-      setConnectionOk(true);
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
-      setError(err instanceof Error ? err.message : "Failed to load project surface");
-      return false;
-    }
-  };
-
-  const loadThreadDetailResource = async (): Promise<boolean> => {
-    if (!props.threadId) {
-      setThreadDetail(null);
-      return true;
-    }
-    try {
-      const detail = await getThread(props.projectId, props.threadId);
-      setThreadDetail(detail);
-      setConnectionOk(true);
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
-      setError(err instanceof Error ? err.message : "Failed to load thread detail");
-      return false;
-    }
-  };
-
-  const loadThreadHistoryResource = async (): Promise<boolean> => {
-    if (!props.threadId) {
-      setThreadHistory([]);
-      return true;
-    }
-    try {
-      const history = await getThreadHistory(props.projectId, props.threadId, { limit: 200 });
-      setThreadHistory(history);
-      setConnectionOk(true);
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
-      setError(err instanceof Error ? err.message : "Failed to load thread history");
-      return false;
-    }
-  };
-
-  const loadLibrarianActivityResource = async (): Promise<boolean> => {
-    try {
-      const activity = await getLibrarianActivity(props.projectId);
-      setLibrarianActivity(activity);
-      setConnectionOk(true);
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
-      if (props.librarianView) {
-        setError(err instanceof Error ? err.message : "Failed to load librarian activity");
-      }
-      return false;
-    }
-  };
-
-  const loadLibrarianHistoryResource = async (): Promise<boolean> => {
-    if (!props.librarianView) {
-      setLibrarianHistory([]);
-      return true;
-    }
-    try {
-      const history = await getLibrarianHistory(props.projectId, { limit: 200 });
-      setLibrarianHistory(history);
-      setConnectionOk(true);
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
+      setError(err instanceof Error ? err.message : "Failed to load workspace");
       return false;
     }
   };
 
   const refreshWorkspace = async () => {
-    const results = await Promise.all([
-      loadProjectShell(),
-      loadProjectActivityResource(),
-      loadProjectHistoryResource(),
-      loadProjectSurfaceResource(),
-      loadThreadDetailResource(),
-      loadThreadHistoryResource(),
-      loadLibrarianActivityResource(),
-      loadLibrarianHistoryResource(),
-    ]);
-    if (results.every(Boolean)) {
+    if (await loadWorkspaceSnapshotResource()) {
       setError("");
     }
   };
@@ -513,47 +406,21 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
     switch (event.kind) {
       case "project_changed":
-        scheduleRefresh("project-shell", loadProjectShell);
-        break;
       case "project_surface_changed":
-        scheduleRefresh("project-surface", loadProjectSurfaceResource);
-        break;
       case "project_history_changed":
-        scheduleRefresh("project-history", loadProjectHistoryResource, 60);
-        break;
       case "project_activity_changed":
-        scheduleRefresh("project-activity", loadProjectActivityResource, 60);
-        break;
       case "librarian_history_changed":
-        scheduleRefresh("librarian-history", loadLibrarianHistoryResource, 60);
-        break;
       case "librarian_activity_changed":
-        scheduleRefresh("librarian-activity", loadLibrarianActivityResource, 60);
+        scheduleRefresh("workspace", refreshWorkspace, 60);
         break;
       case "knowledge_graph_changed":
         setKnowledgeGraphReloadToken((current) => current + 1);
         break;
       case "threads_changed":
-        scheduleRefresh("project-shell", loadProjectShell, 80);
-        break;
       case "thread_changed":
-        scheduleRefresh("project-shell", loadProjectShell, 80);
-        if (event.threadId === props.threadId) {
-          scheduleRefresh("thread-detail", loadThreadDetailResource, 60);
-        }
-        break;
       case "thread_history_changed":
-        scheduleRefresh("project-shell", loadProjectShell, 90);
-        if (event.threadId === props.threadId) {
-          scheduleRefresh("thread-detail", loadThreadDetailResource, 60);
-          scheduleRefresh("thread-history", loadThreadHistoryResource, 60);
-        }
-        break;
       case "thread_activity_changed":
-        scheduleRefresh("project-shell", loadProjectShell, 80);
-        if (event.threadId === props.threadId) {
-          scheduleRefresh("thread-detail", loadThreadDetailResource, 60);
-        }
+        scheduleRefresh("workspace", refreshWorkspace, 80);
         break;
       case "project_preparation_changed":
         break;
@@ -588,6 +455,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         clearOptimisticTurn();
         setMobileSidebarOpen(false);
         setSettingsOpen(false);
+        setProjectSettingsOpen(false);
         clearLiveUpdates();
 
         void (async () => {
@@ -617,9 +485,10 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         return;
       }
       if (matchesAction(event, "close-panel")) {
-        if (settingsOpen()) {
+        if (settingsOpen() || projectSettingsOpen()) {
           event.preventDefault();
           setSettingsOpen(false);
+          setProjectSettingsOpen(false);
           return;
         }
         if (terminalOpen()) {
@@ -758,6 +627,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   const activeTitle = () => {
     if (settingsOpen()) return "Settings";
+    if (projectSettingsOpen()) return "Project Settings";
     if (props.librarianView) return "Librarian";
     if (!props.threadId) return ROOT_CHANNEL_LABEL;
     return threadDetail()?.thread.title || activeThreadPanel()?.thread.title || "Untitled Thread";
@@ -814,7 +684,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   const isRunning = () => {
     const optimistic = optimisticLiveTurn();
-    if (optimistic && ["starting", "running", "interrupting"].includes(optimistic.status)) {
+    if (optimistic && ["starting", "running"].includes(optimistic.status)) {
       return true;
     }
     if (props.librarianView) return librarianActivity()?.has_active_turn ?? false;
@@ -878,9 +748,9 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     id === props.projectId ? sortedThreads() : (otherProjectThreads().get(id) ?? []);
 
   const focusHtml = () => {
-    return projectSurface()?.focus_html ?? "";
+    return projectSurface()?.canvas_html ?? "";
   };
-  const focusSource = () => focusSourceLabel(projectSurface()?.focus_source);
+  const focusSource = () => focusSourceLabel(projectSurface()?.canvas_source);
 
   const handleRetryPreparation = async () => {
     setRetryingPreparation(true);
@@ -899,15 +769,9 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   };
 
   const handleStop = async () => {
-    setOptimisticLiveTurn((current) =>
-      current
-        ? {
-            ...current,
-            status: "interrupting",
-            updated_at: new Date().toISOString(),
-          }
-        : current,
-    );
+    // Clear the live turn immediately so the UI doesn't show a lingering "Stopping" bubble.
+    // The backend will persist the interrupted message into history via SSE.
+    setOptimisticLiveTurn(null);
     if (props.librarianView) {
       await stopLibrarianChat(props.projectId);
     } else if (props.threadId) {
@@ -925,11 +789,8 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     setError("");
     try {
       await triggerKnowledgeScan(props.projectId);
-      const [activityOk, historyOk] = await Promise.all([
-        loadLibrarianActivityResource(),
-        loadLibrarianHistoryResource(),
-      ]);
-      if (!activityOk || !historyOk) {
+      const refreshed = await loadWorkspaceSnapshotResource();
+      if (!refreshed) {
         setError("Started librarian scan, but failed to refresh librarian state.");
       }
     } catch (err) {
@@ -1038,7 +899,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
             </a>
           </div>
 
-          <Show when={props.threadId && !settingsOpen()}>
+          <Show when={props.threadId && !settingsOpen() && !projectSettingsOpen()}>
             <span class="hidden text-xs text-muted-foreground md:inline">/</span>
             <span class="hidden max-w-[220px] truncate text-xs text-ink-2 md:inline">
               {activeTitle()}
@@ -1060,7 +921,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 settingsOpen() && "bg-secondary text-foreground",
               )}
               title="Settings"
-              onClick={() => setSettingsOpen((v) => !v)}
+              onClick={() => { setSettingsOpen((v) => !v); setProjectSettingsOpen(false); }}
             >
               <span class="h-[15px] w-[15px]">{settingsIcon()}</span>
             </button>
@@ -1166,7 +1027,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     return (
                       <div class="mt-0.5">
                         {/* ── Project header row ── */}
-                        <div class="flex items-center">
+                        <div class="group/proj flex items-center">
                           <button
                             type="button"
                             class="flex h-7 w-5 shrink-0 items-center justify-center text-muted-foreground/50 transition-colors hover:text-foreground"
@@ -1191,7 +1052,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                 ? "font-medium text-foreground"
                                 : "text-muted-foreground hover:text-foreground",
                             )}
-                            onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); }}
+                            onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                           >
                             <svg viewBox="0 0 16 16" class="h-3 w-3 shrink-0 opacity-40" fill="none" stroke="currentColor" stroke-width="1.5">
                               <path d="M2 5V13H14V5" />
@@ -1199,6 +1060,28 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                             </svg>
                             <span class="truncate">{project.name}</span>
                           </a>
+                          <Show when={isCurrent()}>
+                            <button
+                              type="button"
+                              class={cn(
+                                "flex h-6 w-6 shrink-0 items-center justify-center text-muted-foreground/40 transition-all hover:text-foreground",
+                                projectSettingsOpen() ? "opacity-100 text-foreground" : "opacity-0 group-hover/proj:opacity-100",
+                              )}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setProjectSettingsOpen((v) => !v);
+                                setSettingsOpen(false);
+                              }}
+                              aria-label="Project settings"
+                              title="Project settings"
+                            >
+                              <svg viewBox="0 0 16 16" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="8" cy="8" r="2" />
+                                <path d="M6.7 2.5l-.4 1.2a4.5 4.5 0 0 0-1 .6L4 3.9l-1.3 2.2 1 .9a4.5 4.5 0 0 0 0 1.2l-1 .9L4 11.3l1.3-.4a4.5 4.5 0 0 0 1 .6l.4 1.2h2.6l.4-1.2a4.5 4.5 0 0 0 1-.6l1.3.4 1.3-2.2-1-.9a4.5 4.5 0 0 0 0-1.2l1-.9L12 3.9l-1.3.4a4.5 4.5 0 0 0-1-.6l-.4-1.2z" />
+                              </svg>
+                            </button>
+                          </Show>
                         </div>
 
                         {/* ── Expanded: project channels + threads ── */}
@@ -1211,11 +1094,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                 href={`#project/${project.id}`}
                                 class={cn(
                                   "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                  !props.threadId && !props.librarianView && !settingsOpen()
+                                  !props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
                                     ? "bg-background text-foreground shadow-sm border border-border"
                                     : "text-muted-foreground hover:text-foreground border border-transparent hover:border-border",
                                 )}
-                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); }}
+                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                               >
                                 <span class={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(projectScopeStatus()))} />
                                 <span class="truncate">{ROOT_CHANNEL_LABEL}</span>
@@ -1226,11 +1109,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                 href={`#librarian/${project.id}`}
                                 class={cn(
                                   "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                  props.librarianView && !settingsOpen()
+                                  props.librarianView && !settingsOpen() && !projectSettingsOpen()
                                     ? "bg-background text-foreground shadow-sm border border-border"
                                     : "text-muted-foreground hover:text-foreground border border-transparent hover:border-border",
                                 )}
-                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); }}
+                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                               >
                                 <span class={cn(
                                   "h-1.5 w-1.5 shrink-0 rounded-full",
@@ -1265,11 +1148,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                     href={`#thread/${project.id}/${thread.thread.id}`}
                                     class={cn(
                                       "group flex items-center gap-2 px-2 py-1.5 text-xs transition-all",
-                                      props.threadId === thread.thread.id && isCurrent() && !settingsOpen()
+                                      props.threadId === thread.thread.id && isCurrent() && !settingsOpen() && !projectSettingsOpen()
                                         ? "bg-background text-foreground shadow-sm border border-border"
                                         : "text-muted-foreground hover:text-foreground border border-transparent hover:border-border active:scale-[0.995]",
                                     )}
-                                    onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); }}
+                                    onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                                   >
                                     <span class={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(status()))} />
                                     <span class="flex-1 truncate">{thread.thread.title || "Untitled Thread"}</span>
@@ -1336,10 +1219,10 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 <span class="truncate text-sm font-medium text-foreground">
                   {activeTitle()}
                 </span>
-                <Show when={!settingsOpen()}>
+                <Show when={!settingsOpen() && !projectSettingsOpen()}>
                   <span class={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(activeStatus()))} />
                 </Show>
-                <Show when={!settingsOpen() && !inspectorOpen()}>
+                <Show when={!settingsOpen() && !projectSettingsOpen() && !inspectorOpen()}>
                   <div class="ml-auto flex shrink-0 items-center">
                     <button
                       type="button"
@@ -1354,22 +1237,268 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
               </div>
 
               <Show
-                when={!settingsOpen()}
+                when={!settingsOpen() && !projectSettingsOpen()}
                 fallback={
                   <div class="flex-1 overflow-y-auto chassis-scroll">
-                    <div class="mx-auto max-w-xl px-6 py-6">
-                      <div class="mb-4 flex items-center justify-between">
-                        <span class="text-sm font-medium text-foreground">Settings</span>
-                        <button
-                          type="button"
-                          class="text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
-                          onClick={() => setSettingsOpen(false)}
-                        >
-                          Done
-                        </button>
+                    <Show when={settingsOpen()}>
+                      <div class="mx-auto max-w-xl px-6 py-6">
+                        <div class="mb-4 flex items-center justify-between">
+                          <span class="text-sm font-medium text-foreground">Settings</span>
+                          <button
+                            type="button"
+                            class="text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
+                            onClick={() => setSettingsOpen(false)}
+                          >
+                            Done
+                          </button>
+                        </div>
+                        <SettingsForm onClose={() => setSettingsOpen(false)} />
                       </div>
-                      <SettingsForm onClose={() => setSettingsOpen(false)} />
-                    </div>
+                    </Show>
+                    <Show when={projectSettingsOpen()}>
+                      {(() => {
+                        const proj = () => project();
+                        const [nameVal, setNameVal] = createSignal(proj()?.name ?? "");
+                        const [descVal, setDescVal] = createSignal(proj()?.description ?? "");
+                        const [imageVal, setImageVal] = createSignal(proj()?.sandbox_image ?? "");
+                        const [saving, setSaving] = createSignal(false);
+                        const [confirmDelete, setConfirmDelete] = createSignal(false);
+                        const [statusMsg, setStatusMsg] = createSignal("");
+
+                        createEffect(() => {
+                          const p = proj();
+                          if (p) {
+                            setNameVal(p.name);
+                            setDescVal(p.description ?? "");
+                            setImageVal(p.sandbox_image ?? "");
+                          }
+                        });
+
+                        const isDirty = () => {
+                          const p = proj();
+                          if (!p) return false;
+                          return nameVal() !== p.name
+                            || descVal() !== (p.description ?? "")
+                            || imageVal() !== (p.sandbox_image ?? "");
+                        };
+
+                        const handleSave = async () => {
+                          const p = proj();
+                          if (!p) return;
+                          const name = nameVal().trim();
+                          if (!name) return;
+                          setSaving(true);
+                          setStatusMsg("");
+                          try {
+                            await saveProjectSettings(p.id, {
+                              name,
+                              description: descVal().trim() || null,
+                              sandbox_image: imageVal().trim() || undefined,
+                            });
+                            const updated = await listProjects();
+                            setProjects(updated);
+                            setStatusMsg("Saved");
+                            setTimeout(() => setStatusMsg(""), 2000);
+                          } catch (e) {
+                            setStatusMsg("Failed to save");
+                            console.error("Failed to save project settings", e);
+                          } finally {
+                            setSaving(false);
+                          }
+                        };
+
+                        const handleDelete = async () => {
+                          const p = proj();
+                          if (!p) return;
+                          try {
+                            const currentProjects = projects();
+                            const currentIndex = currentProjects.findIndex((candidate) => candidate.id === p.id);
+                            await deleteProject(p.id);
+                            setProjectSettingsOpen(false);
+                            const updated = await listProjects();
+                            setProjects(updated);
+
+                            if (updated.length === 0) {
+                              window.location.hash = "#new";
+                              return;
+                            }
+
+                            const fallbackIndex = currentIndex < 0
+                              ? 0
+                              : Math.min(currentIndex, updated.length - 1);
+                            window.location.hash = `#project/${updated[fallbackIndex].id}`;
+                          } catch (e) {
+                            console.error("Failed to delete project", e);
+                          }
+                        };
+
+                        const createdAt = () => {
+                          const p = proj();
+                          if (!p?.created_at) return null;
+                          try { return new Date(p.created_at).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }); }
+                          catch { return null; }
+                        };
+
+                        return (
+                          <div class="mx-auto max-w-xl px-6 py-8">
+                            {/* ── Header ── */}
+                            <div class="mb-8 flex items-start justify-between">
+                              <div>
+                                <div class="flex items-center gap-3">
+                                  <div class="flex h-8 w-8 items-center justify-center border border-border bg-card">
+                                    <svg viewBox="0 0 16 16" class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" stroke-width="1.5">
+                                      <path d="M2 5V13H14V5" />
+                                      <path d="M2 5L7 2H9L14 5" />
+                                    </svg>
+                                  </div>
+                                  <div>
+                                    <h2 class="text-sm font-medium text-foreground">{proj()?.name ?? "Project"}</h2>
+                                    <div class="flex items-center gap-2 mt-0.5">
+                                      <span class="font-mono text-[10px] text-muted-foreground/50">ID {proj()?.id}</span>
+                                      <Show when={createdAt()}>
+                                        <span class="text-muted-foreground/25">·</span>
+                                        <span class="font-mono text-[10px] text-muted-foreground/50">Created {createdAt()}</span>
+                                      </Show>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                class="text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
+                                onClick={() => setProjectSettingsOpen(false)}
+                              >
+                                Done
+                              </button>
+                            </div>
+
+                            {/* ── General section ── */}
+                            <div class="space-y-5">
+                              <div class="chassis-label mb-3">General</div>
+
+                              <div class="space-y-1.5">
+                                <label class="text-xs font-medium text-foreground">Name</label>
+                                <input
+                                  type="text"
+                                  class="z-input w-full"
+                                  value={nameVal()}
+                                  onInput={(e) => setNameVal(e.currentTarget.value)}
+                                  onKeyDown={(e) => { if (e.key === "Enter") void handleSave(); }}
+                                />
+                              </div>
+
+                              <div class="space-y-1.5">
+                                <label class="text-xs font-medium text-foreground">Description</label>
+                                <textarea
+                                  class="z-input w-full min-h-[60px] resize-y"
+                                  value={descVal()}
+                                  onInput={(e) => setDescVal(e.currentTarget.value)}
+                                  placeholder="What this project does"
+                                  rows={2}
+                                />
+                              </div>
+                            </div>
+
+                            {/* ── Environment section ── */}
+                            <div class="mt-8 space-y-5">
+                              <div class="chassis-label mb-3">Environment</div>
+
+                              <div class="space-y-1.5">
+                                <label class="text-xs font-medium text-foreground">Sandbox Image</label>
+                                <input
+                                  type="text"
+                                  class="z-input w-full font-mono text-xs"
+                                  value={imageVal()}
+                                  onInput={(e) => setImageVal(e.currentTarget.value)}
+                                  placeholder="e.g. ubuntu:22.04"
+                                />
+                                <p class="text-[11px] text-muted-foreground/60">Docker image used for the project sandbox.</p>
+                              </div>
+                            </div>
+
+                            {/* ── Save bar ── */}
+                            <div class={cn(
+                              "mt-8 flex items-center gap-3 border-t border-border pt-5 transition-opacity",
+                              isDirty() ? "opacity-100" : "opacity-40",
+                            )}>
+                              <button
+                                type="button"
+                                class="z-button-variant-default z-button-size-sm inline-flex items-center gap-1.5"
+                                disabled={saving() || !nameVal().trim() || !isDirty()}
+                                onClick={() => void handleSave()}
+                              >
+                                <Show when={saving()} fallback={<>Save changes</>}>
+                                  <svg class="h-3 w-3 animate-spin-arc" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M8 2a6 6 0 1 0 6 6" />
+                                  </svg>
+                                  Saving
+                                </Show>
+                              </button>
+                              <Show when={statusMsg()}>
+                                <span class={cn(
+                                  "font-mono text-[10px] transition-colors",
+                                  statusMsg() === "Saved" ? "text-signal-green" : "text-signal-red",
+                                )}>
+                                  {statusMsg()}
+                                </span>
+                              </Show>
+                              <Show when={isDirty() && !statusMsg()}>
+                                <span class="font-mono text-[10px] text-muted-foreground/40">Unsaved changes</span>
+                              </Show>
+                            </div>
+
+                            {/* ── Danger zone ── */}
+                            <div class="mt-12 border border-signal-red/15 bg-signal-red/[0.02]">
+                              <div class="flex items-center gap-2 border-b border-signal-red/15 px-4 py-2.5">
+                                <svg viewBox="0 0 16 16" class="h-3 w-3 text-signal-red/50" fill="none" stroke="currentColor" stroke-width="1.5">
+                                  <path d="M8 2L1.5 13h13z" />
+                                  <path d="M8 7v3" />
+                                  <circle cx="8" cy="12" r="0.5" fill="currentColor" />
+                                </svg>
+                                <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-signal-red/60">Danger Zone</span>
+                              </div>
+                              <div class="px-4 py-4">
+                                <div class="flex items-center justify-between">
+                                  <div>
+                                    <div class="text-xs font-medium text-foreground">Delete this project</div>
+                                    <p class="mt-0.5 text-[11px] text-muted-foreground/60">This action cannot be undone. All threads and history will be lost.</p>
+                                  </div>
+                                  <Show
+                                    when={!confirmDelete()}
+                                    fallback={
+                                      <div class="flex items-center gap-2 shrink-0">
+                                        <button
+                                          type="button"
+                                          class="z-button-variant-destructive z-button-size-sm inline-flex items-center"
+                                          onClick={() => void handleDelete()}
+                                        >
+                                          Confirm
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                                          onClick={() => setConfirmDelete(false)}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    }
+                                  >
+                                    <button
+                                      type="button"
+                                      class="shrink-0 border border-signal-red/30 px-3 py-1.5 text-xs text-signal-red/70 transition-colors hover:bg-signal-red/10 hover:text-signal-red"
+                                      onClick={() => setConfirmDelete(true)}
+                                    >
+                                      Delete
+                                    </button>
+                                  </Show>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </Show>
                   </div>
                 }
               >
@@ -1380,7 +1509,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   aria-live="polite"
                   onScroll={updateStickinessFromScroll}
                 >
-                  <div class="mx-auto flex max-w-3xl flex-col gap-1 px-4 py-4">
+                  <div class="mx-auto flex max-w-4xl flex-col gap-4 px-5 py-6">
                     <Show
                       when={
                         (props.threadId ? !!threadDetail() : !!project()) &&
@@ -1510,7 +1639,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 </Show>
 
                 <div class="relative shrink-0 border-t border-border bg-card">
-                  <div class="mx-auto max-w-3xl px-4 py-3">
+                  <div class="mx-auto max-w-4xl px-5 py-3">
                     <ChatComposer
                       projectId={props.projectId}
                       threadId={props.threadId}
@@ -1527,7 +1656,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
               </Show>
             </main>
 
-            <Show when={inspectorOpen() && !settingsOpen()}>
+            <Show when={inspectorOpen() && !settingsOpen() && !projectSettingsOpen()}>
               <Show when={!inspectorFullscreen() && !compactViewport()}>
                 <div
                   class="inspector-resize-handle"
@@ -1626,7 +1755,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
                 <div class="flex-1 overflow-hidden bg-background">
                   <Show when={inspectorTab() === "files"}>
-                    <WorkspaceBrowser projectId={props.projectId} threadId={props.threadId} />
+                    <Suspense
+                      fallback={
+                        <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
+                          loading files...
+                        </div>
+                      }
+                    >
+                      <WorkspaceBrowser projectId={props.projectId} threadId={props.threadId} />
+                    </Suspense>
                   </Show>
                   <Show when={inspectorTab() === "canvas"}>
                     <div class="h-full overflow-y-auto">
@@ -1658,10 +1795,18 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   </Show>
                   <Show when={inspectorTab() === "library"}>
                     <div class="relative h-full">
-                      <KnowledgeGraphView
-                        projectId={props.projectId}
-                        reloadToken={knowledgeGraphReloadToken()}
-                      />
+                      <Suspense
+                        fallback={
+                          <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
+                            loading graph...
+                          </div>
+                        }
+                      >
+                        <KnowledgeGraphView
+                          projectId={props.projectId}
+                          reloadToken={knowledgeGraphReloadToken()}
+                        />
+                      </Suspense>
                       <button
                         type="button"
                         class={cn(
@@ -1692,11 +1837,19 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
             class="shrink-0 border-t border-border"
             style={{ height: `${terminalHeight()}px` }}
           >
-            <TerminalPanel
-              projectId={props.projectId}
-              threads={sortedThreads().map((t) => ({ id: t.thread.id, title: t.thread.title }))}
-              onClose={() => setTerminalOpen(false)}
-            />
+            <Suspense
+              fallback={
+                <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
+                  loading terminal...
+                </div>
+              }
+            >
+              <TerminalPanel
+                projectId={props.projectId}
+                threads={sortedThreads().map((t) => ({ id: t.thread.id, title: t.thread.title }))}
+                onClose={() => setTerminalOpen(false)}
+              />
+            </Suspense>
           </div>
         </Show>
       </div>

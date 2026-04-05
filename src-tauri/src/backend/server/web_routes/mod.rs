@@ -56,6 +56,10 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             get(projects::get_project_surface),
         )
         .route(
+            "/api/projects/{project_id}/workspace-snapshot",
+            get(projects::get_workspace_snapshot),
+        )
+        .route(
             "/api/projects/{project_id}/skills",
             get(skills::list_project_skills),
         )

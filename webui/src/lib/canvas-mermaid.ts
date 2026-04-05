@@ -1,19 +1,26 @@
-import mermaid from "mermaid";
+type MermaidInstance = typeof import("mermaid").default;
 
 type MermaidGlobal = typeof globalThis & {
-  mermaid?: typeof mermaid;
-  __hirselMermaid?: typeof mermaid;
+  mermaid?: MermaidInstance;
+  __hirselMermaid?: MermaidInstance;
 };
 
 let nextDiagramId = 0;
-let preloaded = false;
+let mermaidPromise: Promise<MermaidInstance> | null = null;
+
+function loadMermaid(): Promise<MermaidInstance> {
+  if (!mermaidPromise) {
+    mermaidPromise = import("mermaid").then((module) => module.default);
+  }
+  return mermaidPromise;
+}
 
 function themeColor(style: CSSStyleDeclaration, variable: string, fallback: string): string {
   const raw = style.getPropertyValue(variable).trim();
   return raw ? `hsl(${raw})` : fallback;
 }
 
-function applyMermaidTheme(target: Element): void {
+function applyMermaidTheme(target: Element, mermaid: MermaidInstance): void {
   const style = getComputedStyle(target);
   mermaid.initialize({
     startOnLoad: false,
@@ -58,21 +65,23 @@ function applyMermaidTheme(target: Element): void {
   });
 }
 
-export function preloadCanvasMermaid(): void {
-  if (preloaded) return;
-  applyMermaidTheme(document.documentElement);
+export async function preloadCanvasMermaid(): Promise<void> {
+  const mermaid = await loadMermaid();
+  applyMermaidTheme(document.documentElement, mermaid);
   const global = globalThis as MermaidGlobal;
   global.mermaid = mermaid;
   global.__hirselMermaid = mermaid;
-  preloaded = true;
 }
 
 export async function renderCanvasMermaid(
   source: string,
   target: Element,
 ): Promise<string> {
-  preloadCanvasMermaid();
-  applyMermaidTheme(target);
+  const mermaid = await loadMermaid();
+  applyMermaidTheme(target, mermaid);
+  const global = globalThis as MermaidGlobal;
+  global.mermaid = mermaid;
+  global.__hirselMermaid = mermaid;
   const diagramId = `hirsel-mermaid-${++nextDiagramId}`;
   const { svg } = await mermaid.render(diagramId, source);
   return svg;

@@ -190,7 +190,6 @@ fn publish_session_activity(project_id: Option<i64>, scope_key: &str) {
         return;
     };
     if let Some(thread_id) = live_updates::scope_thread_id(Some(scope_key)) {
-        live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
         live_updates::publish_thread(
             project_id,
             thread_id.to_string(),

@@ -36,8 +36,22 @@ export interface ProjectCreateProbe {
 }
 
 export interface ProjectSurface {
-  focus_html: string | null;
-  focus_source: string | null;
+  canvas_node_id: string | null;
+  canvas_label: string | null;
+  canvas_html: string | null;
+  canvas_source: string | null;
+}
+
+export interface WorkspaceSnapshot {
+  project: Project;
+  project_activity: ScopeActivity;
+  project_history: ChatMessage[];
+  surface: ProjectSurface;
+  threads: ThreadSummary[];
+  thread_detail: ThreadDetail | null;
+  thread_history: ChatMessage[];
+  librarian_activity: ScopeActivity;
+  librarian_history: ChatMessage[];
 }
 
 export type LiveUpdateKind =

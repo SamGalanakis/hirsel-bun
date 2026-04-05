@@ -198,36 +198,17 @@ fn create_main_window(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::
     let backend = config.backend.clone();
     if let Some(url) = backend.url.filter(|value| !value.trim().is_empty()) {
         let api_key = backend.api_key.filter(|value| !value.trim().is_empty());
-        {
-            let rt = tokio::runtime::Runtime::new()
-                .expect("Failed to create tokio runtime for backend bootstrap");
-            let should_open = rt.block_on(async {
-                let client = reqwest::Client::new();
-                let mut request = client.get(format!("{}/health", url.trim_end_matches('/')));
-                if let Some(api_key) = api_key.as_deref() {
-                    request = request.bearer_auth(api_key);
-                }
-                match request.send().await {
-                    Ok(response) => response.status().is_success(),
-                    Err(_) => false,
-                }
-            });
-
-            if should_open {
-                if let Some(api_key) = api_key {
-                    let mut bootstrap = format!("{}/connect/bootstrap", url.trim_end_matches('/'))
-                        .parse::<tauri::Url>()?;
-                    bootstrap
-                        .query_pairs_mut()
-                        .append_pair("api_key", &api_key)
-                        .append_pair("return_to", "/app");
-                    initial_url = WebviewUrl::External(bootstrap);
-                } else {
-                    let app_url =
-                        format!("{}/app", url.trim_end_matches('/')).parse::<tauri::Url>()?;
-                    initial_url = WebviewUrl::External(app_url);
-                }
-            }
+        if let Some(api_key) = api_key {
+            let mut bootstrap =
+                format!("{}/connect/bootstrap", url.trim_end_matches('/')).parse::<tauri::Url>()?;
+            bootstrap
+                .query_pairs_mut()
+                .append_pair("api_key", &api_key)
+                .append_pair("return_to", "/app");
+            initial_url = WebviewUrl::External(bootstrap);
+        } else {
+            let app_url = format!("{}/app", url.trim_end_matches('/')).parse::<tauri::Url>()?;
+            initial_url = WebviewUrl::External(app_url);
         }
     }
 

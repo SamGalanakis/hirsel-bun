@@ -1,3 +1,4 @@
+use crate::backend::documents;
 use crate::backend::draft::StartingPoint;
 use crate::backend::project::{
     CreateProjectRequest, Project, ProjectStore, ProjectSurfaceSnapshot, UpdateProjectRequest,
@@ -37,11 +38,12 @@ pub async fn list_projects() -> Result<Vec<Project>, String> {
 #[tracing::instrument]
 pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapshot, String> {
     let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
-    let focus_view = store
-        .get_project_focus_view(project_id)
+    let _ = store
+        .get_project(project_id)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(ProjectSurfaceSnapshot { focus_view })
+    let canvas = documents::get_canvas_document(project_id).await?;
+    Ok(ProjectSurfaceSnapshot { canvas })
 }
 
 #[tracing::instrument]

@@ -1,13 +1,14 @@
 //! Backend modules for Hirsel.
 //!
 //! The app now centers on projects, a single shepherd conversation, visible
-//! threads, and the canvas artifact.
+//! threads, and document-backed knowledge surfaces such as the canvas.
 
 pub mod api_types;
 pub mod app;
 pub mod config;
 pub mod credentials;
 pub mod db;
+pub mod documents;
 pub mod draft;
 pub mod error;
 pub mod git;

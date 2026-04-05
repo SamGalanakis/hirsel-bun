@@ -74,6 +74,12 @@ pub struct ParsedRepoUrl {
     pub branch: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct RemoteBranchInspection {
+    pub default_branch: Option<String>,
+    pub branches: Vec<String>,
+}
+
 /// Parse a GitHub URL and extract the base repo URL and optional branch
 ///
 /// Handles URLs like:
@@ -139,41 +145,7 @@ pub fn parse_github_url(url: &str) -> ParsedRepoUrl {
 /// Uses git ls-remote to fetch branch names without cloning.
 /// Sets environment variables to prevent hanging on credential prompts.
 pub fn list_remote_branches(url: &str) -> Result<Vec<String>> {
-    use std::process::Command;
-
-    let output = Command::new("git")
-        .args(["ls-remote", "--heads", url])
-        // Prevent git from prompting for credentials (would hang)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        // Prevent SSH from prompting for passwords (would hang)
-        .env(
-            "GIT_SSH_COMMAND",
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
-        )
-        .output()
-        .map_err(|e| GitError::Other(format!("Failed to run git ls-remote: {}", e)))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GitError::Other(format!("git ls-remote failed: {}", stderr)));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut branches: Vec<String> = stdout
-        .lines()
-        .filter_map(|line| {
-            // Format: <sha>\trefs/heads/<branch-name>
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() >= 2 {
-                parts[1].strip_prefix("refs/heads/").map(|s| s.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    branches.sort();
-    Ok(branches)
+    Ok(inspect_remote_branches(url)?.branches)
 }
 
 /// Check whether a specific branch exists on a remote repository.
@@ -204,8 +176,12 @@ pub fn remote_branch_exists(url: &str, branch: &str) -> Result<bool> {
 
 /// Best-effort detection of the remote's default branch via HEAD symref.
 pub fn remote_default_branch(url: &str) -> Result<Option<String>> {
+    Ok(inspect_remote_branches(url)?.default_branch)
+}
+
+pub fn inspect_remote_branches(url: &str) -> Result<RemoteBranchInspection> {
     let output = Command::new("git")
-        .args(["ls-remote", "--symref", url, "HEAD"])
+        .args(["ls-remote", "--symref", "--heads", url, "HEAD"])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env(
             "GIT_SSH_COMMAND",
@@ -220,39 +196,59 @@ pub fn remote_default_branch(url: &str) -> Result<Option<String>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut default_branch = None;
+    let mut branches = Vec::new();
     for line in stdout.lines() {
         if let Some(rest) = line.strip_prefix("ref: refs/heads/") {
             if let Some(branch) = rest.strip_suffix("\tHEAD") {
-                return Ok(Some(branch.to_string()));
+                default_branch = Some(branch.to_string());
+                continue;
+            }
+        }
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 2 {
+            if let Some(branch) = parts[1].strip_prefix("refs/heads/") {
+                branches.push(branch.to_string());
             }
         }
     }
-
-    Ok(None)
+    branches.sort();
+    branches.dedup();
+    Ok(RemoteBranchInspection {
+        default_branch,
+        branches,
+    })
 }
 
 /// Check whether a remote branch contains a specific file at the repository root.
 pub fn remote_branch_has_file(url: &str, branch: &str, path: &str) -> Result<bool> {
-    let temp =
-        TempDir::new().map_err(|e| GitError::Other(format!("Failed to create temp dir: {}", e)))?;
-    let auth_url = get_authenticated_url(url);
+    let spec = format!("{branch}:{path}");
+    let output = Command::new("git")
+        .args(["archive", "--remote", url, spec.as_str()])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env(
+            "GIT_SSH_COMMAND",
+            "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        )
+        .output()
+        .map_err(|e| GitError::Other(format!("Failed to run git archive: {}", e)))?;
 
-    run_git_command(
-        temp.path(),
-        &[
-            "clone",
-            "--depth",
-            "1",
-            "--filter=blob:none",
-            "--branch",
-            branch,
-            "--single-branch",
-            &auth_url,
-            ".",
-        ],
-    )?;
+    if output.status.success() {
+        return Ok(true);
+    }
 
-    Ok(temp.path().join(path).is_file())
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    if stderr.contains("did not match any files")
+        || stderr.contains("not found")
+        || stderr.contains("pathspec")
+    {
+        return Ok(false);
+    }
+
+    Err(GitError::Other(format!(
+        "git archive failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    )))
 }
 
 /// Check whether a remote branch contains a root `flake.nix`.

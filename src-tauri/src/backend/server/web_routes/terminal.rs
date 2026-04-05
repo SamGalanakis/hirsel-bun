@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query};
@@ -365,17 +366,32 @@ fn spawn_reader_thread(
 ) {
     std::thread::spawn(move || {
         let mut buffer = [0u8; 4096];
+        let mut pending = String::new();
+        let mut last_flush = Instant::now();
         loop {
             match reader.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let chunk = String::from_utf8_lossy(&buffer[..n]).to_string();
-                    if tx.send(TerminalEvent::Output(chunk)).is_err() {
+                    pending.push_str(&String::from_utf8_lossy(&buffer[..n]));
+                    let should_flush = pending.len() >= 16_384
+                        || pending.contains('\n')
+                        || last_flush.elapsed() >= Duration::from_millis(16);
+                    if !should_flush {
+                        continue;
+                    }
+                    if tx
+                        .send(TerminalEvent::Output(std::mem::take(&mut pending)))
+                        .is_err()
+                    {
                         break;
                     }
+                    last_flush = Instant::now();
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                 Err(error) => {
+                    if !pending.is_empty() {
+                        let _ = tx.send(TerminalEvent::Output(std::mem::take(&mut pending)));
+                    }
                     let _ = tx.send(TerminalEvent::Error(format!(
                         "terminal read failed: {}",
                         error
@@ -383,6 +399,9 @@ fn spawn_reader_thread(
                     break;
                 }
             }
+        }
+        if !pending.is_empty() {
+            let _ = tx.send(TerminalEvent::Output(pending));
         }
     });
 }
