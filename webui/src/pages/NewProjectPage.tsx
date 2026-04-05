@@ -119,7 +119,13 @@ const NewProjectPage: Component = () => {
           <span class="text-sm font-medium">New project</span>
         </div>
         <Show when={hasProjects()}>
-          <a href="#" class="text-xs text-muted-foreground transition-colors hover:text-foreground">Back</a>
+          <a
+            href="#"
+            class="text-xs text-muted-foreground transition-colors hover:text-foreground"
+            onClick={(e) => { e.preventDefault(); history.back(); }}
+          >
+            Back
+          </a>
         </Show>
       </header>
 

@@ -1,27 +1,31 @@
-import { type Component, type JSX, Show, splitProps } from "solid-js";
+import { type ButtonRootProps, Root } from "@kobalte/core/button";
+import type { PolymorphicProps } from "@kobalte/core/polymorphic";
 import { cva, type VariantProps } from "class-variance-authority";
+import { type ComponentProps, Show, splitProps, type ValidComponent } from "solid-js";
 import { cn } from "@/lib/cn";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 font-body text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50",
+  "group/button z-button inline-flex shrink-0 select-none items-center justify-center whitespace-nowrap outline-none transition-all disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default:
-          "border border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground",
-        primary:
-          "bg-primary text-primary-foreground hover:bg-primary/90",
-        destructive:
-          "bg-destructive text-destructive-foreground hover:bg-destructive/90",
-        ghost:
-          "hover:bg-accent hover:text-accent-foreground",
-        link: "text-foreground underline-offset-4 hover:underline",
+        default: "z-button-variant-outline",
+        primary: "z-button-variant-primary",
+        outline: "z-button-variant-outline",
+        secondary: "z-button-variant-secondary",
+        ghost: "z-button-variant-ghost",
+        destructive: "z-button-variant-destructive",
+        link: "z-button-variant-link",
       },
       size: {
-        default: "h-[38px] px-4 py-2",
-        sm: "h-[34px] px-3 text-xs",
-        lg: "h-[44px] px-6",
-        icon: "h-[38px] w-[38px]",
+        default: "z-button-size-default",
+        xs: "z-button-size-xs",
+        sm: "z-button-size-sm",
+        lg: "z-button-size-lg",
+        icon: "z-button-size-icon",
+        "icon-xs": "z-button-size-icon-xs",
+        "icon-sm": "z-button-size-icon-sm",
+        "icon-lg": "z-button-size-icon-lg",
       },
     },
     defaultVariants: {
@@ -31,56 +35,31 @@ const buttonVariants = cva(
   },
 );
 
-type ButtonProps = JSX.ButtonHTMLAttributes<HTMLButtonElement> &
-  VariantProps<typeof buttonVariants> & {
+type ButtonProps<T extends ValidComponent = "button"> = PolymorphicProps<T, ButtonRootProps<T>> &
+  VariantProps<typeof buttonVariants> &
+  Pick<ComponentProps<T>, "class"> & {
     loading?: boolean;
   };
 
-const Button: Component<ButtonProps> = (props) => {
-  const [local, others] = splitProps(props, [
-    "class",
-    "variant",
-    "size",
-    "loading",
-    "disabled",
-    "children",
-  ]);
-
+const Button = <T extends ValidComponent = "button">(props: ButtonProps<T>) => {
+  const [local, others] = splitProps(props as ButtonProps, ["variant", "size", "class", "loading", "disabled", "children"]);
   return (
-    <button
-      class={cn(
-        buttonVariants({ variant: local.variant, size: local.size }),
-        local.class,
-      )}
+    <Root
+      class={cn(buttonVariants({ variant: local.variant, size: local.size }), local.class)}
+      data-slot="button"
       disabled={local.disabled || local.loading}
       {...others}
     >
       <Show when={local.loading}>
-        <svg
-          class="h-4 w-4 animate-spin"
-          xmlns="http://www.w3.org/2000/svg"
-          fill="none"
-          viewBox="0 0 24 24"
-        >
-          <circle
-            class="opacity-25"
-            cx="12"
-            cy="12"
-            r="10"
-            stroke="currentColor"
-            stroke-width="4"
-          />
-          <path
-            class="opacity-75"
-            fill="currentColor"
-            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-          />
+        <svg class="mr-1.5 h-3.5 w-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
         </svg>
       </Show>
       {local.children}
-    </button>
+    </Root>
   );
 };
 
+export { Button, type ButtonProps, buttonVariants };
 export default Button;
-export { buttonVariants };

@@ -42,6 +42,8 @@ function scopeCanvasStyles(root: HTMLDivElement, scopeSelector: string): void {
 
 const CanvasSurface: Component<{ html: string; projectId: number; class?: string }> = (props) => {
   let rootRef: HTMLDivElement | undefined;
+  let lastHtml: string | undefined;
+  let lastProjectId: number | undefined;
   const instanceId = `hirsel-canvas-${++nextCanvasInstance}`;
   const scopeSelector = `[data-canvas-instance="${instanceId}"]`;
 
@@ -49,10 +51,19 @@ const CanvasSurface: Component<{ html: string; projectId: number; class?: string
     const root = rootRef;
     if (!root) return;
 
+    const html = props.html;
+    const projectId = props.projectId;
+
+    // Skip if content hasn't actually changed — avoids destroying custom
+    // element state (e.g. active tab index) on polling refreshes.
+    if (html === lastHtml && projectId === lastProjectId) return;
+    lastHtml = html;
+    lastProjectId = projectId;
+
     dispatchCanvasTeardown(root);
     root.dataset.canvasInstance = instanceId;
-    root.dataset.canvasProjectId = String(props.projectId);
-    root.innerHTML = sanitizeCanvasHtml(props.html);
+    root.dataset.canvasProjectId = String(projectId);
+    root.innerHTML = sanitizeCanvasHtml(html);
     scopeCanvasStyles(root, scopeSelector);
     runCanvasScripts(root, scopeSelector);
   });
@@ -66,7 +77,7 @@ const CanvasSurface: Component<{ html: string; projectId: number; class?: string
   return (
     <div
       ref={rootRef}
-      class={cn("canvas-html px-5 py-5 md:px-7 md:py-6", props.class)}
+      class={cn("canvas-html px-4 py-4 md:px-6 md:py-5", props.class)}
     />
   );
 };

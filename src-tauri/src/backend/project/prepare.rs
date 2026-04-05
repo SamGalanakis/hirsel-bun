@@ -10,8 +10,8 @@ use crate::backend::credentials::require_tavily_api_key;
 use crate::backend::db::utc_now;
 use crate::backend::sandbox::ensure_sandbox_image_available_with_progress;
 use crate::backend::shepherd_runtime::{
-    get_shepherd_activity, launch_project_survey_thread, prepare_shepherd_session,
-    send_shepherd_message, stop_scope_activity, ShepherdScope,
+    get_shepherd_activity, prepare_shepherd_session, send_shepherd_message, stop_scope_activity,
+    ShepherdScope,
 };
 use crate::backend::workspace::ensure_project_workspace;
 
@@ -167,17 +167,6 @@ async fn save_state(
         .save_project_runtime_preparation(state)
         .await
         .map_err(|error| error.to_string())
-}
-
-fn spawn_survey_if_possible(project_id: i64, has_flake: bool) {
-    if !has_flake {
-        return;
-    }
-    tokio::spawn(async move {
-        if let Err(error) = launch_project_survey_thread(project_id).await {
-            tracing::warn!(project_id, %error, "project survey thread launch failed after runtime preparation");
-        }
-    });
 }
 
 async fn ensure_project_flake(project_id: i64, central_dir: &Path) -> Result<bool, String> {
@@ -404,7 +393,6 @@ async fn run_preparation(project_id: i64) -> Result<(), String> {
         state.updated_at = utc_now();
         save_state(&state).await?;
 
-        spawn_survey_if_possible(project_id, true);
         Ok::<(), String>(())
     }
     .await;

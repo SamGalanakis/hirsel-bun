@@ -1,147 +1,27 @@
 import { type Component, type JSX, createMemo, For, Index, Show } from "solid-js";
 import { createStore, produce } from "solid-js/store";
 import { cn } from "@/lib/cn";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  displayUrl,
+  formatToolJson,
+  getToolDisplayKind,
+  parseChatBlocks,
+  parseToolInput,
+  parseToolOutput,
+  snippetText,
+  toolLabel,
+  type RenderBlock,
+  type ToolChunk,
+} from "@/lib/chat-message-view";
 import { renderMarkdown } from "@/lib/markdown";
+import { openUrl } from "@/lib/open-url";
 
 /* ── Module-level expand state (survives component re-creation from polling) ── */
 
 const [expandedTools, setExpandedTools] = createStore<Record<string, boolean>>({});
 function toggle(id: string) { setExpandedTools(produce((s) => { s[id] = !s[id]; })); }
 function isExpanded(id: string): boolean { return !!expandedTools[id]; }
-
-/* ── Chunk types (backend ShepherdMessageChunk) ── */
-
-interface ToolChunk {
-  type: "tool";
-  id: string;
-  title: string;
-  kind?: string;
-  status: string;
-  input?: string;
-  output?: string;
-}
-
-type Chunk =
-  | { type: "text"; content: string }
-  | { type: "thinking"; content: string }
-  | ToolChunk
-  | { type: "image"; mimeType: string; dataBase64: string; name?: string };
-
-/* ── Render blocks ── */
-
-type RenderBlock =
-  | { kind: "text"; content: string }
-  | { kind: "thinking"; content: string }
-  | { kind: "exploration"; tools: ToolChunk[] }
-  | { kind: "tool"; tool: ToolChunk }
-  | { kind: "image"; src: string; name?: string };
-
-/* ── Tool classification ── */
-
-const EXPLORATION = new Set([
-  "list_workspace", "read_workspace_file", "grep_workspace",
-  "read_file", "grep", "glob", "ls",
-  "read_project_focus_view", "read_canvas", "Canvas",
-  "read_project_retained_context", "Retained Context",
-]);
-
-/* ── Batch flattening ── */
-
-function flattenBatch(batch: ToolChunk): ToolChunk[] {
-  let calls: any[] = [];
-  let results: any[] = [];
-  try { if (batch.input) calls = JSON.parse(batch.input).tool_calls ?? []; } catch { /* */ }
-  try { if (batch.output) results = JSON.parse(batch.output).results ?? []; } catch { /* */ }
-  if (results.length > 0) {
-    return results.map((r: any, i: number) => ({
-      type: "tool" as const, id: `${batch.id}_${i}`,
-      title: r.tool ?? calls[i]?.tool ?? "tool", kind: batch.kind,
-      status: r.success === false ? "failed" : "done",
-      input: calls[i]?.parameters ? JSON.stringify(calls[i].parameters) : undefined,
-      output: (r.success ? r.result : r.error) !== undefined ? JSON.stringify(r.success ? r.result : r.error) : undefined,
-    }));
-  }
-  if (calls.length > 0) {
-    return calls.map((c: any, i: number) => ({
-      type: "tool" as const, id: `${batch.id}_${i}`, title: c.tool, kind: batch.kind,
-      status: "running",
-      input: c.parameters ? JSON.stringify(c.parameters) : undefined, output: undefined,
-    }));
-  }
-  return [batch];
-}
-
-/* ── Block builder: interleave tools with text, merge explorations ── */
-
-function buildBlocks(chunks: Chunk[]): RenderBlock[] {
-  const blocks: RenderBlock[] = [];
-  let explBatch: ToolChunk[] = [];
-
-  const flushExpl = () => {
-    if (explBatch.length > 0) {
-      blocks.push({ kind: "exploration", tools: [...explBatch] });
-      explBatch = [];
-    }
-  };
-
-  const pushTool = (tool: ToolChunk) => {
-    if (EXPLORATION.has(tool.title)) { explBatch.push(tool); }
-    else { flushExpl(); blocks.push({ kind: "tool", tool }); }
-  };
-
-  for (const chunk of chunks) {
-    switch (chunk.type) {
-      case "tool":
-        if (chunk.title === "batch") { for (const c of flattenBatch(chunk)) pushTool(c); }
-        else pushTool(chunk);
-        break;
-      case "text":
-        flushExpl();
-        if (chunk.content.trim()) blocks.push({ kind: "text", content: chunk.content });
-        break;
-      case "thinking":
-        flushExpl();
-        if (chunk.content.trim()) blocks.push({ kind: "thinking", content: chunk.content });
-        break;
-      case "image":
-        flushExpl();
-        blocks.push({ kind: "image", src: `data:${chunk.mimeType};base64,${chunk.dataBase64}`, name: chunk.name });
-        break;
-    }
-  }
-  flushExpl();
-  return blocks;
-}
-
-/* ── JSON helpers ── */
-
-function parseInput(tool: ToolChunk): any {
-  try { return tool.input ? JSON.parse(tool.input) : null; } catch { return null; }
-}
-
-function parseOutput(tool: ToolChunk): any {
-  try { return tool.output ? JSON.parse(tool.output) : null; } catch { return null; }
-}
-
-function formatJson(raw: string): string {
-  try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw; }
-}
-
-function inlineText(s: string): string {
-  return s.split(/\s+/).join(" ");
-}
-
-function snippet(s: string, max: number): string {
-  const compact = inlineText(s);
-  return compact.length > max ? compact.slice(0, max) + "..." : compact;
-}
-
-function displayUrl(url: string): string {
-  try {
-    const u = new URL(url);
-    return u.hostname + (u.pathname.length > 1 ? u.pathname : "");
-  } catch { return url; }
-}
 
 /* ── Status rendering ── */
 
@@ -203,6 +83,59 @@ function IcoCircle() {
 function IcoCompass() {
   return <svg class={svgBase} {...svgAttrs}><circle cx="8" cy="8" r="5.5"/><path d="M10.5 5.5l-2 3-3 1.5 2-3z" fill="currentColor"/></svg>;
 }
+function IcoSlash() {
+  return <svg class={svgBase} {...svgAttrs}><path d="M11.5 2.5L4.5 13.5"/></svg>;
+}
+
+function iconForTool(name: string): () => JSX.Element {
+  switch (name) {
+    case "list_threads":
+    case "create_thread":
+    case "rename_thread":
+    case "set_thread_status":
+    case "archive_thread":
+    case "delete_thread":
+    case "send_thread_message":
+    case "read_thread_updates":
+      return IcoThread;
+    case "list_workspace":
+    case "ls":
+      return IcoList;
+    case "read_workspace_file":
+    case "read_file":
+      return IcoFile;
+    case "grep_workspace":
+    case "grep":
+    case "glob":
+      return IcoSearch;
+    default: {
+      switch (getToolDisplayKind(name)) {
+        case "plan":
+          return IcoChecklist;
+        case "shell":
+          return IcoCircle;
+        case "patch":
+          return IcoPatch;
+        case "web-search":
+        case "preview":
+          return IcoGlobe;
+        case "fetch":
+          return IcoLink;
+        case "canvas":
+          return IcoFrame;
+        case "context":
+          return IcoLayers;
+        default:
+          return IcoCircle;
+      }
+    }
+  }
+}
+
+function renderToolIcon(name: string): JSX.Element {
+  const Icon = iconForTool(name);
+  return <Icon />;
+}
 
 /* ── Shared styles ── */
 
@@ -216,16 +149,16 @@ const DetailPanel: Component<{ tool: ToolChunk; borderColor?: string }> = (props
     <Show when={props.tool.input}>
       <div class="px-2.5 pt-2">
         <span class="chassis-label">Input</span>
-        <pre class="mt-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
-          {formatJson(props.tool.input!)}
+        <pre class="mt-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+          {formatToolJson(props.tool.input!)}
         </pre>
       </div>
     </Show>
     <Show when={props.tool.output}>
       <div class={props.tool.input ? "border-t border-border/30 px-2.5 py-2" : "px-2.5 py-2"}>
         <span class="chassis-label">Output</span>
-        <pre class="mt-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
-          {formatJson(props.tool.output!)}
+        <pre class="mt-1 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-80 overflow-y-auto">
+          {formatToolJson(props.tool.output!)}
         </pre>
       </div>
     </Show>
@@ -248,9 +181,11 @@ const Chevron: Component<{ open: boolean }> = (props) => (
 /* ── Shell command (exec_command) ── */
 
 const ShellBlock: Component<{ tool: ToolChunk }> = (props) => {
-  const inp = () => parseInput(props.tool);
-  const out = () => parseOutput(props.tool);
+  const inp = () => parseToolInput(props.tool);
+  const out = () => parseToolOutput(props.tool);
   const cmd = () => inp()?.cmd ?? inp()?.command ?? "command";
+  const targetKind = () => out()?.target_kind ?? null;
+  const threadId = () => out()?.thread_id ?? inp()?.thread_id ?? null;
   const exitCode = () => out()?.exit_code ?? null;
   const shellOutput = () => out()?.output ?? null;
   const failed = () => isFailed(props.tool.status) || (exitCode() !== null && exitCode() !== 0);
@@ -265,7 +200,12 @@ const ShellBlock: Component<{ tool: ToolChunk }> = (props) => {
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", failed() ? "bg-signal-red" : statusDot(props.tool.status))} />
         <span class={cn("font-mono text-xs shrink-0", failed() ? "text-signal-red" : "text-muted-foreground")}>$</span>
-        <span class="font-mono text-xs truncate">{snippet(cmd(), 80)}</span>
+        <span class="font-mono text-xs truncate">{snippetText(cmd(), 80)}</span>
+        <Show when={targetKind() === "thread" && threadId()}>
+          <span class="shrink-0 border border-signal-blue/30 bg-signal-blue/10 px-1.5 py-0.5 font-mono text-[10px] text-signal-blue">
+            @{threadId()}
+          </span>
+        </Show>
         <Show when={exitCode() !== null && exitCode() !== 0}>
           <span class="font-mono text-[11px] text-signal-red shrink-0">exit {exitCode()}</span>
         </Show>
@@ -273,7 +213,7 @@ const ShellBlock: Component<{ tool: ToolChunk }> = (props) => {
       </button>
       <Show when={expanded() && shellOutput()}>
         <div class={cn(toolPanel, failed() && "border-l-2 border-l-signal-red/40")}>
-          <pre class="p-2.5 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+          <pre class="p-2.5 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-80 overflow-y-auto">
             {shellOutput()}
           </pre>
         </div>
@@ -285,7 +225,7 @@ const ShellBlock: Component<{ tool: ToolChunk }> = (props) => {
 /* ── Patch / edit (apply_patch) ── */
 
 const PatchBlock: Component<{ tool: ToolChunk }> = (props) => {
-  const out = () => parseOutput(props.tool);
+  const out = () => parseToolOutput(props.tool);
   const expanded = () => isExpanded(props.tool.id);
 
   const files = (): Array<{ path: string; status: string; added: number; removed: number; diff?: string }> => {
@@ -336,7 +276,7 @@ const PatchBlock: Component<{ tool: ToolChunk }> = (props) => {
                   <span class="font-mono text-[11px] text-signal-red">-{f.removed}</span>
                 </div>
                 <Show when={f.diff}>
-                  <pre class="px-2.5 py-1.5 font-mono text-[11px] whitespace-pre-wrap break-all max-h-40 overflow-y-auto">
+                  <pre class="px-2.5 py-1.5 font-mono text-[11px] whitespace-pre-wrap break-all max-h-64 overflow-y-auto">
                     <For each={f.diff!.split("\n")}>
                       {(line) => {
                         const color = line.startsWith("+") ? "text-signal-green"
@@ -360,8 +300,8 @@ const PatchBlock: Component<{ tool: ToolChunk }> = (props) => {
 /* ── Web search (search_web) ── */
 
 const WebSearchBlock: Component<{ tool: ToolChunk }> = (props) => {
-  const inp = () => parseInput(props.tool);
-  const out = () => parseOutput(props.tool);
+  const inp = () => parseToolInput(props.tool);
+  const out = () => parseToolOutput(props.tool);
   const query = () => inp()?.query ?? "web";
   const expanded = () => isExpanded(props.tool.id);
   const results = (): Array<{ title: string; url: string }> => {
@@ -380,18 +320,18 @@ const WebSearchBlock: Component<{ tool: ToolChunk }> = (props) => {
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
         <span class="shrink-0"><IcoGlobe /></span>
-        <span class="font-body text-xs">searched "{snippet(query(), 50)}"</span>
+        <span class="font-body text-xs">searched "{snippetText(query(), 50)}"</span>
         <span class="ml-auto"><Chevron open={expanded()} /></span>
       </button>
       <Show when={expanded()}>
         <div class={cn(toolPanel, "p-2.5 space-y-1")}>
           <Show when={answer()}>
-            <div class="text-[11px] text-muted-foreground leading-relaxed">{snippet(answer()!, 200)}</div>
+            <div class="text-[11px] text-muted-foreground leading-relaxed">{snippetText(answer()!, 200)}</div>
           </Show>
           <For each={results()}>
             {(r) => (
               <div class="flex items-baseline gap-1.5 text-[11px]">
-                <span class="truncate text-foreground/80">{r.title ? snippet(r.title, 48) : ""}</span>
+                <span class="truncate text-foreground/80">{r.title ? snippetText(r.title, 48) : ""}</span>
                 <Show when={r.url}>
                   <span class="shrink-0 font-mono text-muted-foreground/50">{displayUrl(r.url)}</span>
                 </Show>
@@ -407,8 +347,8 @@ const WebSearchBlock: Component<{ tool: ToolChunk }> = (props) => {
 /* ── Fetch URL (fetch_url) ── */
 
 const FetchBlock: Component<{ tool: ToolChunk }> = (props) => {
-  const inp = () => parseInput(props.tool);
-  const out = () => parseOutput(props.tool);
+  const inp = () => parseToolInput(props.tool);
+  const out = () => parseToolOutput(props.tool);
   const url = () => inp()?.url ?? "url";
   const expanded = () => isExpanded(props.tool.id);
   const text = () => {
@@ -434,7 +374,7 @@ const FetchBlock: Component<{ tool: ToolChunk }> = (props) => {
       <Show when={expanded() && text()}>
         <div class={toolPanel}>
           <pre class="p-2.5 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
-            {snippet(text()!, 2000)}
+            {snippetText(text()!, 3000)}
           </pre>
         </div>
       </Show>
@@ -445,11 +385,10 @@ const FetchBlock: Component<{ tool: ToolChunk }> = (props) => {
 /* ── Thread tools ── */
 
 const ThreadBlock: Component<{ tool: ToolChunk }> = (props) => {
-  const m = () => TOOL_META[props.tool.title] ?? { icon: IcoCircle, label: props.tool.title };
   const expanded = () => isExpanded(props.tool.id);
   const hasDetail = () => !!(props.tool.input || props.tool.output);
-  const out = () => parseOutput(props.tool);
-  const inp = () => parseInput(props.tool);
+  const out = () => parseToolOutput(props.tool);
+  const inp = () => parseToolInput(props.tool);
   const threadTitle = () => out()?.thread?.title ?? inp()?.title ?? inp()?.new_title ?? null;
   const threadStatus = () => out()?.thread?.status ?? inp()?.status ?? null;
 
@@ -462,8 +401,8 @@ const ThreadBlock: Component<{ tool: ToolChunk }> = (props) => {
         disabled={!hasDetail()}
       >
         <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
-        <span class="flex w-3.5 items-center justify-center shrink-0">{m().icon()}</span>
-        <span class="font-body text-xs">{m().label}</span>
+        <span class="flex w-3.5 items-center justify-center shrink-0">{renderToolIcon(props.tool.title)}</span>
+        <span class="font-body text-xs">{toolLabel(props.tool.title)}</span>
         <Show when={threadTitle()}>
           <span class="font-medium text-foreground truncate">{threadTitle()}</span>
         </Show>
@@ -539,6 +478,94 @@ const ContextBlock: Component<{ tool: ToolChunk }> = (props) => {
   );
 };
 
+/* ── Preview forwarding ── */
+
+const PreviewBlock: Component<{ tool: ToolChunk }> = (props) => {
+  const out = () => parseToolOutput(props.tool);
+  const expanded = () => isExpanded(props.tool.id);
+  const forwards = () => {
+    const output = out();
+    if (Array.isArray(output?.forwards)) return output.forwards;
+    if (output?.forward) return [output.forward];
+    return [];
+  };
+  const isClose = () => props.tool.title === "close_port_forward" || props.tool.title === "Close Port Forward";
+  const firstForward = () => forwards()[0];
+  const forwardLabel = (forward: { label?: string }) => {
+    const label = forward.label?.trim();
+    return label && label.length > 0 ? label : "Preview";
+  };
+  const summary = () => {
+    const items = forwards();
+    if (isClose()) {
+      if (!outputWasClosed()) return "Preview was already closed";
+      return items.length === 1 ? `Closed ${forwardLabel(firstForward())}` : "Closed preview";
+    }
+    if (items.length === 0) return "No active previews";
+    if (items.length === 1) {
+      return `Forwarded ${forwardLabel(firstForward())}`;
+    }
+    return `${items.length} active previews`;
+  };
+  const outputWasClosed = () => !!out()?.closed;
+
+  return (
+    <div class="text-xs">
+      <button
+        type="button"
+        class={cn(toolTrigger, "hover:text-foreground")}
+        onClick={() => toggle(props.tool.id)}
+      >
+        <span class={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot(props.tool.status))} />
+        <span class="shrink-0"><IcoGlobe /></span>
+        <span class="font-body text-xs truncate">{summary()}</span>
+        <span class="ml-auto"><Chevron open={expanded()} /></span>
+      </button>
+      <Show when={expanded()}>
+        <div class={cn(toolPanel, "space-y-2 p-2.5")}>
+          <Show when={forwards().length === 0}>
+            <div class="text-[11px] text-muted-foreground">No forwarded previews.</div>
+          </Show>
+          <For each={forwards()}>
+            {(forward) => (
+              <div class="border border-border/40 bg-background/80 p-2">
+                <div class="flex items-center gap-2">
+                  <span class="border border-signal-blue/25 bg-signal-blue/10 px-1.5 py-0.5 font-mono text-[10px] text-signal-blue">
+                    @{forward.threadId}
+                  </span>
+                  <span class="font-mono text-[11px] text-foreground">{forward.port}</span>
+                  <span class="text-[11px] text-muted-foreground">{forwardLabel(forward)}</span>
+                </div>
+                <div class="mt-2 space-y-1">
+                  <div class="flex items-center gap-2">
+                    <span class="w-14 shrink-0 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">User</span>
+                    <button
+                      type="button"
+                      class="truncate text-left font-mono text-[11px] text-signal-blue hover:underline"
+                      onClick={() => void openUrl(forward.userUrl)}
+                    >
+                      {forward.userUrl}
+                    </button>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-14 shrink-0 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">Shepherd</span>
+                    <span class="truncate font-mono text-[11px] text-muted-foreground">
+                      {forward.shepherdUrl}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </For>
+          <Show when={props.tool.input || props.tool.output}>
+            <DetailPanel tool={props.tool} borderColor="border-l-signal-blue/20" />
+          </Show>
+        </div>
+      </Show>
+    </div>
+  );
+};
+
 /* ── Generic tool fallback ── */
 
 const GenericBlock: Component<{ tool: ToolChunk }> = (props) => {
@@ -568,26 +595,6 @@ const GenericBlock: Component<{ tool: ToolChunk }> = (props) => {
   );
 };
 
-/* ── Tool metadata (for exploration + thread blocks) ── */
-
-const TOOL_META: Record<string, { icon: () => JSX.Element; label: string }> = {
-  list_threads:       { icon: IcoThread, label: "List threads" },
-  create_thread:      { icon: IcoThread, label: "Create thread" },
-  rename_thread:      { icon: IcoPencil, label: "Rename thread" },
-  set_thread_status:  { icon: IcoThread, label: "Set status" },
-  archive_thread:     { icon: IcoThread, label: "Archive thread" },
-  delete_thread:      { icon: IcoThread, label: "Delete thread" },
-  send_thread_message:{ icon: IcoThread, label: "Message thread" },
-  read_thread_updates:{ icon: IcoThread, label: "Read thread" },
-  list_workspace:     { icon: IcoList,   label: "List" },
-  read_workspace_file:{ icon: IcoFile,   label: "Read" },
-  grep_workspace:     { icon: IcoSearch, label: "Search" },
-  read_file:          { icon: IcoFile,   label: "Read" },
-  grep:               { icon: IcoSearch, label: "Search" },
-  glob:               { icon: IcoSearch, label: "Glob" },
-  ls:                 { icon: IcoList,   label: "List" },
-};
-
 /* ── Exploration group: merged consecutive reads/greps/lists ── */
 
 const ExplorationGroup: Component<{ tools: ToolChunk[] }> = (props) => {
@@ -603,7 +610,7 @@ const ExplorationGroup: Component<{ tools: ToolChunk[] }> = (props) => {
     const globs: string[] = [];
     const lists: string[] = [];
     for (const tool of props.tools) {
-      const inp = parseInput(tool);
+      const inp = parseToolInput(tool);
       const subj = inp?.path ?? inp?.pattern ?? ".";
       const name = tool.title;
       if (name === "read_file" || name === "read_workspace_file") reads.push(subj);
@@ -612,11 +619,16 @@ const ExplorationGroup: Component<{ tools: ToolChunk[] }> = (props) => {
       else if (name === "ls" || name === "list_workspace") lists.push(subj);
       else reads.push(subj); // canvas/context reads
     }
+    const fmt = (verb: string, items: string[]) => {
+      const unique = dedupe(items);
+      if (unique.length <= 3) return `${verb} ${unique.join(", ")}`;
+      return `${verb} ${unique.slice(0, 3).join(", ")} +${unique.length - 3} more`;
+    };
     const lines: string[] = [];
-    if (searches.length) lines.push(`Search ${dedupe(searches).join(", ")}`);
-    if (reads.length) lines.push(`Read ${dedupe(reads).join(", ")}`);
-    if (globs.length) lines.push(`Glob ${dedupe(globs).join(", ")}`);
-    if (lists.length) lines.push(`List ${dedupe(lists).join(", ")}`);
+    if (searches.length) lines.push(fmt("Search", searches));
+    if (reads.length) lines.push(fmt("Read", reads));
+    if (globs.length) lines.push(fmt("Glob", globs));
+    if (lists.length) lines.push(fmt("List", lists));
     return lines;
   };
 
@@ -651,8 +663,7 @@ const ExplorationGroup: Component<{ tools: ToolChunk[] }> = (props) => {
 };
 
 const ExplorationLine: Component<{ tool: ToolChunk }> = (props) => {
-  const m = () => TOOL_META[props.tool.title] ?? { icon: IcoFile, label: props.tool.title };
-  const inp = () => parseInput(props.tool);
+  const inp = () => parseToolInput(props.tool);
   const subj = () => inp()?.path ?? inp()?.pattern ?? null;
   const expanded = () => isExpanded(props.tool.id);
   const hasDetail = () => !!(props.tool.input || props.tool.output);
@@ -665,8 +676,8 @@ const ExplorationLine: Component<{ tool: ToolChunk }> = (props) => {
         onClick={() => hasDetail() && toggle(props.tool.id)}
         disabled={!hasDetail()}
       >
-        <span class="flex w-3.5 items-center justify-center shrink-0 text-muted-foreground/60">{m().icon()}</span>
-        <span class="font-body text-xs">{m().label}</span>
+        <span class="flex w-3.5 items-center justify-center shrink-0 text-muted-foreground/60">{renderToolIcon(props.tool.title)}</span>
+        <span class="font-body text-xs">{toolLabel(props.tool.title)}</span>
         <Show when={subj()}>
           <span class="font-mono text-muted-foreground/60 truncate">{subj()}</span>
         </Show>
@@ -677,8 +688,8 @@ const ExplorationLine: Component<{ tool: ToolChunk }> = (props) => {
       <Show when={expanded()}>
         <div class="mx-2 mb-1 border border-border/30 bg-background/40 overflow-hidden">
           <Show when={props.tool.output}>
-            <pre class="p-2 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
-              {formatJson(props.tool.output!)}
+            <pre class="p-2 font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
+              {formatToolJson(props.tool.output!)}
             </pre>
           </Show>
         </div>
@@ -687,30 +698,10 @@ const ExplorationLine: Component<{ tool: ToolChunk }> = (props) => {
   );
 };
 
-/* ── Tool block dispatcher ── */
-
-const THREAD_TOOLS = new Set([
-  "list_threads", "create_thread", "rename_thread", "set_thread_status",
-  "archive_thread", "delete_thread", "send_thread_message", "read_thread_updates",
-  // Mapped titles from backend
-  "Threads", "Create Thread", "Rename Thread", "Thread Status",
-  "Archive Thread", "Delete Thread", "Message Thread", "Thread Updates",
-]);
-
-const CANVAS_TOOLS = new Set([
-  "read_project_focus_view", "read_canvas", "update_project_focus_view", "update_canvas",
-  "Canvas", "Canvas Update",
-]);
-
-const CONTEXT_TOOLS = new Set([
-  "read_project_retained_context", "update_project_retained_context",
-  "Retained Context", "Retained Context Update",
-]);
-
 /* ── Plan update — compact summary (full plan lives in the panel above chat) ── */
 
 const PlanBlock: Component<{ tool: ToolChunk }> = (props) => {
-  const inp = () => parseInput(props.tool);
+  const inp = () => parseToolInput(props.tool);
   const steps = (): Array<{ step: string; status: string }> => {
     const p = inp()?.plan;
     if (!Array.isArray(p)) return [];
@@ -740,16 +731,28 @@ const PlanBlock: Component<{ tool: ToolChunk }> = (props) => {
 /* ── Tool block dispatcher ── */
 
 function ToolBlock(props: { tool: ToolChunk }) {
-  const name = props.tool.title;
-  if (name === "update_plan" || name === "Plan Update") return <PlanBlock tool={props.tool} />;
-  if (name === "exec_command" || name === "write_stdin") return <ShellBlock tool={props.tool} />;
-  if (name === "apply_patch") return <PatchBlock tool={props.tool} />;
-  if (name === "search_web") return <WebSearchBlock tool={props.tool} />;
-  if (name === "fetch_url") return <FetchBlock tool={props.tool} />;
-  if (THREAD_TOOLS.has(name)) return <ThreadBlock tool={props.tool} />;
-  if (CANVAS_TOOLS.has(name)) return <CanvasBlock tool={props.tool} />;
-  if (CONTEXT_TOOLS.has(name)) return <ContextBlock tool={props.tool} />;
-  return <GenericBlock tool={props.tool} />;
+  switch (getToolDisplayKind(props.tool.title)) {
+    case "plan":
+      return <PlanBlock tool={props.tool} />;
+    case "shell":
+      return <ShellBlock tool={props.tool} />;
+    case "patch":
+      return <PatchBlock tool={props.tool} />;
+    case "web-search":
+      return <WebSearchBlock tool={props.tool} />;
+    case "fetch":
+      return <FetchBlock tool={props.tool} />;
+    case "thread":
+      return <ThreadBlock tool={props.tool} />;
+    case "canvas":
+      return <CanvasBlock tool={props.tool} />;
+    case "context":
+      return <ContextBlock tool={props.tool} />;
+    case "preview":
+      return <PreviewBlock tool={props.tool} />;
+    default:
+      return <GenericBlock tool={props.tool} />;
+  }
 }
 
 /* ── Utility ── */
@@ -759,6 +762,133 @@ function dedupe(arr: string[]): string[] {
   return arr.filter((v) => { if (seen.has(v)) return false; seen.add(v); return true; });
 }
 
+function formatFileRefLabel(block: Extract<RenderBlock, { kind: "fileRef" }>): string {
+  if (!block.lineStart) {
+    return `@${block.path}`;
+  }
+  if (block.lineEnd && block.lineEnd !== block.lineStart) {
+    return `@${block.path}:${block.lineStart}-${block.lineEnd}`;
+  }
+  return `@${block.path}:${block.lineStart}`;
+}
+
+function renderBlock(block: RenderBlock, isUser: boolean): JSX.Element {
+  switch (block.kind) {
+    case "text":
+      return (
+        <div
+          class={cn(
+            "markdown-body text-sm leading-relaxed",
+            "text-foreground",
+          )}
+          innerHTML={renderMarkdown(block.content)}
+        />
+      );
+    case "notice": {
+      const toneClass = block.tone === "warning"
+        ? "border-signal-amber/30 bg-signal-amber/10 text-signal-amber"
+        : block.tone === "danger"
+          ? "border-signal-red/30 bg-signal-red/10 text-signal-red"
+          : block.tone === "success"
+            ? "border-signal-green/30 bg-signal-green/10 text-signal-green"
+            : "border-border/60 bg-background/60 text-foreground";
+      return (
+        <div class={cn("my-1 border px-3 py-2 text-xs", toneClass)}>
+          <Show when={block.title}>
+            <div class="mb-0.5 font-medium">{block.title}</div>
+          </Show>
+          <div class="leading-relaxed">{block.content}</div>
+        </div>
+      );
+    }
+    case "thinking":
+      return (
+        <Collapsible class="group/think">
+          <CollapsibleTrigger class="flex cursor-pointer items-center gap-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
+            <svg class="h-3 w-3 transition-transform group-data-[expanded]/think:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="9 6 15 12 9 18" />
+            </svg>
+            Thinking
+          </CollapsibleTrigger>
+          <CollapsibleContent class="mt-1 ml-[22px] border-l border-border/50 pl-3 text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap overflow-hidden animate-accordion-down data-[closed]:animate-accordion-up">{block.content}</CollapsibleContent>
+        </Collapsible>
+      );
+    case "exploration":
+      return <ExplorationGroup tools={block.tools} />;
+    case "tool":
+      return <ToolBlock tool={block.tool} />;
+    case "image":
+      return <div class="my-1"><img src={block.src} alt={block.name ?? "image"} class="max-w-full max-h-80 border border-border" /></div>;
+    case "skill":
+      return (
+        <div
+          class={cn(
+            "my-1 inline-flex min-w-[180px] max-w-full flex-col border px-2.5 py-2 text-left",
+            isUser
+              ? "border-signal-blue/25 bg-signal-blue/8"
+              : "border-border/60 bg-background/60",
+          )}
+        >
+          <div class="flex items-center gap-2">
+            <span class="text-signal-blue"><IcoSlash /></span>
+            <span class="font-mono text-[11px] text-foreground">/{block.name}</span>
+          </div>
+          <Show when={block.description}>
+            <div class="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+              {block.description}
+            </div>
+          </Show>
+        </div>
+      );
+    case "fileRef":
+      return (
+        <div
+          class={cn(
+            "my-1 inline-flex min-w-[180px] max-w-full items-start gap-2 border px-2.5 py-2 text-left",
+            isUser
+              ? "border-signal-green/25 bg-signal-green/8"
+              : "border-border/60 bg-background/60",
+          )}
+        >
+          <span class="mt-0.5 text-signal-green"><IcoFile /></span>
+          <div class="min-w-0">
+            <div class="font-mono text-[11px] text-foreground">
+              {formatFileRefLabel(block)}
+            </div>
+            <div class="mt-1 text-[11px] text-muted-foreground">
+              {block.rootId}
+            </div>
+          </div>
+        </div>
+      );
+  }
+}
+
+const LiveStatusRow: Component<{ status?: string }> = (props) => {
+  const label = createMemo(() => {
+    switch (props.status) {
+      case "queued":
+        return "Queued";
+      case "interrupting":
+        return "Stopping";
+      default:
+        return "Thinking";
+    }
+  });
+
+  return (
+    <div class="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+      <span class={cn(
+        "h-1.5 w-1.5 rounded-full",
+        props.status === "interrupting"
+          ? "bg-signal-amber animate-pulse-dot"
+          : "bg-signal-amber animate-pulse-dot",
+      )} />
+      <span>{label()}</span>
+    </div>
+  );
+};
+
 /* ── Main component ── */
 
 function formatTime(ts: string): string {
@@ -766,64 +896,34 @@ function formatTime(ts: string): string {
   catch { return ""; }
 }
 
-const ChatMessage: Component<{ role: string; chunksJson: string; timestamp: string }> = (props) => {
-  const blocks = createMemo(() => {
-    try { return buildBlocks(JSON.parse(props.chunksJson) as Chunk[]); }
-    catch { return [{ kind: "text" as const, content: props.chunksJson }]; }
-  });
+const ChatMessage: Component<{ role: string; chunksJson: string; timestamp: string; liveStatus?: string }> = (props) => {
+  const blocks = createMemo(() => parseChatBlocks(props.chunksJson));
   const isUser = () => props.role === "user";
+  const showLiveStatus = () =>
+    !isUser()
+    && !!props.liveStatus
+    && (blocks().length === 0 || props.liveStatus === "interrupting" || props.liveStatus === "starting");
 
   return (
     <div
       class={cn(
-        "group relative px-4 py-3 shadow-sm transition-colors",
-        isUser() ? "ml-10 bg-foreground text-background" : "border border-border bg-card",
+        "group relative",
+        isUser() ? "ml-16 bg-secondary/30 px-3 py-2" : "py-1.5",
       )}
     >
-      <div class="flex items-baseline gap-2 mb-1">
-        <span class={cn("chassis-label", isUser() && "text-background/65")}>
-          {isUser() ? "you" : "shepherd"}
-        </span>
-        <span class={cn("text-[11px] text-muted-foreground", isUser() ? "ml-auto text-background/50" : "")}>
-          {formatTime(props.timestamp)}
-        </span>
-      </div>
-      <div class="space-y-1">
+      <div class={cn("space-y-1", !isUser() && "space-y-0.5")}>
+        <Show when={showLiveStatus()}>
+          <LiveStatusRow status={props.liveStatus} />
+        </Show>
         <Index each={blocks()}>
-          {(block) => {
-            const b = block();
-            switch (b.kind) {
-              case "text":
-                return (
-                  <div
-                    class={cn(
-                      "markdown-body text-sm leading-relaxed",
-                      isUser() ? "text-background" : "text-foreground",
-                    )}
-                    innerHTML={renderMarkdown(b.content)}
-                  />
-                );
-              case "thinking":
-                return (
-                  <details class="group/think">
-                    <summary class="flex cursor-pointer items-center gap-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:text-foreground">
-                      <svg class="h-3 w-3 transition-transform group-open/think:rotate-90" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="9 6 15 12 9 18" />
-                      </svg>
-                      Thinking
-                    </summary>
-                    <div class="mt-1 ml-[22px] border-l border-border/50 pl-3 text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{b.content}</div>
-                  </details>
-                );
-              case "exploration":
-                return <ExplorationGroup tools={b.tools} />;
-              case "tool":
-                return <ToolBlock tool={b.tool} />;
-              case "image":
-                return <div class="my-1"><img src={b.src} alt={b.name ?? "image"} class="max-w-full max-h-80 border border-border" /></div>;
-            }
-          }}
+          {(block) => renderBlock(block(), isUser())}
         </Index>
+      </div>
+      <div class={cn(
+        "mt-0.5 text-[10px] text-muted-foreground/40 opacity-0 transition-opacity group-hover:opacity-100",
+        isUser() && "text-right",
+      )}>
+        {formatTime(props.timestamp)}
       </div>
     </div>
   );

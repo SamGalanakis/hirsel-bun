@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -15,6 +16,17 @@ pub enum WorkerRequest {
     Ping,
     Status,
     Interrupt,
+    ExecShell {
+        args: Value,
+    },
+    WriteShell {
+        args: Value,
+    },
+    ProxyHttp {
+        port: u16,
+        protocol: String,
+        request: ProxyHttpRequest,
+    },
     RunTurn {
         user_chunks: Vec<ShepherdMessageChunk>,
         #[serde(default)]
@@ -31,6 +43,11 @@ pub enum WorkerReply {
     Status {
         status: String,
     },
+    ToolResult {
+        success: bool,
+        result: Value,
+    },
+    ProxyHttpResponse(ProxyHttpResponse),
     Accepted,
     Event {
         event: WorkerStreamEvent,
@@ -43,6 +60,45 @@ pub enum WorkerReply {
     Error {
         message: String,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyHttpRequest {
+    pub method: String,
+    pub path_and_query: String,
+    pub headers: Vec<(String, String)>,
+    pub body_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyHttpResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreviewForwardInfo {
+    pub id: String,
+    pub project_id: i64,
+    pub thread_id: String,
+    pub protocol: String,
+    pub port: u16,
+    pub host_port: u16,
+    pub user_url: String,
+    pub shepherd_url: String,
+    pub label: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerToolResultPayload {
+    pub success: bool,
+    pub result: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +148,16 @@ pub enum ServerControlRequest {
     StopScopeSession {
         scope: ShepherdScope,
     },
+    ExecThreadShell {
+        project_id: i64,
+        thread_id: String,
+        args: Value,
+    },
+    WriteThreadShell {
+        project_id: i64,
+        thread_id: String,
+        args: Value,
+    },
     ArchiveThread {
         project_id: i64,
         thread_id: String,
@@ -100,9 +166,43 @@ pub enum ServerControlRequest {
         project_id: i64,
         thread_id: String,
     },
+    ForwardThreadPort {
+        project_id: i64,
+        thread_id: String,
+        port: u16,
+        protocol: String,
+        label: String,
+    },
+    ListThreadPortForwards {
+        project_id: i64,
+        #[serde(default)]
+        thread_id: Option<String>,
+    },
+    ClosePortForward {
+        forward_id: String,
+    },
     DeleteThread {
         project_id: i64,
         thread_id: String,
+    },
+    LoadScopeMessages {
+        scope: ShepherdScope,
+        limit: usize,
+        #[serde(default)]
+        skip_message_id: Option<i64>,
+    },
+    LoadScopeState {
+        scope: ShepherdScope,
+    },
+    ExecuteShepherdTool {
+        project_id: i64,
+        name: String,
+        args: Value,
+    },
+    ExecuteLibrarianTool {
+        project_id: i64,
+        name: String,
+        args: Value,
     },
 }
 
@@ -197,4 +297,14 @@ pub async fn send_server_control_request(
         ServerControlReply::Ok { payload } => Ok(payload),
         ServerControlReply::Error { message } => Err(message),
     }
+}
+
+pub fn encode_http_body(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+pub fn decode_http_body(value: &str) -> Result<Vec<u8>, String> {
+    base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|error| format!("failed to decode proxied body: {}", error))
 }

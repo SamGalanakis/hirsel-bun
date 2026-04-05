@@ -139,6 +139,7 @@ mod tests {
                 openrouter_base_url: Some("https://openrouter.example/api".to_string()),
                 model: Some("gpt-5".to_string()),
                 model_variant: Some("high".to_string()),
+                role_models: None,
                 agent_models: Some(AgentModelOverrides {
                     low: Some("gpt-5-mini".to_string()),
                     medium: None,

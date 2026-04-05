@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use base64::Engine;
+use lash::tools::StandardShell;
 use lash::tools::UpdatePlanTool;
 use lash::{
     default_context_strategy, default_execution_mode, AgentEvent, AgentStateEnvelope, EventSink,
@@ -9,22 +11,29 @@ use lash::{
     RuntimeHostConfig, RuntimeServices, SessionPlugin, SessionPolicy, SnapshotReader,
     SnapshotWriter, ToolProvider, TurnInput,
 };
+use serde_json::Value;
 use tokio::io::BufReader;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
 use super::history::{build_runtime_messages, decode_png_images, RUNTIME_HISTORY_LIMIT};
-use super::rpc::{read_json_line, write_json_line, WorkerReply, WorkerRequest, WorkerStreamEvent};
+use super::rpc::{
+    read_json_line, send_server_control_request, write_json_line, ProxyHttpRequest,
+    ProxyHttpResponse, ServerControlRequest, WorkerReply, WorkerRequest, WorkerStreamEvent,
+};
 use super::runtime::{
     build_user_turn_text, resolve_scope_project_id, resolve_scope_workspace,
     shepherd_prompt_overrides,
 };
-use super::tools::{NoopToolProvider, ShepherdToolProvider};
+use super::shell::ShepherdShellToolProvider;
+use super::tools::{LibrarianToolProvider, ShepherdToolProvider};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::backend::app::ResultExt;
-use crate::backend::credentials::require_tavily_api_key;
-use crate::backend::lash_tools::{attach_embedded_mcp_servers, embedded_tool_plugin_factories};
+use crate::backend::lash_tools::{
+    attach_embedded_mcp_servers, embedded_tool_plugin_factories, EmbeddedCustomToolPlugin,
+    EmbeddedToolPreset,
+};
 use crate::backend::llm_provider;
 use crate::backend::{ShepherdChatMessage, ShepherdChatStore, ShepherdThreadStore};
 
@@ -43,6 +52,10 @@ fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
             Some(*project_id),
             Some(ShepherdThreadStore::scope_key(thread_id)),
         ),
+        ShepherdScope::Librarian { project_id, .. } => (
+            Some(*project_id),
+            Some(ShepherdChatStore::librarian_scope_key(*project_id)),
+        ),
     }
 }
 
@@ -57,6 +70,12 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         "delete_thread" => ("Delete Thread".to_string(), Some("execute".to_string())),
         "send_thread_message" => ("Message Thread".to_string(), Some("execute".to_string())),
         "read_thread_updates" => ("Thread Updates".to_string(), Some("search".to_string())),
+        "forward_port" => ("Forward Port".to_string(), Some("execute".to_string())),
+        "list_port_forwards" => ("Port Forwards".to_string(), Some("search".to_string())),
+        "close_port_forward" => (
+            "Close Port Forward".to_string(),
+            Some("execute".to_string()),
+        ),
         "read_canvas" => ("Canvas".to_string(), Some("read".to_string())),
         "update_canvas" => ("Canvas Update".to_string(), Some("edit".to_string())),
         "read_project_retained_context" => {
@@ -64,6 +83,14 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         }
         "update_project_retained_context" => (
             "Retained Context Update".to_string(),
+            Some("edit".to_string()),
+        ),
+        "graph_surql" => (
+            "Knowledge Graph Query".to_string(),
+            Some("execute".to_string()),
+        ),
+        "edit_graph_node_text" => (
+            "Knowledge Graph Text Patch".to_string(),
             Some("edit".to_string()),
         ),
         "update_plan" => ("Plan Update".to_string(), Some("edit".to_string())),
@@ -194,19 +221,51 @@ async fn build_runtime_services(
     agent_id: &str,
     execution_mode: ExecutionMode,
 ) -> Result<RuntimeServices, String> {
-    let tools: Arc<dyn ToolProvider> = match scope {
-        ShepherdScope::General => Arc::new(NoopToolProvider),
-        ShepherdScope::Shepherd { .. } => Arc::new(ShepherdToolProvider::new(
-            None,
+    let tavily_api_key = std::env::var("TAVILY_API_KEY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let shell_tools: Arc<dyn ToolProvider> = match scope {
+        ShepherdScope::Shepherd { .. } => Arc::new(ShepherdShellToolProvider::new(
             default_project_id,
-            workspace_root,
+            workspace_root.clone(),
         )),
-        ShepherdScope::Thread { .. } => Arc::new(NoopToolProvider),
+        _ => Arc::new(match workspace_root.as_ref() {
+            Some(path) => StandardShell::new().with_cwd(path.clone()),
+            None => StandardShell::new(),
+        }),
+    };
+    let (tool_preset, custom_tool_plugin) = match scope {
+        ShepherdScope::General => (EmbeddedToolPreset::General, None),
+        ShepherdScope::Shepherd { .. } => (
+            EmbeddedToolPreset::Shepherd,
+            Some(EmbeddedCustomToolPlugin {
+                id: "hirsel_shepherd_tools",
+                provider: Arc::new(ShepherdToolProvider::new(
+                    None,
+                    default_project_id,
+                    workspace_root.clone(),
+                )) as Arc<dyn ToolProvider>,
+            }),
+        ),
+        ShepherdScope::Thread { .. } => (EmbeddedToolPreset::Thread, None),
+        ShepherdScope::Librarian { .. } => (
+            EmbeddedToolPreset::Librarian,
+            Some(EmbeddedCustomToolPlugin {
+                id: "hirsel_librarian_tools",
+                provider: Arc::new(LibrarianToolProvider::new(
+                    None,
+                    default_project_id,
+                    workspace_root.clone(),
+                )) as Arc<dyn ToolProvider>,
+            }),
+        ),
     };
     let mut plugin_factories = embedded_tool_plugin_factories(
-        "hirsel_shepherd_tools",
-        Arc::clone(&tools),
-        require_tavily_api_key().await?.api_key,
+        tool_preset,
+        custom_tool_plugin,
+        shell_tools,
+        tavily_api_key,
     );
     if matches!(scope, ShepherdScope::Shepherd { .. }) {
         plugin_factories.push(Arc::new(EmbeddedPlanTrackerPluginFactory));
@@ -225,6 +284,21 @@ async fn build_runtime_services(
 }
 
 async fn load_scope_state(scope: &ShepherdScope) -> Result<Option<AgentStateEnvelope>, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        let payload = send_server_control_request(&ServerControlRequest::LoadScopeState {
+            scope: scope.clone(),
+        })
+        .await?;
+        let state_json: Option<String> = serde_json::from_value(payload.unwrap_or(Value::Null))
+            .map_err(|e| format!("failed to decode shepherd scope state payload: {}", e))?;
+        return state_json
+            .map(|json| {
+                serde_json::from_str(&json)
+                    .map_err(|e| format!("failed to deserialize shepherd scope state: {}", e))
+            })
+            .transpose();
+    }
+
     let (Some(project_id), Some(scope_key)) = scope_storage_ids(scope) else {
         return Ok(None);
     };
@@ -249,6 +323,17 @@ async fn load_scope_messages(
     limit: usize,
     skip_message_id: Option<i64>,
 ) -> Result<Vec<ShepherdChatMessage>, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        let payload = send_server_control_request(&ServerControlRequest::LoadScopeMessages {
+            scope: scope.clone(),
+            limit,
+            skip_message_id,
+        })
+        .await?;
+        return serde_json::from_value(payload.unwrap_or_else(|| Value::Array(Vec::new())))
+            .map_err(|e| format!("failed to decode shepherd scope messages payload: {}", e));
+    }
+
     let store = ShepherdChatStore::open().await.str_err()?;
     let mut messages = match scope {
         ShepherdScope::General => store.get_messages(None).await.str_err()?,
@@ -272,6 +357,14 @@ async fn load_scope_messages(
             )
             .await
             .str_err()?,
+        ShepherdScope::Librarian { project_id, .. } => store
+            .get_scope_messages(
+                Some(*project_id),
+                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
+                limit,
+            )
+            .await
+            .str_err()?,
     };
     if let Some(skip_id) = skip_message_id {
         messages.retain(|message| message.id != skip_id);
@@ -290,7 +383,14 @@ async fn create_runtime_from_history(
     let (hirsel_config, _) = crate::backend::config::Config::load()
         .map_err(|e| format!("failed to load config: {}", e))?;
     let provider = llm_provider::resolve_provider(&hirsel_config).await?;
-    let (model, model_variant) = llm_provider::resolve_model(&hirsel_config, &provider);
+    let role = match scope {
+        ShepherdScope::Shepherd { .. } => llm_provider::RuntimeModelRole::Shepherd,
+        ShepherdScope::Thread { .. } => llm_provider::RuntimeModelRole::Thread,
+        ShepherdScope::Librarian { .. } => llm_provider::RuntimeModelRole::Librarian,
+        ShepherdScope::General => llm_provider::RuntimeModelRole::Shepherd,
+    };
+    let (model, model_variant) =
+        llm_provider::resolve_model_for_role(&hirsel_config, &provider, role);
     let execution_mode = default_execution_mode();
     let context_strategy = default_context_strategy();
     let session_policy = SessionPolicy {
@@ -432,7 +532,7 @@ async fn run_scope_turn(
         _ => None,
     });
     let user_images_png = decode_png_images(&user_chunks)?;
-    let user_turn_text = build_user_turn_text(&user_chunks);
+    let user_turn_text = build_user_turn_text(scope, &user_chunks).await?;
     let history = load_scope_messages(scope, RUNTIME_HISTORY_LIMIT, user_message_id).await?;
     let cwd = resolve_scope_workspace(scope).await?;
     let scope_project_id = resolve_scope_project_id(scope).await;
@@ -525,13 +625,22 @@ async fn run_scope_turn(
     Ok((assistant_chunks, state_json, summary))
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct WorkerControl {
     status: Arc<RwLock<String>>,
     cancel: Arc<Mutex<Option<CancellationToken>>>,
+    shell: Arc<StandardShell>,
 }
 
 impl WorkerControl {
+    fn new(cwd: PathBuf) -> Self {
+        Self {
+            status: Arc::new(RwLock::new(String::new())),
+            cancel: Arc::new(Mutex::new(None)),
+            shell: Arc::new(StandardShell::new().with_cwd(cwd)),
+        }
+    }
+
     async fn status(&self) -> String {
         self.status.read().await.clone()
     }
@@ -539,6 +648,105 @@ impl WorkerControl {
     async fn set_status(&self, value: &str) {
         *self.status.write().await = value.to_string();
     }
+
+    async fn turn_is_running(&self) -> bool {
+        self.cancel.lock().await.is_some()
+    }
+}
+
+fn filter_proxy_headers(headers: &[(String, String)]) -> reqwest::header::HeaderMap {
+    let mut map = reqwest::header::HeaderMap::new();
+    for (name, value) in headers {
+        let lower = name.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "connection"
+                | "host"
+                | "keep-alive"
+                | "proxy-authenticate"
+                | "proxy-authorization"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+                | "content-length"
+        ) {
+            continue;
+        }
+        let Ok(header_name) = reqwest::header::HeaderName::from_bytes(name.as_bytes()) else {
+            continue;
+        };
+        let Ok(header_value) = reqwest::header::HeaderValue::from_str(value) else {
+            continue;
+        };
+        map.append(header_name, header_value);
+    }
+    map
+}
+
+async fn proxy_http_request(
+    port: u16,
+    protocol: &str,
+    request: ProxyHttpRequest,
+) -> Result<ProxyHttpResponse, String> {
+    let scheme = match protocol {
+        "http" | "https" => protocol,
+        other => return Err(format!("unsupported preview protocol '{}'", other)),
+    };
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(request.body_base64)
+        .map_err(|error| format!("failed to decode preview request body: {}", error))?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
+        .build()
+        .map_err(|error| format!("failed to build preview client: {}", error))?;
+    let url = format!("{scheme}://127.0.0.1:{port}{}", request.path_and_query);
+    let method = reqwest::Method::from_bytes(request.method.as_bytes())
+        .map_err(|error| format!("invalid preview method '{}': {}", request.method, error))?;
+    let response = client
+        .request(method, &url)
+        .headers(filter_proxy_headers(&request.headers))
+        .body(body)
+        .send()
+        .await
+        .map_err(|error| format!("preview request to {} failed: {}", url, error))?;
+    let status = response.status().as_u16();
+    let headers = response
+        .headers()
+        .iter()
+        .filter_map(|(name, value)| {
+            let lower = name.as_str().to_ascii_lowercase();
+            if matches!(
+                lower.as_str(),
+                "connection"
+                    | "keep-alive"
+                    | "proxy-authenticate"
+                    | "proxy-authorization"
+                    | "te"
+                    | "trailer"
+                    | "transfer-encoding"
+                    | "upgrade"
+                    | "content-length"
+            ) {
+                return None;
+            }
+            let value = value.to_str().ok()?.to_string();
+            Some((name.as_str().to_string(), value))
+        })
+        .collect::<Vec<_>>();
+    let body = response
+        .bytes()
+        .await
+        .map_err(|error| format!("failed to read preview response body: {}", error))?;
+    Ok(ProxyHttpResponse {
+        status,
+        headers,
+        body_base64: base64::engine::general_purpose::STANDARD.encode(body),
+    })
 }
 
 async fn handle_connection(
@@ -572,6 +780,67 @@ async fn handle_connection(
                 },
             )
             .await?;
+        }
+        WorkerRequest::ExecShell { args } => {
+            if control.turn_is_running().await {
+                let mut guard = writer.lock().await;
+                write_json_line(
+                    &mut *guard,
+                    &WorkerReply::Error {
+                        message: "This worker is already running a turn.".to_string(),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+            let result = control
+                .shell
+                .execute_streaming("exec_command", &args, None)
+                .await;
+            let mut guard = writer.lock().await;
+            write_json_line(
+                &mut *guard,
+                &WorkerReply::ToolResult {
+                    success: result.success,
+                    result: result.result,
+                },
+            )
+            .await?;
+        }
+        WorkerRequest::WriteShell { args } => {
+            if control.turn_is_running().await {
+                let mut guard = writer.lock().await;
+                write_json_line(
+                    &mut *guard,
+                    &WorkerReply::Error {
+                        message: "This worker is already running a turn.".to_string(),
+                    },
+                )
+                .await?;
+                return Ok(());
+            }
+            let result = control
+                .shell
+                .execute_streaming("write_stdin", &args, None)
+                .await;
+            let mut guard = writer.lock().await;
+            write_json_line(
+                &mut *guard,
+                &WorkerReply::ToolResult {
+                    success: result.success,
+                    result: result.result,
+                },
+            )
+            .await?;
+        }
+        WorkerRequest::ProxyHttp {
+            port,
+            protocol,
+            request,
+        } => {
+            let response = proxy_http_request(port, &protocol, request).await?;
+            let mut guard = writer.lock().await;
+            write_json_line(&mut *guard, &WorkerReply::ProxyHttpResponse(response)).await?;
         }
         WorkerRequest::RunTurn {
             user_chunks,
@@ -662,7 +931,7 @@ pub async fn serve_worker_session(
 
     let listener = UnixListener::bind(socket_path)
         .map_err(|error| format!("failed to bind worker socket: {}", error))?;
-    let control = WorkerControl::default();
+    let control = WorkerControl::new(resolve_scope_workspace(&scope).await?);
     control.set_status("idle").await;
 
     loop {

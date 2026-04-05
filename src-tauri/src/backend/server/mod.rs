@@ -21,6 +21,34 @@ pub struct AppState {
     pub config: Arc<RwLock<Config>>,
 }
 
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_http_api_key() -> String {
+    let api_key = std::env::var("HIRSEL_API_KEY").unwrap_or_default();
+
+    #[cfg(debug_assertions)]
+    {
+        if !api_key.trim().is_empty() && !env_flag_enabled("HIRSEL_DEV_AUTH") {
+            tracing::info!(
+                "Ignoring HIRSEL_API_KEY in debug build; set HIRSEL_DEV_AUTH=1 to enable HTTP auth"
+            );
+            return String::new();
+        }
+    }
+
+    api_key
+}
+
 fn resolve_webui_dist() -> PathBuf {
     // Check HIRSEL_WEBUI_DIR env var first, then common locations
     if let Ok(dir) = std::env::var("HIRSEL_WEBUI_DIR") {
@@ -38,7 +66,7 @@ fn resolve_webui_dist() -> PathBuf {
 
 /// Start the HTTP server
 pub async fn start_server(port: u16) -> anyhow::Result<()> {
-    let api_key = std::env::var("HIRSEL_API_KEY").unwrap_or_default();
+    let api_key = resolve_http_api_key();
 
     let (config, warnings) =
         Config::load().map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
@@ -51,6 +79,10 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         api_key: api_key.clone(),
         config,
     });
+
+    crate::backend::shepherd_runtime::scrub_stale_startup_state()
+        .await
+        .map_err(|error| anyhow::anyhow!("Failed to scrub stale shepherd state: {}", error))?;
 
     crate::backend::shepherd_runtime::start_server_control_listener()
         .await

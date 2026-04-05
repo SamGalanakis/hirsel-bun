@@ -1,6 +1,7 @@
 //! Project types and data structures
 
 use serde::{Deserialize, Serialize};
+use surrealdb::types::SurrealValue;
 
 use crate::backend::draft::StartingPoint;
 
@@ -10,6 +11,7 @@ use crate::backend::draft::StartingPoint;
 pub struct Project {
     pub id: i64,
     pub name: String,
+    pub workspace_key: String,
     pub created_at: String,
     pub updated_at: String,
     pub description: Option<String>,
@@ -56,7 +58,7 @@ pub struct ProjectSurfaceSnapshot {
     pub focus_view: Option<ProjectFocusView>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectPreparationStep {
     pub id: String,

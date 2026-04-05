@@ -1,4 +1,4 @@
-import { getWorkspaceFileSlice, type WorkspaceFileSlice } from "@/lib/api";
+import { getWorkspaceFile, type WorkspaceFile } from "@/lib/api";
 import { renderCanvasMermaid } from "@/lib/canvas-mermaid";
 
 const VALID_TONES = new Set([
@@ -29,17 +29,16 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function normalizeWorkspace(value: string | null | undefined): string {
-  const workspace = value?.trim() ?? "";
-  const normalized = workspace.toLowerCase();
-  if (
-    normalized.length === 0 ||
-    normalized === "shepherd" ||
-    normalized === "shep" + "perd"
-  ) {
-    return "shepherd";
+function normalizeRootId(value: string | null | undefined): string {
+  const rootId = value?.trim() ?? "";
+  if (!rootId || rootId === "main") {
+    return "main";
   }
-  return workspace;
+  return rootId.startsWith("thread:") ? rootId : "main";
+}
+
+function rootLabel(rootId: string): string {
+  return rootId.startsWith("thread:") ? `thread ${rootId.slice("thread:".length)}` : "main";
 }
 
 function readPositiveInt(value: string | null, fallback: number): number {
@@ -560,14 +559,14 @@ function buildWorkspaceRequestKey(data: {
   lineEnd?: number;
   path: string;
   projectId: number;
-  workspace: string;
+  rootId: string;
 }): string {
   return JSON.stringify({
     lineEnd: data.lineEnd ?? null,
     lineStart: data.lineStart,
     path: data.path,
     projectId: data.projectId,
-    workspace: data.workspace,
+    rootId: data.rootId,
   });
 }
 
@@ -1142,7 +1141,7 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
   private initialized = false;
   private loading = false;
   private error = "";
-  private snippet: WorkspaceFileSlice | null = null;
+  private snippet: WorkspaceFile | null = null;
   private requestKey = "";
   private abortController: AbortController | null = null;
 
@@ -1154,8 +1153,8 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
       "line-end",
       "line-start",
       "path",
+      "root-id",
       "title",
-      "workspace",
     ];
   }
 
@@ -1194,14 +1193,14 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
   }
 
   protected renderFrame(): void {
-    const workspace = normalizeWorkspace(this.getAttribute("workspace"));
+    const rootId = normalizeRootId(this.getAttribute("root-id"));
     const requestedPath = (this.getAttribute("path") ?? "").trim();
     const resolvedPath = this.snippet?.path || requestedPath;
     const titleAttr = this.getAttribute("title")?.trim() ?? "";
     const filenameAttr = this.getAttribute("filename")?.trim() ?? "";
     const title = titleAttr || filenameAttr || basename(resolvedPath) || "Code Reference";
     const captionParts = [resolvedPath || filenameAttr];
-    captionParts.push(workspace === "shepherd" ? "shepherd" : `thread ${workspace}`);
+    captionParts.push(rootLabel(rootId));
     const caption = captionParts.filter(Boolean).join(" · ");
     const language =
       inferLanguage(this.getAttribute("language")) ||
@@ -1211,8 +1210,8 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
     const requestedStart = readPositiveInt(this.getAttribute("line-start"), 1);
     const requestedEnd = readPositiveInt(this.getAttribute("line-end"), requestedStart);
     const actualRange =
-      this.snippet && this.snippet.line_end >= this.snippet.line_start
-        ? formatLineRange(this.snippet.line_start, this.snippet.line_end)
+      this.snippet && this.snippet.lineEnd >= this.snippet.lineStart
+        ? formatLineRange(this.snippet.lineStart, this.snippet.lineEnd)
         : null;
     const requestedRange = formatLineRange(requestedStart, requestedEnd);
     const badges = [
@@ -1220,7 +1219,7 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
       actualRange || requestedRange,
       this.snippet?.truncated ? "truncated" : null,
     ].filter((value): value is string => Boolean(value));
-    const lineStart = this.snippet?.line_start ?? requestedStart;
+    const lineStart = this.snippet?.lineStart ?? requestedStart;
 
     this.dataset.hirselReady = "true";
     this.innerHTML = buildCodeShell({
@@ -1250,7 +1249,7 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
   private async loadSnippet(): Promise<void> {
     const projectId = this.currentProjectId();
     const path = (this.getAttribute("path") ?? "").trim();
-    const workspace = normalizeWorkspace(this.getAttribute("workspace"));
+    const rootId = normalizeRootId(this.getAttribute("root-id"));
     const { lineStart, lineEnd } = this.requestedRange();
 
     if (!path) {
@@ -1278,7 +1277,7 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
       lineStart,
       path,
       projectId,
-      workspace,
+      rootId,
     });
     if (requestKey === this.requestKey && (this.loading || this.snippet || this.error)) {
       return;
@@ -1294,9 +1293,9 @@ class HirselCodeRefElement extends HirselCodeFrameElement {
     this.renderFrame();
 
     try {
-      const snippet = await getWorkspaceFileSlice(projectId, {
+      const snippet = await getWorkspaceFile(projectId, {
         path,
-        workspace,
+        rootId,
         lineEnd,
         lineStart,
         signal: controller.signal,
@@ -1326,7 +1325,7 @@ class HirselFileRefElement extends HTMLElement {
   private expanded = false;
   private loading = false;
   private error = "";
-  private snippet: WorkspaceFileSlice | null = null;
+  private snippet: WorkspaceFile | null = null;
   private requestKey = "";
   private abortController: AbortController | null = null;
 
@@ -1337,9 +1336,9 @@ class HirselFileRefElement extends HTMLElement {
       "line-start",
       "open",
       "path",
+      "root-id",
       "status",
       "title",
-      "workspace",
     ];
   }
 
@@ -1409,7 +1408,7 @@ class HirselFileRefElement extends HTMLElement {
 
   private render(): void {
     const path = (this.getAttribute("path") ?? "").trim();
-    const workspace = normalizeWorkspace(this.getAttribute("workspace"));
+    const rootId = normalizeRootId(this.getAttribute("root-id"));
     const status = normalizeFileStatus(this.getAttribute("status"));
     const requestedStart = readPositiveInt(this.getAttribute("line-start"), 1);
     const requestedEnd = Number.parseInt(this.getAttribute("line-end") ?? "", 10);
@@ -1420,7 +1419,7 @@ class HirselFileRefElement extends HTMLElement {
       : Number.isFinite(requestedEnd) && requestedEnd >= requestedStart
         ? formatLineRange(requestedStart, requestedEnd)
         : this.snippet
-          ? formatLineRange(this.snippet.line_start, this.snippet.line_end)
+          ? formatLineRange(this.snippet.lineStart, this.snippet.lineEnd)
           : formatLineRange(requestedStart, requestedStart);
     const label =
       this.getAttribute("label")?.trim() ||
@@ -1428,14 +1427,14 @@ class HirselFileRefElement extends HTMLElement {
       this.getAttribute("title")?.trim() ||
       basename(path) ||
       "File";
-    const workspaceLabel = workspace === "shepherd" ? "shepherd" : `thread ${workspace}`;
+    const workspaceText = rootLabel(rootId);
     const preview = !this.expanded
       ? ""
       : `
         <div class="hirsel-fileref-preview">
           <div class="hirsel-fileref-preview-meta">
             <span>${escapeHtml(path || label)}</span>
-            <span>${escapeHtml(workspaceLabel)}</span>
+            <span>${escapeHtml(workspaceText)}</span>
             ${lineRange ? `<span>${escapeHtml(lineRange)}</span>` : ""}
           </div>
           ${
@@ -1448,7 +1447,7 @@ class HirselFileRefElement extends HTMLElement {
                     <div class="hirsel-code-body">
                       <div class="hirsel-code-scroll">
                         <div class="hirsel-code-rows">
-                          ${buildCodeRows(this.snippet.content, this.snippet.line_start)}
+                          ${buildCodeRows(this.snippet.content, this.snippet.lineStart)}
                         </div>
                       </div>
                     </div>
@@ -1475,7 +1474,7 @@ class HirselFileRefElement extends HTMLElement {
   private async loadSnippet(): Promise<void> {
     const projectId = currentCanvasProjectId(this);
     const path = (this.getAttribute("path") ?? "").trim();
-    const workspace = normalizeWorkspace(this.getAttribute("workspace"));
+    const rootId = normalizeRootId(this.getAttribute("root-id"));
     const { lineStart, lineEnd } = requestedLineRange(this);
 
     if (!path) {
@@ -1503,7 +1502,7 @@ class HirselFileRefElement extends HTMLElement {
       lineStart,
       path,
       projectId,
-      workspace,
+      rootId,
     });
     if (requestKey === this.requestKey && (this.loading || this.snippet || this.error)) {
       return;
@@ -1519,9 +1518,9 @@ class HirselFileRefElement extends HTMLElement {
     this.render();
 
     try {
-      const snippet = await getWorkspaceFileSlice(projectId, {
+      const snippet = await getWorkspaceFile(projectId, {
         path,
-        workspace,
+        rootId,
         lineEnd,
         lineStart,
         signal: controller.signal,
@@ -1549,8 +1548,8 @@ type FileListItem = {
   lineStart: string;
   open: boolean;
   path: string;
+  rootId: string;
   status: string;
-  workspace: string;
 };
 
 class HirselFileListElement extends HTMLElement {
@@ -1558,7 +1557,7 @@ class HirselFileListElement extends HTMLElement {
   private items: FileListItem[] = [];
 
   static get observedAttributes(): string[] {
-    return ["summary", "title", "workspace"];
+    return ["summary", "title", "root-id"];
   }
 
   connectedCallback(): void {
@@ -1574,7 +1573,7 @@ class HirselFileListElement extends HTMLElement {
   }
 
   private captureItems(): void {
-    const defaultWorkspace = normalizeWorkspace(this.getAttribute("workspace"));
+    const defaultRootId = normalizeRootId(this.getAttribute("root-id"));
     const sourceItems = Array.from(this.children);
     this.items = sourceItems
       .map((element) => ({
@@ -1589,10 +1588,8 @@ class HirselFileListElement extends HTMLElement {
         lineStart: element.getAttribute("line-start")?.trim() ?? "",
         open: element.hasAttribute("open"),
         path: element.getAttribute("path")?.trim() ?? "",
+        rootId: normalizeRootId(element.getAttribute("root-id") || defaultRootId),
         status: normalizeFileStatus(element.getAttribute("status")),
-        workspace: normalizeWorkspace(
-          element.getAttribute("workspace") || defaultWorkspace,
-        ),
       }))
       .filter((item) => item.path);
   }
@@ -1635,7 +1632,7 @@ class HirselFileListElement extends HTMLElement {
                         <div class="hirsel-filelist-row">
                           <hirsel-fileref
                             path="${escapeHtml(item.path)}"
-                            workspace="${escapeHtml(item.workspace)}"
+                            root-id="${escapeHtml(item.rootId)}"
                             status="${escapeHtml(item.status)}"
                             ${item.label ? `label="${escapeHtml(item.label)}"` : ""}
                             ${item.lineStart ? `line-start="${escapeHtml(item.lineStart)}"` : ""}

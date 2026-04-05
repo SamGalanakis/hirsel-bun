@@ -23,6 +23,11 @@ pub(super) fn validate_chunks(chunks: &[ShepherdMessageChunk]) -> Result<(), Str
                     return Err("text/thinking chunk content cannot be empty".to_string());
                 }
             }
+            ShepherdMessageChunk::Notice { tone, content, .. } => {
+                if tone.trim().is_empty() || content.trim().is_empty() {
+                    return Err("notice chunk requires non-empty tone/content".to_string());
+                }
+            }
             ShepherdMessageChunk::Tool {
                 id, title, status, ..
             } => {
@@ -44,6 +49,16 @@ pub(super) fn validate_chunks(chunks: &[ShepherdMessageChunk]) -> Result<(), Str
                 }
                 if data_base64.len() > MAX_IMAGE_BASE64_CHARS {
                     return Err("image too large for Shepherd message".to_string());
+                }
+            }
+            ShepherdMessageChunk::Skill { name, path, .. } => {
+                if name.trim().is_empty() || path.trim().is_empty() {
+                    return Err("skill chunk requires non-empty name/path".to_string());
+                }
+            }
+            ShepherdMessageChunk::FileRef { root_id, path, .. } => {
+                if root_id.trim().is_empty() || path.trim().is_empty() {
+                    return Err("file ref chunk requires non-empty rootId/path".to_string());
                 }
             }
         }
@@ -161,11 +176,28 @@ fn summarize_chunks_for_runtime(chunks: &[ShepherdMessageChunk]) -> String {
                     text_parts.push(t.to_string());
                 }
             }
+            ShepherdMessageChunk::Notice { .. } => {}
             ShepherdMessageChunk::Tool { title, status, .. } => {
                 tool_notes.push(format!("{}({})", title, status));
             }
             ShepherdMessageChunk::Image { .. } => {
                 image_count += 1;
+            }
+            ShepherdMessageChunk::Skill { name, .. } => {
+                tool_notes.push(format!("skill({})", name));
+            }
+            ShepherdMessageChunk::FileRef {
+                root_id,
+                path,
+                line_start,
+                line_end,
+            } => {
+                let suffix = match (line_start, line_end) {
+                    (Some(start), Some(end)) if start == end => format!(":{}", start),
+                    (Some(start), Some(end)) => format!(":{}-{}", start, end),
+                    _ => String::new(),
+                };
+                tool_notes.push(format!("file({}:{}{})", root_id, path, suffix));
             }
             ShepherdMessageChunk::Thinking { .. } => {}
         }
@@ -266,11 +298,21 @@ pub(super) async fn load_scope_messages(
             )
             .await
             .str_err()?,
+        ShepherdScope::Librarian { project_id, .. } => store
+            .get_scope_messages(
+                Some(*project_id),
+                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
+                limit,
+            )
+            .await
+            .str_err()?,
     };
 
     if !matches!(
         scope,
-        ShepherdScope::Shepherd { .. } | ShepherdScope::Thread { .. }
+        ShepherdScope::Shepherd { .. }
+            | ShepherdScope::Thread { .. }
+            | ShepherdScope::Librarian { .. }
     ) && messages.len() > limit
     {
         let start = messages.len().saturating_sub(limit);
@@ -310,6 +352,15 @@ pub(super) async fn save_message(
             )
             .await
             .str_err(),
+        ShepherdScope::Librarian { project_id, .. } => store
+            .save_scope_message(
+                Some(*project_id),
+                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
+                role,
+                chunks_json,
+            )
+            .await
+            .str_err(),
     }
 }
 
@@ -334,6 +385,13 @@ pub(super) async fn load_scope_live_turn(
             .get_live_turn(
                 Some(*project_id),
                 &ShepherdChatStore::thread_scope_key(thread_id),
+            )
+            .await
+            .str_err(),
+        ShepherdScope::Librarian { project_id, .. } => store
+            .get_live_turn(
+                Some(*project_id),
+                &ShepherdChatStore::librarian_scope_key(*project_id),
             )
             .await
             .str_err(),

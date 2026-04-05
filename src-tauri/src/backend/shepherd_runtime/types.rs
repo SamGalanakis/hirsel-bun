@@ -33,12 +33,25 @@ pub enum ShepherdScope {
         #[serde(default)]
         focus: Option<ShepherdTaskFocus>,
     },
+    #[serde(rename = "librarian")]
+    Librarian {
+        #[serde(rename = "projectId")]
+        project_id: i64,
+        #[serde(rename = "workspacePath", default)]
+        workspace_path: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ShepherdMessageChunk {
     Text {
+        content: String,
+    },
+    Notice {
+        tone: String,
+        #[serde(default)]
+        title: Option<String>,
         content: String,
     },
     Thinking {
@@ -62,5 +75,20 @@ pub enum ShepherdMessageChunk {
         data_base64: String,
         #[serde(default)]
         name: Option<String>,
+    },
+    Skill {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        path: String,
+    },
+    FileRef {
+        #[serde(rename = "rootId")]
+        root_id: String,
+        path: String,
+        #[serde(rename = "lineStart", default)]
+        line_start: Option<usize>,
+        #[serde(rename = "lineEnd", default)]
+        line_end: Option<usize>,
     },
 }

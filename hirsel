@@ -92,8 +92,23 @@ ensure_repo
 load_dotenv_file "$repo_root/.env"
 load_dotenv_file "$repo_root/.env.local"
 
+dev_auth_enabled() {
+  local value="${HIRSEL_DEV_AUTH:-0}"
+  case "${value,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+prepare_dev_env() {
+  if ! dev_auth_enabled; then
+    unset HIRSEL_API_KEY
+  fi
+}
+
 if [[ $# -eq 0 ]]; then
   cd "$repo_root"
+  prepare_dev_env
   exec "$dev_script"
 fi
 
@@ -107,6 +122,7 @@ done
 
 if [[ "$dev_flags_only" == true ]]; then
   cd "$repo_root"
+  prepare_dev_env
   exec "$dev_script" "$@"
 fi
 
@@ -114,6 +130,7 @@ case "${1:-}" in
   dev)
     shift
     cd "$repo_root"
+    prepare_dev_env
     exec "$dev_script" "$@"
     ;;
   server)

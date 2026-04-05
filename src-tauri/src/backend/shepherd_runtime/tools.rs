@@ -1,15 +1,19 @@
 use std::path::{Path, PathBuf};
 
 use crate::backend::project::ProjectStore;
+use crate::backend::text_patch::TEXT_PATCH_INSTRUCTIONS;
+use crate::backend::tool_results::edit_result_with;
 use crate::backend::{ShepherdChatMessage, ShepherdThread, ShepherdThreadStore};
 use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use walkdir::WalkDir;
 
 use super::commands::{
-    archive_thread, create_thread, delete_thread, get_thread_activity, get_thread_conversation,
-    promote_thread, send_scope_message,
+    archive_thread, close_thread_port_forward, create_thread, delete_thread, forward_thread_port,
+    list_thread_port_forwards, promote_thread, send_scope_message,
 };
+use super::queries::{get_thread_activity, get_thread_conversation};
+use super::rpc::{send_server_control_request, ServerControlRequest, ServerToolResultPayload};
 use super::types::{ShepherdMessageChunk, ShepherdScope};
 
 const NODE_READ_DEFAULT_LIMIT: usize = 2000;
@@ -163,6 +167,28 @@ impl ToolContext {
             candidate = root.join(rel);
         }
         Ok(candidate)
+    }
+
+    async fn proxy_shepherd_tool(&self, project_id: i64, name: &str, args: &Value) -> ToolResult {
+        decode_server_tool_result(
+            send_server_control_request(&ServerControlRequest::ExecuteShepherdTool {
+                project_id,
+                name: name.to_string(),
+                args: args.clone(),
+            })
+            .await,
+        )
+    }
+
+    async fn proxy_librarian_tool(&self, project_id: i64, name: &str, args: &Value) -> ToolResult {
+        decode_server_tool_result(
+            send_server_control_request(&ServerControlRequest::ExecuteLibrarianTool {
+                project_id,
+                name: name.to_string(),
+                args: args.clone(),
+            })
+            .await,
+        )
     }
 
     async fn list_workspace(&self, args: &Value) -> ToolResult {
@@ -616,6 +642,64 @@ impl ToolContext {
         }))
     }
 
+    async fn forward_port_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let thread = match self.resolve_thread(project_id, args).await {
+            Ok(thread) => thread,
+            Err(error) => return error,
+        };
+        let Some(port) = Self::arg_i64(args, "port") else {
+            return ToolResult::err_fmt("Missing required parameter: port");
+        };
+        if !(1..=65535).contains(&port) {
+            return ToolResult::err_fmt("Invalid parameter: port must be between 1 and 65535");
+        }
+        let protocol = Self::trimmed_string(args, "protocol")
+            .unwrap_or("http")
+            .to_ascii_lowercase();
+        let Some(label) = Self::trimmed_string(args, "label") else {
+            return ToolResult::err_fmt("Missing required parameter: label");
+        };
+        match forward_thread_port(project_id, &thread.id, port as u16, &protocol, label).await {
+            Ok(forward) => ToolResult::ok(json!({
+                "thread": thread,
+                "forward": forward,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error })),
+        }
+    }
+
+    async fn list_port_forwards_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let thread_id = if args.get("thread_id").is_some() || args.get("title").is_some() {
+            match self.resolve_thread(project_id, args).await {
+                Ok(thread) => Some(thread.id),
+                Err(error) => return error,
+            }
+        } else {
+            None
+        };
+        match list_thread_port_forwards(project_id, thread_id.as_deref()).await {
+            Ok(forwards) => ToolResult::ok(json!({ "forwards": forwards })),
+            Err(error) => ToolResult::err(json!({ "error": error })),
+        }
+    }
+
+    async fn close_port_forward_tool(&self, _project_id: i64, args: &Value) -> ToolResult {
+        let Some(forward_id) = Self::trimmed_string(args, "forward_id") else {
+            return ToolResult::err_fmt("Missing required parameter: forward_id");
+        };
+        match close_thread_port_forward(forward_id).await {
+            Ok(Some(forward)) => ToolResult::ok(json!({
+                "closed": true,
+                "forward": forward,
+            })),
+            Ok(None) => ToolResult::ok(json!({
+                "closed": false,
+                "forward": null,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error })),
+        }
+    }
+
     async fn read_project_focus_view(&self, project_id: i64) -> ToolResult {
         let store = match ProjectStore::open().await {
             Ok(store) => store,
@@ -673,12 +757,13 @@ impl ToolContext {
                         }),
                     );
                 }
-                ToolResult::ok(json!({
-                    "__type__": "edit_result",
-                    "summary": format!("Updated project canvas for project {}", project_id),
-                    "updated_at": view.updated_at,
-                    "source": view.source,
-                }))
+                let mut fields = Map::new();
+                fields.insert("updated_at".to_string(), json!(view.updated_at));
+                fields.insert("source".to_string(), json!(view.source));
+                edit_result_with(
+                    format!("Updated project canvas for project {}", project_id),
+                    fields,
+                )
             }
             Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
         }
@@ -731,15 +816,298 @@ impl ToolContext {
                         }),
                     );
                 }
-                ToolResult::ok(json!({
-                    "__type__": "edit_result",
-                    "summary": format!("Updated retained context for project {}", project_id),
-                    "updated_at": context.updated_at,
-                    "source": context.source,
-                }))
+                let mut fields = Map::new();
+                fields.insert("updated_at".to_string(), json!(context.updated_at));
+                fields.insert("source".to_string(), json!(context.source));
+                edit_result_with(
+                    format!("Updated retained context for project {}", project_id),
+                    fields,
+                )
             }
             Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
         }
+    }
+    async fn emit_knowledge_event(&self, project_id: i64, args: &Value) -> ToolResult {
+        let kind = match Self::trimmed_string(args, "kind") {
+            Some(kind) => kind,
+            None => return ToolResult::err(json!({ "error": "kind is required" })),
+        };
+        let summary = match Self::trimmed_string(args, "summary") {
+            Some(summary) => summary,
+            None => return ToolResult::err(json!({ "error": "summary is required" })),
+        };
+        let files: Vec<String> = args
+            .get("files")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Grab the last 10 messages from shepherd chat for context
+        let shepherd_scope = ShepherdScope::Shepherd {
+            project_id,
+            workspace_path: None,
+            focus: None,
+        };
+        let conversation_tail = match super::queries::get_shepherd_history(shepherd_scope, 10).await
+        {
+            Ok(messages) => messages
+                .into_iter()
+                .map(|m| {
+                    json!({
+                        "role": m.role,
+                        "chunks_json": m.chunks_json,
+                    })
+                })
+                .collect::<Vec<_>>(),
+            Err(_) => vec![],
+        };
+
+        // Enqueue the event for the Librarian
+        let event = json!({
+            "project_id": project_id,
+            "kind": kind,
+            "summary": summary,
+            "files": files,
+            "conversation_tail": conversation_tail,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "processed": false,
+        });
+
+        match crate::backend::librarian::enqueue_event(project_id, event).await {
+            Ok(_) => ToolResult::ok(json!({
+                "status": "queued",
+                "kind": kind,
+                "summary": summary,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error })),
+        }
+    }
+}
+
+fn should_proxy_server_managed_tools() -> bool {
+    std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok()
+}
+
+fn encode_tool_result_error(error: String) -> ToolResult {
+    ToolResult::err(json!({ "error": error }))
+}
+
+fn decode_server_tool_result(payload: Result<Option<Value>, String>) -> ToolResult {
+    let payload = match payload {
+        Ok(Some(payload)) => payload,
+        Ok(None) => {
+            return encode_tool_result_error(
+                "server control reply did not include a tool result payload".to_string(),
+            );
+        }
+        Err(error) => return encode_tool_result_error(error),
+    };
+
+    let payload: ServerToolResultPayload = match serde_json::from_value(payload) {
+        Ok(payload) => payload,
+        Err(error) => {
+            return encode_tool_result_error(format!(
+                "failed to decode tool result payload: {}",
+                error
+            ));
+        }
+    };
+
+    ToolResult {
+        success: payload.success,
+        result: payload.result,
+        images: vec![],
+    }
+}
+
+async fn execute_librarian_tool(
+    common: &ToolContext,
+    project_id: i64,
+    name: &str,
+    args: &Value,
+) -> ToolResult {
+    match name {
+        "ls" => common.list_workspace(args).await,
+        "read_file" => common.read_workspace_file(args).await,
+        "grep" => common.grep_workspace(args).await,
+        "graph_surql" => crate::backend::librarian::graph_surql(project_id, args).await,
+        "edit_graph_node_text" => {
+            crate::backend::librarian::edit_graph_node_text(project_id, args).await
+        }
+        _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
+    }
+}
+
+async fn execute_shepherd_tool(
+    common: &ToolContext,
+    project_id: i64,
+    name: &str,
+    args: &Value,
+) -> ToolResult {
+    match name {
+        "list_threads" => common.list_threads_tool(project_id).await,
+        "create_thread" => common.create_thread_tool(project_id, args).await,
+        "rename_thread" => common.rename_thread_tool(project_id, args).await,
+        "set_thread_status" => common.set_thread_status_tool(project_id, args).await,
+        "archive_thread" => common.archive_thread_tool(project_id, args).await,
+        "promote_thread" => common.promote_thread_tool(project_id, args).await,
+        "delete_thread" => common.delete_thread_tool(project_id, args).await,
+        "send_thread_message" => common.send_thread_message_tool(project_id, args).await,
+        "read_thread_updates" => common.read_thread_updates_tool(project_id, args).await,
+        "forward_port" => common.forward_port_tool(project_id, args).await,
+        "list_port_forwards" => common.list_port_forwards_tool(project_id, args).await,
+        "close_port_forward" => common.close_port_forward_tool(project_id, args).await,
+        "read_project_focus_view" | "read_canvas" => {
+            common.read_project_focus_view(project_id).await
+        }
+        "update_project_focus_view" | "update_canvas" => {
+            common.update_project_focus_view(project_id, args).await
+        }
+        "read_project_retained_context" => common.read_project_retained_context(project_id).await,
+        "update_project_retained_context" => {
+            common
+                .update_project_retained_context(project_id, args)
+                .await
+        }
+        "ls" => common.list_workspace(args).await,
+        "read_file" => common.read_workspace_file(args).await,
+        "grep" => common.grep_workspace(args).await,
+        "emit_knowledge_event" => common.emit_knowledge_event(project_id, args).await,
+        _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
+    }
+}
+
+pub(crate) async fn execute_librarian_server_tool_local(
+    project_id: i64,
+    name: &str,
+    args: &Value,
+) -> ToolResult {
+    let common = ToolContext::new(None, Some(project_id), None);
+    execute_librarian_tool(&common, project_id, name, args).await
+}
+
+pub(crate) async fn execute_shepherd_server_tool_local(
+    project_id: i64,
+    name: &str,
+    args: &Value,
+) -> ToolResult {
+    let common = ToolContext::new(None, Some(project_id), None);
+    execute_shepherd_tool(&common, project_id, name, args).await
+}
+
+// ═══════════════════════════════════════
+// Librarian Tool Provider
+// ═══════════════════════════════════════
+
+pub(super) struct LibrarianToolProvider {
+    common: ToolContext,
+}
+
+impl LibrarianToolProvider {
+    pub(super) fn new(
+        app: Option<DesktopAppHandle>,
+        default_project_id: Option<i64>,
+        workspace_root: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            common: ToolContext::new(app, default_project_id, workspace_root),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolProvider for LibrarianToolProvider {
+    fn definitions(&self) -> Vec<ToolDefinition> {
+        vec![
+            // Read-only workspace tools
+            tool_definition! {
+                name: "ls".to_string(),
+                description: "List workspace directory contents.".to_string(),
+                params: vec![
+                    ToolParam::optional("path", "str"),
+                    ToolParam::optional("depth", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "read_file".to_string(),
+                description: "Read a text file from the workspace.".to_string(),
+                params: vec![
+                    ToolParam::typed("path", "str"),
+                    ToolParam::optional("offset", "int"),
+                    ToolParam::optional("limit", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "grep".to_string(),
+                description: "Search workspace files with a regex pattern.".to_string(),
+                params: vec![
+                    ToolParam::typed("pattern", "str"),
+                    ToolParam::optional("path", "str"),
+                    ToolParam::optional("include", "str"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "graph_surql".to_string(),
+                description: "Run project-scoped SurrealQL against the knowledge graph. The backend binds `$project_id` automatically and only allows `kg_node` / `kg_edge` access.".to_string(),
+                params: vec![
+                    ToolParam::typed("query", "str"),
+                    ToolParam::optional("params", "dict"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "edit_graph_node_text".to_string(),
+                description: format!(
+                    "Patch one top-level text field on an existing knowledge-graph node. Editable fields: summary, description, detail, notes, rationale, markdown.\n\n{}",
+                    TEXT_PATCH_INSTRUCTIONS
+                ),
+                params: vec![
+                    ToolParam::typed("kind", "str"),
+                    ToolParam::typed("id", "str"),
+                    ToolParam::typed("field", "str"),
+                    ToolParam::typed("patch", "str"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+        ]
+    }
+
+    async fn execute(&self, name: &str, args: &Value) -> ToolResult {
+        let project_id = match self.common.resolve_project_id(args) {
+            Ok(id) => id,
+            Err(error) => return ToolResult::err(json!({ "error": error })),
+        };
+
+        if should_proxy_server_managed_tools() && !matches!(name, "ls" | "read_file" | "grep") {
+            return self
+                .common
+                .proxy_librarian_tool(project_id, name, args)
+                .await;
+        }
+
+        execute_librarian_tool(&self.common, project_id, name, args).await
     }
 }
 
@@ -758,8 +1126,6 @@ impl ShepherdToolProvider {
         }
     }
 }
-
-pub(super) struct NoopToolProvider;
 
 #[async_trait::async_trait]
 impl ToolProvider for ShepherdToolProvider {
@@ -871,6 +1237,44 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
+            tool_definition! {
+                name: "forward_port".to_string(),
+                description: "Expose an HTTP or HTTPS port from a thread container to the user and to shepherd. Labels are required.".to_string(),
+                params: vec![
+                    ToolParam::optional("thread_id", "str"),
+                    ToolParam::optional("title", "str"),
+                    ToolParam::typed("port", "int"),
+                    ToolParam::optional("protocol", "str"),
+                    ToolParam::typed("label", "str"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "list_port_forwards".to_string(),
+                description: "List active forwarded previews for the project or for one thread.".to_string(),
+                params: vec![
+                    ToolParam::optional("thread_id", "str"),
+                    ToolParam::optional("title", "str"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "close_port_forward".to_string(),
+                description: "Close a previously opened forwarded preview.".to_string(),
+                params: vec![ToolParam::typed("forward_id", "str")],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
         ];
 
         definitions.push(tool_definition! {
@@ -890,7 +1294,7 @@ impl ToolProvider for ShepherdToolProvider {
         if self.common.workspace_root.is_some() {
             definitions.extend([
                 tool_definition! {
-                    name: "list_workspace".to_string(),
+                    name: "ls".to_string(),
                     description: "List files and directories inside the attached workspace. Paths must stay relative to that workspace.".to_string(),
                     params: vec![
                         ToolParam::optional("path", "str"),
@@ -903,7 +1307,7 @@ impl ToolProvider for ShepherdToolProvider {
                     injected: true,
                 },
                 tool_definition! {
-                    name: "read_workspace_file".to_string(),
+                    name: "read_file".to_string(),
                     description: "Read a text file from the attached workspace. The path must be relative to that workspace.".to_string(),
                     params: vec![
                         ToolParam::typed("path", "str"),
@@ -917,7 +1321,7 @@ impl ToolProvider for ShepherdToolProvider {
                     injected: true,
                 },
                 tool_definition! {
-                    name: "grep_workspace".to_string(),
+                    name: "grep".to_string(),
                     description: "Search text files inside the attached workspace using a regex pattern.".to_string(),
                     params: vec![
                         ToolParam::typed("pattern", "str"),
@@ -999,6 +1403,20 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
+            tool_definition! {
+                name: "emit_knowledge_event".to_string(),
+                description: "Signal the Librarian to record a piece of project knowledge — an idea, decision, observation, risk, or bug discovered during conversation. The Librarian will process it asynchronously; this call returns immediately. Use liberally: if the user expresses intent, makes a decision, or you notice something noteworthy about the codebase, emit an event.".to_string(),
+                params: vec![
+                    ToolParam::typed("kind", "str"),
+                    ToolParam::typed("summary", "str"),
+                    ToolParam::optional("files", "list[str]"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
         ]);
 
         definitions
@@ -1010,48 +1428,13 @@ impl ToolProvider for ShepherdToolProvider {
             Err(error) => return ToolResult::err(json!({ "error": error })),
         };
 
-        match name {
-            "list_threads" => self.common.list_threads_tool(project_id).await,
-            "create_thread" => self.common.create_thread_tool(project_id, args).await,
-            "rename_thread" => self.common.rename_thread_tool(project_id, args).await,
-            "set_thread_status" => self.common.set_thread_status_tool(project_id, args).await,
-            "archive_thread" => self.common.archive_thread_tool(project_id, args).await,
-            "promote_thread" => self.common.promote_thread_tool(project_id, args).await,
-            "delete_thread" => self.common.delete_thread_tool(project_id, args).await,
-            "send_thread_message" => self.common.send_thread_message_tool(project_id, args).await,
-            "read_thread_updates" => self.common.read_thread_updates_tool(project_id, args).await,
-            "read_project_focus_view" | "read_canvas" => {
-                self.common.read_project_focus_view(project_id).await
-            }
-            "update_project_focus_view" | "update_canvas" => {
-                self.common
-                    .update_project_focus_view(project_id, args)
-                    .await
-            }
-            "read_project_retained_context" => {
-                self.common.read_project_retained_context(project_id).await
-            }
-            "update_project_retained_context" => {
-                self.common
-                    .update_project_retained_context(project_id, args)
-                    .await
-            }
-            "list_workspace" => self.common.list_workspace(args).await,
-            "read_workspace_file" => self.common.read_workspace_file(args).await,
-            "grep_workspace" => self.common.grep_workspace(args).await,
-            _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
+        if should_proxy_server_managed_tools() && !matches!(name, "ls" | "read_file" | "grep") {
+            return self
+                .common
+                .proxy_shepherd_tool(project_id, name, args)
+                .await;
         }
-    }
-}
 
-#[async_trait::async_trait]
-impl ToolProvider for NoopToolProvider {
-    fn definitions(&self) -> Vec<ToolDefinition> {
-        vec![]
-    }
-
-    async fn execute(&self, name: &str, args: &Value) -> ToolResult {
-        let _ = args;
-        ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) }))
+        execute_shepherd_tool(&self.common, project_id, name, args).await
     }
 }

@@ -1,52 +1,41 @@
-//! Credential storage for hirsel
+//! Credential storage for Hirsel.
 //!
-//! Credentials are stored encrypted in SQLite using AES-256-GCM.
-//! The encryption key is stored in ~/.hirsel/key (auto-generated on first use).
+//! Credentials are stored encrypted in the embedded SurrealDB database using
+//! AES-256-GCM. The encryption key is stored in `~/.hirsel/key` and generated
+//! on first use.
 //!
 //! This module provides:
-//! - `CredentialStore`: Encrypted credential storage backed by SQLite
+//! - `CredentialStore`: Encrypted credential storage backed by SurrealDB
 //! - `ForwardedCredentials`: Credentials to pass to agent processes
 
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
+use base64::Engine;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
 use std::path::Path;
+use surrealdb::types::SurrealValue;
 use thiserror::Error;
-use tokio::sync::OnceCell;
 
-use super::db::global_pool;
+use super::db::{global_db, DbClient};
 
-const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS credentials (
-    id INTEGER PRIMARY KEY,
-    key_type TEXT NOT NULL UNIQUE,
-    encrypted_value BLOB NOT NULL,
-    nonce BLOB NOT NULL,
-    updated_at TEXT NOT NULL
-);
-"#;
+const CREDENTIAL_TABLE: &str = "credential";
 
-static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
-
-async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    SCHEMA_INIT
-        .get_or_try_init(|| async {
-            sqlx::raw_sql(SCHEMA).execute(pool).await?;
-            Ok::<(), sqlx::Error>(())
-        })
-        .await?;
-    Ok(())
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct CredentialRecord {
+    key_type: String,
+    encrypted_value_b64: String,
+    nonce_b64: String,
+    updated_at: String,
 }
 
-/// Errors that can occur during credential operations
+/// Errors that can occur during credential operations.
 #[derive(Debug, Error)]
 pub enum CredentialError {
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] surrealdb::Error),
 
     #[error("Encryption error: {0}")]
     Encryption(String),
@@ -137,12 +126,12 @@ fn read_env_credential(name: &str) -> Option<String> {
 }
 
 impl ForwardedCredentials {
-    /// Create empty credentials
+    /// Create empty credentials.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Check if any credentials are present
+    /// Check if any credentials are present.
     pub fn has_any(&self) -> bool {
         self.openai_api_key.is_some()
             || self.openrouter_api_key.is_some()
@@ -154,7 +143,7 @@ impl ForwardedCredentials {
             || self.codex_account_id.is_some()
     }
 
-    /// Merge with another set of credentials, preferring self's values
+    /// Merge with another set of credentials, preferring self's values.
     pub fn merge(self, other: ForwardedCredentials) -> Self {
         Self {
             openai_api_key: self.openai_api_key.or(other.openai_api_key),
@@ -278,10 +267,9 @@ pub async fn resolve_codex_oauth_credentials() -> Option<ResolvedCodexOAuthCrede
     })
 }
 
-/// Load encryption key from file, or generate a new one if it doesn't exist
+/// Load encryption key from file, or generate a new one if it doesn't exist.
 fn load_or_generate_key(key_path: &Path) -> CredentialResult<[u8; 32]> {
     if key_path.exists() {
-        // Load existing key
         let key_hex = std::fs::read_to_string(key_path)?;
         let key_bytes = hex::decode(key_hex.trim())
             .map_err(|e| CredentialError::Encryption(format!("Invalid key file: {}", e)))?;
@@ -294,16 +282,13 @@ fn load_or_generate_key(key_path: &Path) -> CredentialResult<[u8; 32]> {
         arr.copy_from_slice(&key_bytes);
         Ok(arr)
     } else {
-        // Generate new key
         let key: [u8; 32] = rand::rng().random();
         let key_hex = hex::encode(key);
 
-        // Ensure parent directory exists
         if let Some(parent) = key_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Write key with restrictive permissions
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
@@ -311,7 +296,7 @@ fn load_or_generate_key(key_path: &Path) -> CredentialResult<[u8; 32]> {
                 .write(true)
                 .create(true)
                 .truncate(true)
-                .mode(0o600) // Owner read/write only
+                .mode(0o600)
                 .open(key_path)?;
             std::io::Write::write_all(&mut file, key_hex.as_bytes())?;
         }
@@ -324,61 +309,34 @@ fn load_or_generate_key(key_path: &Path) -> CredentialResult<[u8; 32]> {
     }
 }
 
-/// Encrypted credential storage backed by SQLite
+/// Encrypted credential storage backed by SurrealDB.
 ///
-/// Credentials are stored encrypted using AES-256-GCM. The encryption key
-/// is stored in ~/.hirsel/key and auto-generated on first use.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use hirsel_lib::core::credentials::{CredentialStore, ForwardedCredentials};
-///
-/// // Store credentials
-/// let store = CredentialStore::open().await?;
-/// store.store("oauth_token", "my-secret-token").await?;
-///
-/// // Load credentials
-/// let token = store.load("oauth_token").await?;
-///
-/// // Load all as ForwardedCredentials
-/// let creds = store.load_all().await;
-/// ```
+/// Credentials are stored encrypted using AES-256-GCM. The encryption key is
+/// stored in `~/.hirsel/key` and auto-generated on first use.
 pub struct CredentialStore {
     cipher: Aes256Gcm,
 }
 
 impl CredentialStore {
-    /// Open the global credential store at ~/.hirsel/hirsel.db
+    /// Open the global credential store.
     pub async fn open() -> CredentialResult<Self> {
         let key_path = super::config::hirsel_dir().join("key");
-
-        // Load or generate encryption key
         let key_bytes = load_or_generate_key(&key_path)?;
-
         let cipher = Aes256Gcm::new_from_slice(&key_bytes)
             .map_err(|e| CredentialError::Encryption(e.to_string()))?;
 
-        // Ensure schema exists
-        let pool = global_pool().await;
-        ensure_schema(pool).await?;
+        let _ = global_db().await;
 
         Ok(Self { cipher })
     }
 
-    /// Get the pool
-    async fn pool(&self) -> &'static SqlitePool {
-        global_pool().await
+    async fn db(&self) -> &'static DbClient {
+        global_db().await
     }
 
-    /// Store a credential (encrypted)
-    ///
-    /// The value is encrypted with AES-256-GCM before storage.
-    /// Existing values with the same key_type are replaced.
+    /// Store a credential, encrypted at rest.
     pub async fn store(&self, key_type: &str, value: &str) -> CredentialResult<()> {
-        let pool = self.pool().await;
-
-        // Generate a random 12-byte nonce
+        let db = self.db().await;
         let nonce_bytes: [u8; 12] = rand::rng().random();
         let nonce = Nonce::from_slice(&nonce_bytes);
 
@@ -387,36 +345,32 @@ impl CredentialStore {
             .encrypt(nonce, value.as_bytes())
             .map_err(|e| CredentialError::Encryption(e.to_string()))?;
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let record = CredentialRecord {
+            key_type: key_type.to_string(),
+            encrypted_value_b64: base64::engine::general_purpose::STANDARD.encode(encrypted),
+            nonce_b64: base64::engine::general_purpose::STANDARD.encode(nonce_bytes),
+            updated_at: chrono::Utc::now().to_rfc3339(),
+        };
 
-        sqlx::query(
-            "INSERT OR REPLACE INTO credentials (key_type, encrypted_value, nonce, updated_at)
-             VALUES (?, ?, ?, ?)",
-        )
-        .bind(key_type)
-        .bind(&encrypted)
-        .bind(nonce_bytes.to_vec())
-        .bind(&now)
-        .execute(pool)
-        .await?;
-
+        let _: Option<CredentialRecord> = db
+            .upsert((CREDENTIAL_TABLE, key_type))
+            .content(record.clone())
+            .await?;
         Ok(())
     }
 
-    /// Load a credential (decrypted)
-    ///
-    /// Returns the decrypted value or NotFound error if the key doesn't exist.
+    /// Load a credential and decrypt it.
     pub async fn load(&self, key_type: &str) -> CredentialResult<String> {
-        let pool = self.pool().await;
+        let db = self.db().await;
+        let record: Option<CredentialRecord> = db.select((CREDENTIAL_TABLE, key_type)).await?;
+        let record = record.ok_or_else(|| CredentialError::NotFound(key_type.to_string()))?;
 
-        let row = sqlx::query("SELECT encrypted_value, nonce FROM credentials WHERE key_type = ?")
-            .bind(key_type)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| CredentialError::NotFound(key_type.to_string()))?;
-
-        let encrypted: Vec<u8> = row.get("encrypted_value");
-        let nonce_bytes: Vec<u8> = row.get("nonce");
+        let encrypted = base64::engine::general_purpose::STANDARD
+            .decode(record.encrypted_value_b64)
+            .map_err(|e| CredentialError::Encryption(format!("Invalid encrypted value: {}", e)))?;
+        let nonce_bytes = base64::engine::general_purpose::STANDARD
+            .decode(record.nonce_b64)
+            .map_err(|e| CredentialError::Encryption(format!("Invalid nonce: {}", e)))?;
 
         let nonce = Nonce::from_slice(&nonce_bytes);
         let decrypted = self
@@ -427,21 +381,14 @@ impl CredentialStore {
         String::from_utf8(decrypted).map_err(|e| CredentialError::Encryption(e.to_string()))
     }
 
-    /// Delete a credential
+    /// Delete a credential.
     pub async fn delete(&self, key_type: &str) -> CredentialResult<()> {
-        let pool = self.pool().await;
-
-        sqlx::query("DELETE FROM credentials WHERE key_type = ?")
-            .bind(key_type)
-            .execute(pool)
-            .await?;
-
+        let db = self.db().await;
+        let _: Option<CredentialRecord> = db.delete((CREDENTIAL_TABLE, key_type)).await?;
         Ok(())
     }
 
-    /// Load all credentials as ForwardedCredentials
-    ///
-    /// Returns default (empty) credentials for any that are not stored.
+    /// Load all credentials as `ForwardedCredentials`.
     pub async fn load_all(&self) -> ForwardedCredentials {
         ForwardedCredentials {
             openai_api_key: self.load("openai_api_key").await.ok(),
@@ -455,9 +402,7 @@ impl CredentialStore {
         }
     }
 
-    /// Store credentials from ForwardedCredentials
-    ///
-    /// Only stores non-None values.
+    /// Store credentials from `ForwardedCredentials`.
     pub async fn store_all(&self, creds: &ForwardedCredentials) -> CredentialResult<()> {
         if let Some(ref key) = creds.openai_api_key {
             self.store("openai_api_key", key).await?;
@@ -505,7 +450,7 @@ impl CredentialStore {
 
     /// Load Codex OAuth credentials.
     ///
-    /// Returns Ok(None) when required Codex fields are not present.
+    /// Returns `Ok(None)` when required Codex fields are not present.
     pub async fn load_codex_oauth(&self) -> CredentialResult<Option<CodexOAuthCredentials>> {
         let access_token = match self.load("codex_access_token").await {
             Ok(v) => v,
@@ -566,5 +511,5 @@ impl CredentialStore {
 
 #[cfg(test)]
 mod tests {
-    // Tests need to be updated for async - skipping for now
+    // Tests need to be updated for async - skipping for now.
 }

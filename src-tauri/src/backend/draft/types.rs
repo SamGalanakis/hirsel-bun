@@ -4,9 +4,10 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use surrealdb::types::SurrealValue;
 
 /// Starting point for a draft workspace - defines how the workspace is initialized
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[derive(Default)]
 pub enum StartingPoint {

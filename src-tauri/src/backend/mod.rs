@@ -12,6 +12,8 @@ pub mod draft;
 pub mod error;
 pub mod git;
 pub(crate) mod lash_tools;
+pub mod librarian;
+pub mod live_updates;
 pub mod llm_provider;
 pub mod project;
 pub mod sandbox;
@@ -20,7 +22,10 @@ pub mod server;
 pub mod shepherd_chat;
 pub mod shepherd_runtime;
 pub mod shepherd_threads;
+pub mod skills;
 pub mod system;
+pub(crate) mod text_patch;
+pub(crate) mod tool_results;
 pub mod workspace;
 
 pub use config::*;
@@ -43,6 +48,6 @@ pub use shepherd_threads::{
     ShepherdThread, ShepherdThreadError, ShepherdThreadResult, ShepherdThreadStore,
 };
 pub use workspace::{
-    ensure_project_workspace, ensure_thread_checkout, prepare_thread_checkout,
-    workspace_name_for_project, ProjectWorkspace,
+    ensure_project_workspace, ensure_thread_checkout, legacy_workspace_name_for_project_id,
+    prepare_thread_checkout, workspace_name_for_project, ProjectWorkspace,
 };

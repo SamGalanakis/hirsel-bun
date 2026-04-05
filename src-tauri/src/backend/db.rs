@@ -1,57 +1,86 @@
-//! Async database utilities for SQLite connections using sqlx.
+//! Async database utilities for embedded SurrealDB connections.
 //!
-//! Hirsel now uses a single global database for the project/thread model.
+//! Hirsel uses a single global embedded database for shared project state,
+//! credentials, chat history, and thread metadata.
 
 use chrono::Utc;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
-use std::path::Path;
-use std::sync::OnceLock;
-use std::time::Duration;
+use serde::{Deserialize, Serialize};
+use surrealdb::engine::local::{Db, SurrealKv};
+use surrealdb::types::SurrealValue;
+use surrealdb::Surreal;
+use tokio::sync::{Mutex, OnceCell};
 
 use super::config::global_db_path;
 
-pub type DbPool = SqlitePool;
+pub type DbClient = Surreal<Db>;
 
-/// Global database pool for projects, credentials, chat history, and thread metadata.
-static GLOBAL_POOL: OnceLock<SqlitePool> = OnceLock::new();
+static GLOBAL_DB: OnceCell<DbClient> = OnceCell::const_new();
+static COUNTER_LOCK: Mutex<()> = Mutex::const_new(());
 
-/// Get the global database pool, initializing if needed.
-pub async fn global_pool() -> &'static SqlitePool {
-    GLOBAL_POOL.get_or_init(|| {
-        let path = global_db_path();
+const APP_SCHEMA: &str = r#"
+DEFINE TABLE IF NOT EXISTS counter SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS project SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS project_focus_view SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS project_retained_context SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS project_runtime_preparation SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS shepherd_chat_message SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS shepherd_live_turn SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS shepherd_scope_state SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS shepherd_thread SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS shepherd_session SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS credential SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS librarian_event SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS kg_node SCHEMALESS;
+DEFINE TABLE IF NOT EXISTS kg_edge TYPE RELATION SCHEMALESS;
+"#;
 
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime for db init");
-            rt.block_on(async {
-                create_pool(&path)
-                    .await
-                    .expect("Failed to create global database pool")
-            })
-        })
-        .join()
-        .expect("Failed to join db init thread")
-    })
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct CounterRecord {
+    value: i64,
 }
 
-/// Create a new SQLite connection pool with standard settings.
-async fn create_pool(path: &Path) -> Result<SqlitePool, sqlx::Error> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
+/// Get the global database client, initializing it if needed.
+pub async fn global_db() -> &'static DbClient {
+    GLOBAL_DB
+        .get_or_init(|| async {
+            let path = global_db_path();
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .expect("Failed to create parent directory for SurrealDB");
+            }
 
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true)
-        .busy_timeout(Duration::from_secs(30))
-        .journal_mode(SqliteJournalMode::Wal)
-        .foreign_keys(true);
+            let db = Surreal::new::<SurrealKv>(path.to_string_lossy().into_owned())
+                .await
+                .expect("Failed to initialize global SurrealDB");
 
-    SqlitePoolOptions::new()
-        .max_connections(10)
-        .min_connections(0)
-        .acquire_timeout(Duration::from_secs(30))
-        .connect_with(options)
+            db.use_ns("hirsel")
+                .use_db("app")
+                .await
+                .expect("Failed to select SurrealDB namespace/database");
+
+            db.query(APP_SCHEMA)
+                .await
+                .expect("Failed to initialize SurrealDB schema");
+
+            db
+        })
         .await
+}
+
+/// Allocate the next persistent sequence value for a logical counter.
+pub async fn next_sequence(name: &str) -> Result<i64, surrealdb::Error> {
+    let _guard = COUNTER_LOCK.lock().await;
+    let db = global_db().await;
+
+    let current: Option<CounterRecord> = db.select(("counter", name)).await?;
+    let next = current.map(|record| record.value + 1).unwrap_or(1);
+
+    let _: Option<CounterRecord> = db
+        .upsert(("counter", name))
+        .content(CounterRecord { value: next })
+        .await?;
+
+    Ok(next)
 }
 
 /// Generate a UTC timestamp string in ISO 8601 format with microsecond precision.
@@ -62,28 +91,6 @@ pub fn utc_now() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn test_create_pool() {
-        let dir = tempdir().unwrap();
-        let db_path = dir.path().join("test.db");
-        let pool = create_pool(&db_path).await.unwrap();
-
-        let mode: String = sqlx::query_scalar("PRAGMA journal_mode")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(mode.to_lowercase(), "wal");
-
-        let fk_enabled: i32 = sqlx::query_scalar("PRAGMA foreign_keys")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(fk_enabled, 1);
-
-        pool.close().await;
-    }
 
     #[test]
     fn test_utc_now_format() {

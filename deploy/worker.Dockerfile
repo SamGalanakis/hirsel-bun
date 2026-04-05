@@ -1,5 +1,7 @@
 FROM rust:1-bookworm AS builder
 
+ARG HIRSEL_WORKER_CARGO_PROFILE=release
+
 WORKDIR /build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,7 +15,13 @@ COPY src-tauri/src ./src-tauri/src
 
 WORKDIR /build/src-tauri
 
-RUN cargo build --release --locked --bin hirsel-worker
+RUN if [ "$HIRSEL_WORKER_CARGO_PROFILE" = "release" ]; then \
+        cargo build --release --locked --bin hirsel-worker && \
+        cp /build/src-tauri/target/release/hirsel-worker /tmp/hirsel-worker; \
+    else \
+        cargo build --locked --bin hirsel-worker && \
+        cp /build/src-tauri/target/debug/hirsel-worker /tmp/hirsel-worker; \
+    fi
 
 FROM ubuntu:24.04
 
@@ -33,7 +41,7 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/src-tauri/target/release/hirsel-worker /usr/local/bin/hirsel-worker
+COPY --from=builder /tmp/hirsel-worker /usr/local/bin/hirsel-worker
 
 RUN chmod +x /usr/local/bin/hirsel-worker
 

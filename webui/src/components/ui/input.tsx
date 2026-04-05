@@ -1,24 +1,21 @@
-import { type Component, type JSX, splitProps } from "solid-js";
-import { cva, type VariantProps } from "class-variance-authority";
+import { type ComponentProps, splitProps } from "solid-js";
 import { cn } from "@/lib/cn";
 
-const inputVariants = cva(
-  "flex h-[38px] w-full border border-input bg-background px-3 py-2 text-sm text-foreground file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50",
-);
+type InputProps = ComponentProps<"input">;
 
-type InputProps = JSX.InputHTMLAttributes<HTMLInputElement> &
-  VariantProps<typeof inputVariants>;
-
-const Input: Component<InputProps> = (props) => {
+const Input = (props: InputProps) => {
   const [local, others] = splitProps(props, ["class"]);
-
   return (
     <input
-      class={cn(inputVariants(), local.class)}
+      data-slot="input"
+      class={cn(
+        "z-input w-full min-w-0 outline-none file:inline-flex file:border-0 file:bg-transparent file:text-foreground placeholder:text-muted-foreground disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+        local.class,
+      )}
       {...others}
     />
   );
 };
 
+export { Input, type InputProps };
 export default Input;
-export { inputVariants };

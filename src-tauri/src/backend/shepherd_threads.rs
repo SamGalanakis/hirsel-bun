@@ -1,39 +1,26 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
-use tokio::sync::OnceCell;
+use surrealdb::types::SurrealValue;
 
-use crate::backend::db::{global_pool, utc_now};
+use crate::backend::db::{global_db, utc_now, DbClient};
+use crate::backend::live_updates::{self, LiveUpdateKind};
 
-const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS shepherd_threads (
-    id TEXT PRIMARY KEY,
-    project_id INTEGER NOT NULL,
-    title TEXT NOT NULL,
-    objective TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    status TEXT NOT NULL,
-    workspace_path TEXT,
-    checkout_name TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    last_activity_at TEXT NOT NULL,
-    archived_at TEXT
-);
+const SHEPHERD_THREAD_TABLE: &str = "shepherd_thread";
 
-CREATE INDEX IF NOT EXISTS idx_shepherd_threads_project
-ON shepherd_threads(project_id, archived_at, last_activity_at);
-"#;
-
-static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
-
-async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    SCHEMA_INIT
-        .get_or_try_init(|| async {
-            sqlx::raw_sql(SCHEMA).execute(pool).await?;
-            Ok::<(), sqlx::Error>(())
-        })
-        .await?;
-    Ok(())
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct ShepherdThreadRecord {
+    thread_id: String,
+    project_id: i64,
+    title: String,
+    title_lower: String,
+    objective: String,
+    summary: String,
+    status: String,
+    workspace_path: Option<String>,
+    checkout_name: Option<String>,
+    created_at: String,
+    updated_at: String,
+    last_activity_at: String,
+    archived_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,7 +43,9 @@ pub struct ShepherdThread {
 #[derive(Debug, thiserror::Error)]
 pub enum ShepherdThreadError {
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] surrealdb::Error),
+    #[error("Thread not found: {0}")]
+    NotFound(String),
 }
 
 pub type ShepherdThreadResult<T> = Result<T, ShepherdThreadError>;
@@ -69,30 +58,12 @@ impl ShepherdThreadStore {
     }
 
     pub async fn open() -> ShepherdThreadResult<Self> {
-        let pool = global_pool().await;
-        ensure_schema(pool).await?;
+        let _ = global_db().await;
         Ok(Self)
     }
 
-    async fn pool(&self) -> &'static SqlitePool {
-        global_pool().await
-    }
-
-    fn row_to_thread(row: sqlx::sqlite::SqliteRow) -> ShepherdThread {
-        ShepherdThread {
-            id: row.get("id"),
-            project_id: row.get("project_id"),
-            title: row.get("title"),
-            objective: row.get("objective"),
-            summary: row.get("summary"),
-            status: row.get("status"),
-            workspace_path: row.get("workspace_path"),
-            checkout_name: row.get("checkout_name"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-            last_activity_at: row.get("last_activity_at"),
-            archived_at: row.get("archived_at"),
-        }
+    async fn db(&self) -> &'static DbClient {
+        global_db().await
     }
 
     pub async fn create_thread(
@@ -104,72 +75,62 @@ impl ShepherdThreadStore {
         workspace_path: Option<&str>,
         checkout_name: Option<&str>,
     ) -> ShepherdThreadResult<ShepherdThread> {
-        let pool = self.pool().await;
+        let db = self.db().await;
         let id = uuid::Uuid::new_v4().to_string();
         let now = utc_now();
+        let record = ShepherdThreadRecord {
+            thread_id: id.clone(),
+            project_id,
+            title: title.to_string(),
+            title_lower: normalize_text(title),
+            objective: objective.to_string(),
+            summary: summary.to_string(),
+            status: "running".to_string(),
+            workspace_path: workspace_path.map(ToOwned::to_owned),
+            checkout_name: checkout_name.map(ToOwned::to_owned),
+            created_at: now.clone(),
+            updated_at: now.clone(),
+            last_activity_at: now,
+            archived_at: None,
+        };
 
-        sqlx::query(
-            "INSERT INTO shepherd_threads (
-                id, project_id, title, objective, summary, status,
-                workspace_path, checkout_name, created_at, updated_at, last_activity_at, archived_at
-             ) VALUES (?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, NULL)",
-        )
-        .bind(&id)
-        .bind(project_id)
-        .bind(title)
-        .bind(objective)
-        .bind(summary)
-        .bind(workspace_path)
-        .bind(checkout_name)
-        .bind(&now)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+        let _: Option<ShepherdThreadRecord> = db
+            .create((SHEPHERD_THREAD_TABLE, id.clone()))
+            .content(record.clone())
+            .await?;
+        live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
+        live_updates::publish_thread(project_id, id.clone(), LiveUpdateKind::ThreadChanged);
 
-        self.get_thread(&id).await
+        Ok(record.into_thread())
     }
 
     pub async fn get_thread(&self, thread_id: &str) -> ShepherdThreadResult<ShepherdThread> {
-        let pool = self.pool().await;
-        let row = sqlx::query(
-            "SELECT id, project_id, title, objective, summary, status,
-                    workspace_path, checkout_name, created_at, updated_at, last_activity_at, archived_at
-             FROM shepherd_threads
-             WHERE id = ?",
-        )
-        .bind(thread_id)
-        .fetch_one(pool)
-        .await?;
-        Ok(Self::row_to_thread(row))
+        let db = self.db().await;
+        let record: Option<ShepherdThreadRecord> =
+            db.select((SHEPHERD_THREAD_TABLE, thread_id)).await?;
+        record
+            .map(ShepherdThreadRecord::into_thread)
+            .ok_or_else(|| ShepherdThreadError::NotFound(thread_id.to_string()))
     }
 
     pub async fn list_project_threads(
         &self,
         project_id: i64,
     ) -> ShepherdThreadResult<Vec<ShepherdThread>> {
-        let pool = self.pool().await;
-        let rows = sqlx::query(
-            "SELECT id, project_id, title, objective, summary, status,
-                    workspace_path, checkout_name, created_at, updated_at, last_activity_at, archived_at
-             FROM shepherd_threads
-             WHERE project_id = ? AND archived_at IS NULL
-             ORDER BY
-                CASE status
-                    WHEN 'running' THEN 0
-                    WHEN 'waiting' THEN 1
-                    WHEN 'blocked' THEN 2
-                    WHEN 'failed' THEN 3
-                    WHEN 'done' THEN 4
-                    ELSE 5
-                END,
-                last_activity_at DESC,
-                created_at DESC",
-        )
-        .bind(project_id)
-        .fetch_all(pool)
-        .await?;
-        Ok(rows.into_iter().map(Self::row_to_thread).collect())
+        let db = self.db().await;
+        let mut records: Vec<ShepherdThreadRecord> = db.select(SHEPHERD_THREAD_TABLE).await?;
+        records.retain(|record| record.project_id == project_id && record.archived_at.is_none());
+        records.sort_by(|a, b| {
+            thread_status_rank(&a.status)
+                .cmp(&thread_status_rank(&b.status))
+                .then_with(|| b.last_activity_at.cmp(&a.last_activity_at))
+                .then_with(|| b.created_at.cmp(&a.created_at))
+        });
+
+        Ok(records
+            .into_iter()
+            .map(ShepherdThreadRecord::into_thread)
+            .collect())
     }
 
     pub async fn find_project_thread_by_title(
@@ -177,20 +138,12 @@ impl ShepherdThreadStore {
         project_id: i64,
         title: &str,
     ) -> ShepherdThreadResult<Option<ShepherdThread>> {
-        let pool = self.pool().await;
-        let row = sqlx::query(
-            "SELECT id, project_id, title, objective, summary, status,
-                    workspace_path, checkout_name, created_at, updated_at, last_activity_at, archived_at
-             FROM shepherd_threads
-             WHERE project_id = ? AND archived_at IS NULL AND lower(title) = lower(?)
-             ORDER BY updated_at DESC
-             LIMIT 1",
-        )
-        .bind(project_id)
-        .bind(title)
-        .fetch_optional(pool)
-        .await?;
-        Ok(row.map(Self::row_to_thread))
+        let title_lower = normalize_text(title);
+        let mut threads = self.list_project_threads(project_id).await?;
+        threads.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(threads
+            .into_iter()
+            .find(|thread| normalize_text(&thread.title) == title_lower))
     }
 
     pub async fn update_thread(
@@ -203,81 +156,156 @@ impl ShepherdThreadStore {
         workspace_path: Option<Option<&str>>,
         checkout_name: Option<Option<&str>>,
     ) -> ShepherdThreadResult<()> {
-        let pool = self.pool().await;
+        let db = self.db().await;
+        let mut record = self
+            .load_thread_record(thread_id)
+            .await?
+            .ok_or_else(|| ShepherdThreadError::NotFound(thread_id.to_string()))?;
+
+        if let Some(title) = title {
+            record.title = title.to_string();
+            record.title_lower = normalize_text(title);
+        }
+        if let Some(objective) = objective {
+            record.objective = objective.to_string();
+        }
+        if let Some(summary) = summary {
+            record.summary = summary.to_string();
+        }
+        if let Some(status) = status {
+            record.status = status.to_string();
+        }
+        if let Some(workspace_path) = workspace_path {
+            record.workspace_path = workspace_path.map(ToOwned::to_owned);
+        }
+        if let Some(checkout_name) = checkout_name {
+            record.checkout_name = checkout_name.map(ToOwned::to_owned);
+        }
+
         let now = utc_now();
-        sqlx::query(
-            "UPDATE shepherd_threads
-             SET title = COALESCE(?, title),
-                 objective = COALESCE(?, objective),
-                 summary = COALESCE(?, summary),
-                 status = COALESCE(?, status),
-                 workspace_path = COALESCE(?, workspace_path),
-                 checkout_name = COALESCE(?, checkout_name),
-                 updated_at = ?,
-                 last_activity_at = ?
-             WHERE id = ?",
-        )
-        .bind(title)
-        .bind(objective)
-        .bind(summary)
-        .bind(status)
-        .bind(workspace_path.flatten())
-        .bind(checkout_name.flatten())
-        .bind(&now)
-        .bind(&now)
-        .bind(thread_id)
-        .execute(pool)
-        .await?;
+        record.updated_at = now.clone();
+        record.last_activity_at = now;
+
+        let _: Option<ShepherdThreadRecord> = db
+            .upsert((SHEPHERD_THREAD_TABLE, thread_id))
+            .content(record.clone())
+            .await?;
+        live_updates::publish_project(record.project_id, LiveUpdateKind::ThreadsChanged);
+        live_updates::publish_thread(
+            record.project_id,
+            record.thread_id.clone(),
+            LiveUpdateKind::ThreadChanged,
+        );
         Ok(())
     }
 
     pub async fn touch_thread(&self, thread_id: &str) -> ShepherdThreadResult<()> {
-        let pool = self.pool().await;
-        let now = utc_now();
-        sqlx::query(
-            "UPDATE shepherd_threads
-             SET updated_at = ?, last_activity_at = ?
-             WHERE id = ?",
-        )
-        .bind(&now)
-        .bind(&now)
-        .bind(thread_id)
-        .execute(pool)
-        .await?;
+        let db = self.db().await;
+        if let Some(mut record) = self.load_thread_record(thread_id).await? {
+            let now = utc_now();
+            record.updated_at = now.clone();
+            record.last_activity_at = now;
+            let _: Option<ShepherdThreadRecord> = db
+                .upsert((SHEPHERD_THREAD_TABLE, thread_id))
+                .content(record.clone())
+                .await?;
+            live_updates::publish_project(record.project_id, LiveUpdateKind::ThreadsChanged);
+            live_updates::publish_thread(
+                record.project_id,
+                record.thread_id.clone(),
+                LiveUpdateKind::ThreadChanged,
+            );
+        }
         Ok(())
     }
 
     pub async fn archive_thread(&self, thread_id: &str) -> ShepherdThreadResult<()> {
-        let pool = self.pool().await;
-        let now = utc_now();
-        sqlx::query(
-            "UPDATE shepherd_threads
-             SET archived_at = ?, updated_at = ?
-             WHERE id = ?",
-        )
-        .bind(&now)
-        .bind(&now)
-        .bind(thread_id)
-        .execute(pool)
-        .await?;
+        let db = self.db().await;
+        if let Some(mut record) = self.load_thread_record(thread_id).await? {
+            let now = utc_now();
+            record.archived_at = Some(now.clone());
+            record.updated_at = now;
+            let _: Option<ShepherdThreadRecord> = db
+                .upsert((SHEPHERD_THREAD_TABLE, thread_id))
+                .content(record.clone())
+                .await?;
+            live_updates::publish_project(record.project_id, LiveUpdateKind::ThreadsChanged);
+            live_updates::publish_thread(
+                record.project_id,
+                record.thread_id.clone(),
+                LiveUpdateKind::ThreadChanged,
+            );
+        }
         Ok(())
     }
 
     pub async fn delete_thread(&self, thread_id: &str) -> ShepherdThreadResult<()> {
-        let pool = self.pool().await;
-        sqlx::query("DELETE FROM shepherd_threads WHERE id = ?")
-            .bind(thread_id)
-            .execute(pool)
-            .await?;
+        let db = self.db().await;
+        if let Some(record) = self.load_thread_record(thread_id).await? {
+            let _: Option<ShepherdThreadRecord> =
+                db.delete((SHEPHERD_THREAD_TABLE, thread_id)).await?;
+            live_updates::publish_project(record.project_id, LiveUpdateKind::ThreadsChanged);
+            live_updates::publish_thread(
+                record.project_id,
+                record.thread_id,
+                LiveUpdateKind::ThreadChanged,
+            );
+        }
         Ok(())
     }
 
     pub async fn delete_project_threads(&self, project_id: i64) -> ShepherdThreadResult<()> {
-        let pool = self.pool().await;
-        sqlx::query("DELETE FROM shepherd_threads WHERE project_id = ?")
-            .bind(project_id)
-            .execute(pool)
-            .await?;
+        let db = self.db().await;
+        let records: Vec<ShepherdThreadRecord> = db.select(SHEPHERD_THREAD_TABLE).await?;
+        for record in records {
+            if record.project_id == project_id {
+                let _: Option<ShepherdThreadRecord> =
+                    db.delete((SHEPHERD_THREAD_TABLE, record.thread_id)).await?;
+            }
+        }
+        live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
         Ok(())
+    }
+
+    async fn load_thread_record(
+        &self,
+        thread_id: &str,
+    ) -> ShepherdThreadResult<Option<ShepherdThreadRecord>> {
+        let db = self.db().await;
+        Ok(db.select((SHEPHERD_THREAD_TABLE, thread_id)).await?)
+    }
+}
+
+impl ShepherdThreadRecord {
+    fn into_thread(self) -> ShepherdThread {
+        ShepherdThread {
+            id: self.thread_id,
+            project_id: self.project_id,
+            title: self.title,
+            objective: self.objective,
+            summary: self.summary,
+            status: self.status,
+            workspace_path: self.workspace_path,
+            checkout_name: self.checkout_name,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            last_activity_at: self.last_activity_at,
+            archived_at: self.archived_at,
+        }
+    }
+}
+
+fn normalize_text(value: &str) -> String {
+    value.to_lowercase()
+}
+
+fn thread_status_rank(status: &str) -> u8 {
+    match status {
+        "running" => 0,
+        "waiting" => 1,
+        "blocked" => 2,
+        "failed" => 3,
+        "done" => 4,
+        _ => 5,
     }
 }

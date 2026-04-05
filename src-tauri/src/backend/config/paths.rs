@@ -24,10 +24,10 @@ pub fn workspace_dir(workspace_name: &str) -> PathBuf {
     workspaces_dir().join(workspace_name)
 }
 
-/// Get the path to the global hirsel database (~/.hirsel/hirsel.db)
+/// Get the path to the global Hirsel database directory (~/.hirsel/hirsel.surrealkv)
 /// This stores shared Hirsel state such as projects, chat history, and thread metadata.
 pub fn global_db_path() -> PathBuf {
-    hirsel_dir().join("hirsel.db")
+    hirsel_dir().join("hirsel.surrealkv")
 }
 
 /// Get the assets directory for a project (~/.hirsel/projects/{project_id}/assets)

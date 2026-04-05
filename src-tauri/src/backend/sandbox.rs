@@ -1,3 +1,4 @@
+use git2::{ObjectType, Oid};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::future::Future;
@@ -8,9 +9,11 @@ use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command as TokioCommand;
 use tokio::sync::mpsc;
+use walkdir::WalkDir;
 
 pub const DEFAULT_WORKER_IMAGE: &str = "hirsel-worker:local";
 const WORKER_IMAGE_BUILD_LABEL: &str = "org.hirsel.worker-build";
+const DEFAULT_WORKER_CARGO_PROFILE: &str = "release";
 
 fn default_image() -> String {
     DEFAULT_WORKER_IMAGE.to_string()
@@ -71,8 +74,75 @@ fn docker_output(args: &[&str]) -> Result<std::process::Output, String> {
         .map_err(|error| humanize_docker_error(&format!("failed to run docker: {}", error)))
 }
 
+fn current_worker_source_fingerprint() -> Result<String, String> {
+    let repo_root = resolve_worker_build_root()
+        .ok_or_else(|| "failed to resolve worker build root".to_string())?;
+    let src_tauri = repo_root.join("src-tauri");
+    let mut files = vec![
+        repo_root.join("deploy").join("worker.Dockerfile"),
+        src_tauri.join("Cargo.toml"),
+        src_tauri.join("Cargo.lock"),
+        src_tauri.join("build.rs"),
+    ];
+
+    let src_dir = src_tauri.join("src");
+    if src_dir.is_dir() {
+        files.extend(
+            WalkDir::new(&src_dir)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().is_file())
+                .map(|entry| entry.into_path()),
+        );
+    }
+
+    files.sort();
+
+    let mut bytes = Vec::new();
+    for path in files {
+        if !path.is_file() {
+            continue;
+        }
+        let rel = path
+            .strip_prefix(&repo_root)
+            .map_err(|error| format!("failed to relativize '{}': {}", path.display(), error))?;
+        bytes.extend_from_slice(rel.to_string_lossy().as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(
+            &std::fs::read(&path)
+                .map_err(|error| format!("failed to read '{}': {}", path.display(), error))?,
+        );
+        bytes.push(0xff);
+    }
+
+    let oid = Oid::hash_object(ObjectType::Blob, &bytes)
+        .map_err(|error| format!("failed to fingerprint worker sources: {}", error))?;
+    Ok(oid.to_string())
+}
+
 fn worker_build_label() -> String {
-    format!("{}-{}", crate::version::VERSION, crate::version::GIT_SHA)
+    let source = current_worker_source_fingerprint().unwrap_or_else(|_| "unknown".to_string());
+    format!(
+        "{}-{}-{}",
+        crate::version::VERSION,
+        crate::version::GIT_SHA,
+        source
+    )
+}
+
+pub fn worker_image_build_label() -> String {
+    worker_build_label()
+}
+
+pub fn worker_image_cargo_profile() -> &'static str {
+    match std::env::var("HIRSEL_WORKER_CARGO_PROFILE") {
+        Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
+            "dev" | "debug" => "dev",
+            "release" => "release",
+            _ => DEFAULT_WORKER_CARGO_PROFILE,
+        },
+        Err(_) => DEFAULT_WORKER_CARGO_PROFILE,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -128,6 +198,33 @@ fn current_worker_image_label(image: &str) -> Result<Option<String>, String> {
     Err(humanize_docker_error(&message))
 }
 
+pub(crate) fn current_worker_runtime_fingerprint(image: &str) -> Result<Option<String>, String> {
+    let format = format!(
+        "{{{{.Id}}}}|{{{{index .Config.Labels \"{}\"}}}}",
+        WORKER_IMAGE_BUILD_LABEL
+    );
+    let output = docker_output(&["image", "inspect", "--format", &format, image])?;
+    if output.status.success() {
+        let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let Some((image_id, label)) = raw.split_once('|') else {
+            return Ok(Some(raw));
+        };
+        let image_id = image_id.trim();
+        let label = label.trim();
+        if !label.is_empty() {
+            return Ok(Some(format!("{image_id}|{label}")));
+        }
+        return Ok(Some(image_id.to_string()));
+    }
+
+    let message = best_command_output(&output);
+    if message.to_ascii_lowercase().contains("no such object") {
+        return Ok(None);
+    }
+
+    Err(humanize_docker_error(&message))
+}
+
 fn classify_worker_build_progress(line: &str) -> Option<SandboxImageProgress> {
     let lower = line.to_ascii_lowercase();
     let progress = if lower.contains("load build definition from deploy/worker.dockerfile")
@@ -144,7 +241,9 @@ fn classify_worker_build_progress(line: &str) -> Option<SandboxImageProgress> {
             0.48,
             "Copying the worker source into the build context.".to_string(),
         ))
-    } else if lower.contains("cargo build --release --locked --bin hirsel-worker") {
+    } else if lower.contains("cargo build --release --locked --bin hirsel-worker")
+        || lower.contains("cargo build --locked --bin hirsel-worker")
+    {
         Some((0.72, "Compiling `hirsel-worker`.".to_string()))
     } else if lower.contains("from ubuntu:24.04") {
         Some((0.84, "Preparing the runtime image.".to_string()))
@@ -191,7 +290,8 @@ where
             DEFAULT_WORKER_IMAGE
         )
     })?;
-    let label = worker_build_label();
+    let label = worker_image_build_label();
+    let cargo_profile = worker_image_cargo_profile();
     report(SandboxImageProgress {
         progress: 0.14,
         detail: format!(
@@ -210,6 +310,8 @@ where
             "deploy/worker.Dockerfile",
             "--build-arg",
             &format!("HIRSEL_WORKER_BUILD_LABEL={label}"),
+            "--build-arg",
+            &format!("HIRSEL_WORKER_CARGO_PROFILE={cargo_profile}"),
             "-t",
             DEFAULT_WORKER_IMAGE,
             ".",
@@ -313,7 +415,8 @@ where
     .await?;
 
     let current_label = current_worker_image_label(image)?;
-    if current_label.as_deref() == Some(worker_build_label().as_str()) {
+    let expected_label = worker_image_build_label();
+    if current_label.as_deref() == Some(expected_label.as_str()) {
         report(SandboxImageProgress {
             progress: 1.0,
             detail: format!("Worker image `{}` is ready.", image),

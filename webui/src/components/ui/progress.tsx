@@ -11,9 +11,13 @@ const Progress: Component<ProgressProps> = (props) => {
   const clamped = () => Math.max(0, Math.min(props.value, 100));
 
   return (
-    <div class={cn("h-2 w-full overflow-hidden rounded-full bg-muted", props.class)}>
+    <div
+      data-slot="progress"
+      class={cn("z-progress-track h-1.5 w-full overflow-hidden bg-border", props.class)}
+    >
       <div
-        class={cn("h-full transition-all duration-300", props.indicatorClass)}
+        data-slot="progress-indicator"
+        class={cn("z-progress-indicator h-full transition-all duration-300", props.indicatorClass)}
         style={{ width: `${Math.max(clamped(), 0)}%` }}
       />
     </div>

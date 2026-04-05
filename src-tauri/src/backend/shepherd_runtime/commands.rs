@@ -2,34 +2,36 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex as StdMutex, OnceLock};
 
+use lash::ToolResult;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use tokio::io::BufReader;
 use tokio::net::UnixListener;
 
-use super::history::{
-    build_user_chunks, chunks_to_json, load_scope_live_turn, load_scope_messages, save_message,
+use super::history::{build_user_chunks, chunks_to_json, save_message};
+use super::preview::{
+    close_preview_forward, close_thread_preview_forwards, list_preview_forwards,
+    open_preview_forward,
 };
+use super::queries::{get_thread_activity, scope_activity};
 use super::rpc::{
     connect_worker_socket, read_json_line, send_server_control_request, server_control_socket_path,
-    write_json_line, ServerControlReply, ServerControlRequest, WorkerReply, WorkerRequest,
-    WorkerStreamEvent,
+    write_json_line, PreviewForwardInfo, ServerControlReply, ServerControlRequest,
+    ServerToolResultPayload, WorkerReply, WorkerRequest, WorkerStreamEvent,
 };
 use super::sandbox::{
     current_server_control_socket_path, ensure_scope_session, scope_key, stop_scope_session,
     validate_scope_runtime,
 };
-use super::session::{ShepherdScopeSession, ShepherdSessionStore};
+use super::session::ShepherdSessionStore;
+use super::tools::{execute_librarian_server_tool_local, execute_shepherd_server_tool_local};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 use crate::backend::app::ResultExt;
 use crate::backend::git::{promote_thread_checkout, GitError};
-use crate::backend::ProjectStore;
 use crate::backend::{
-    ensure_project_workspace, prepare_thread_checkout, ShepherdChatMessage, ShepherdChatStore,
-    ShepherdLiveTurn, ShepherdThread, ShepherdThreadStore,
+    ensure_project_workspace, prepare_thread_checkout, ShepherdChatStore, ShepherdThread,
+    ShepherdThreadStore,
 };
-
-const PROJECT_SURVEY_THREAD_TITLE: &str = "Project survey";
 
 static ACTIVE_SCOPE_TURNS: OnceLock<StdMutex<HashSet<String>>> = OnceLock::new();
 
@@ -75,14 +77,6 @@ pub struct PromoteThreadResponse {
     pub env_changed: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ShepherdScopeActivity {
-    pub session: Option<ShepherdScopeSession>,
-    pub live_turn: Option<ShepherdLiveTurn>,
-    pub has_active_turn: bool,
-}
-
 fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
     match scope {
         ShepherdScope::General => (None, None),
@@ -97,6 +91,10 @@ fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
         } => (
             Some(*project_id),
             Some(ShepherdThreadStore::scope_key(thread_id)),
+        ),
+        ShepherdScope::Librarian { project_id, .. } => (
+            Some(*project_id),
+            Some(ShepherdChatStore::librarian_scope_key(*project_id)),
         ),
     }
 }
@@ -122,6 +120,27 @@ fn summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
     summary
 }
 
+fn interruption_notice_chunk() -> ShepherdMessageChunk {
+    ShepherdMessageChunk::Notice {
+        tone: "warning".to_string(),
+        title: Some("Interrupted".to_string()),
+        content: "Stopped manually. This response is partial.".to_string(),
+    }
+}
+
+fn is_interruption_error(error: &str) -> bool {
+    error.to_ascii_lowercase().contains("interrupt")
+}
+
+fn interrupted_summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
+    let summary = summary_from_chunks(chunks);
+    if summary == "No summary available yet." {
+        "Interrupted by user.".to_string()
+    } else {
+        format!("{summary} (interrupted)")
+    }
+}
+
 fn truncate_copy(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
     if trimmed.chars().count() <= max_chars {
@@ -136,19 +155,30 @@ fn truncate_copy(text: &str, max_chars: usize) -> String {
 #[derive(Default)]
 struct LiveTurnAccumulator {
     chunks: Vec<ShepherdMessageChunk>,
+    /// Set after a non-text event so the next TextDelta starts a fresh chunk
+    /// instead of appending to the previous one.
+    needs_text_break: bool,
 }
 
 impl LiveTurnAccumulator {
+    fn push_text(&mut self, content: String) {
+        if content.trim().is_empty() {
+            return;
+        }
+        if !self.needs_text_break {
+            if let Some(ShepherdMessageChunk::Text { content: existing }) = self.chunks.last_mut() {
+                existing.push_str(&content);
+                return;
+            }
+        }
+        self.needs_text_break = false;
+        self.chunks.push(ShepherdMessageChunk::Text { content });
+    }
+
     fn apply(&mut self, event: WorkerStreamEvent) {
         match event {
             WorkerStreamEvent::TextDelta { content } => {
-                if let Some(ShepherdMessageChunk::Text { content: existing }) =
-                    self.chunks.last_mut()
-                {
-                    existing.push_str(&content);
-                } else {
-                    self.chunks.push(ShepherdMessageChunk::Text { content });
-                }
+                self.push_text(content);
             }
             WorkerStreamEvent::Tool {
                 id,
@@ -158,6 +188,7 @@ impl LiveTurnAccumulator {
                 input,
                 output,
             } => {
+                self.needs_text_break = true;
                 if let Some(chunk) = self.chunks.iter_mut().find(|chunk| {
                     matches!(chunk, ShepherdMessageChunk::Tool { id: existing_id, .. } if existing_id == &id)
                 }) {
@@ -181,31 +212,15 @@ impl LiveTurnAccumulator {
                 }
             }
             WorkerStreamEvent::Message { text, kind } => {
+                self.needs_text_break = true;
                 if kind == "final" {
-                    if let Some(ShepherdMessageChunk::Text { content }) = self
-                        .chunks
-                        .iter_mut()
-                        .rev()
-                        .find(|chunk| matches!(chunk, ShepherdMessageChunk::Text { .. }))
-                    {
-                        if !content.ends_with('\n') && !content.is_empty() {
-                            content.push('\n');
-                        }
-                        content.push_str(&text);
-                    } else {
-                        self.chunks.push(ShepherdMessageChunk::Text { content: text });
-                    }
+                    self.chunks
+                        .push(ShepherdMessageChunk::Text { content: text });
                 }
             }
             WorkerStreamEvent::Error { message } => {
-                self.chunks.push(ShepherdMessageChunk::Tool {
-                    id: "worker-error".to_string(),
-                    title: "Worker Error".to_string(),
-                    kind: Some("error".to_string()),
-                    status: "failed".to_string(),
-                    input: None,
-                    output: Some(message),
-                });
+                let _ = message;
+                self.needs_text_break = true;
             }
         }
     }
@@ -215,6 +230,14 @@ impl LiveTurnAccumulator {
             return Ok(None);
         }
         chunks_to_json(&self.chunks).map(Some)
+    }
+
+    fn finalize(&mut self, fallback: Vec<ShepherdMessageChunk>) -> Vec<ShepherdMessageChunk> {
+        if self.chunks.is_empty() {
+            fallback
+        } else {
+            std::mem::take(&mut self.chunks)
+        }
     }
 }
 
@@ -235,6 +258,15 @@ fn clear_scope_active(scope_key: &str) {
     }
 }
 
+pub(crate) fn clear_all_runtime_tracking() {
+    if let Ok(mut active) = active_scope_turns().lock() {
+        active.clear();
+    }
+    if let Ok(mut queued) = QUEUED_TURNS.lock() {
+        queued.clear();
+    }
+}
+
 async fn set_live_turn(
     scope: &ShepherdScope,
     chunks_json: &str,
@@ -252,6 +284,35 @@ async fn set_live_turn(
             &scope_key,
             "assistant",
             chunks_json,
+            status,
+            error,
+        )
+        .await
+        .str_err()
+}
+
+async fn update_live_turn_status(
+    scope: &ShepherdScope,
+    status: &str,
+    error: Option<&str>,
+) -> Result<(), String> {
+    let (project_id, scope_key) = scope_storage_ids(scope);
+    let Some(scope_key) = scope_key else {
+        return Ok(());
+    };
+    let store = ShepherdChatStore::open().await.str_err()?;
+    let chunks_json = store
+        .get_live_turn(project_id, &scope_key)
+        .await
+        .str_err()?
+        .map(|turn| turn.chunks_json)
+        .unwrap_or_else(|| "[]".to_string());
+    store
+        .save_live_turn(
+            project_id,
+            &scope_key,
+            "assistant",
+            &chunks_json,
             status,
             error,
         )
@@ -282,13 +343,58 @@ async fn save_scope_state(scope: &ShepherdScope, state_json: &str) -> Result<(),
         .str_err()
 }
 
-async fn save_system_error(scope: &ShepherdScope, error: &str) -> Result<(), String> {
-    let chunks = vec![ShepherdMessageChunk::Text {
-        content: error.trim().to_string(),
-    }];
-    let chunks_json = chunks_to_json(&chunks)?;
-    save_message(scope, "system", &chunks_json).await?;
-    Ok(())
+async fn load_scope_state_local(scope: &ShepherdScope) -> Result<Option<String>, String> {
+    let (Some(project_id), Some(scope_key)) = scope_storage_ids(scope) else {
+        return Ok(None);
+    };
+    let store = ShepherdChatStore::open().await.str_err()?;
+    store
+        .get_scope_state(project_id, &scope_key)
+        .await
+        .str_err()
+}
+
+async fn load_scope_messages_local(
+    scope: &ShepherdScope,
+    limit: usize,
+    skip_message_id: Option<i64>,
+) -> Result<Vec<crate::backend::ShepherdChatMessage>, String> {
+    let store = ShepherdChatStore::open().await.str_err()?;
+    let mut messages = match scope {
+        ShepherdScope::General => store.get_messages(None).await.str_err()?,
+        ShepherdScope::Shepherd { project_id, .. } => store
+            .get_scope_messages(
+                Some(*project_id),
+                Some(&ShepherdChatStore::shepherd_scope_key(*project_id)),
+                limit,
+            )
+            .await
+            .str_err()?,
+        ShepherdScope::Thread {
+            project_id,
+            thread_id,
+            ..
+        } => store
+            .get_scope_messages(
+                Some(*project_id),
+                Some(&ShepherdChatStore::thread_scope_key(thread_id)),
+                limit,
+            )
+            .await
+            .str_err()?,
+        ShepherdScope::Librarian { project_id, .. } => store
+            .get_scope_messages(
+                Some(*project_id),
+                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
+                limit,
+            )
+            .await
+            .str_err()?,
+    };
+    if let Some(skip_id) = skip_message_id {
+        messages.retain(|message| message.id != skip_id);
+    }
+    Ok(messages)
 }
 
 async fn update_thread_after_turn(
@@ -308,26 +414,6 @@ async fn update_thread_after_turn(
         .map_err(|error| format!("failed to update thread {}: {}", thread_id, error))
 }
 
-async fn scope_activity(scope: &ShepherdScope) -> Result<ShepherdScopeActivity, String> {
-    let key = scope_key(scope);
-    let store = ShepherdSessionStore::open()
-        .await
-        .map_err(|error| format!("failed to open session store: {}", error))?;
-    let session = store
-        .get_session(&key)
-        .await
-        .map_err(|error| format!("failed to load session: {}", error))?;
-    let live_turn = load_scope_live_turn(scope).await?;
-    let has_active_turn = session
-        .as_ref()
-        .is_some_and(|session| matches!(session.status.as_str(), "starting" | "running"));
-    Ok(ShepherdScopeActivity {
-        session,
-        live_turn,
-        has_active_turn,
-    })
-}
-
 async fn run_scope_turn_task(
     scope: ShepherdScope,
     user_chunks: Vec<ShepherdMessageChunk>,
@@ -338,6 +424,7 @@ async fn run_scope_turn_task(
     let store = ShepherdSessionStore::open()
         .await
         .map_err(|error| format!("failed to open session store: {}", error))?;
+    let mut accumulator = LiveTurnAccumulator::default();
     let result = async {
         let session = ensure_scope_session(&scope).await?;
         store
@@ -357,7 +444,6 @@ async fn run_scope_turn_task(
         )
         .await?;
         let mut reader = BufReader::new(read_half);
-        let mut accumulator = LiveTurnAccumulator::default();
         loop {
             let reply: WorkerReply = read_json_line(&mut reader).await?;
             match reply {
@@ -373,6 +459,7 @@ async fn run_scope_turn_task(
                     state_json,
                     summary,
                 } => {
+                    let assistant_chunks = accumulator.finalize(assistant_chunks);
                     let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
                     save_message(&scope, "assistant", &assistant_chunks_json).await?;
                     save_scope_state(&scope, &state_json).await?;
@@ -387,20 +474,30 @@ async fn run_scope_turn_task(
                 WorkerReply::Error { message } => {
                     break Err(message);
                 }
-                WorkerReply::Pong | WorkerReply::Status { .. } => {}
+                WorkerReply::Pong
+                | WorkerReply::Status { .. }
+                | WorkerReply::ToolResult { .. }
+                | WorkerReply::ProxyHttpResponse(_) => {}
             }
         }
     }
     .await;
 
     if let Err(error) = &result {
-        let _ = clear_live_turn(&scope).await;
-        if error.contains("interrupted") {
+        if is_interruption_error(error) {
+            let mut assistant_chunks = accumulator.finalize(Vec::new());
+            assistant_chunks.push(interruption_notice_chunk());
+            if let Ok(assistant_chunks_json) = chunks_to_json(&assistant_chunks) {
+                let _ = save_message(&scope, "assistant", &assistant_chunks_json).await;
+            }
+            let _ = clear_live_turn(&scope).await;
             let _ = store.set_status(&scope_key, "idle", None).await;
+            let summary = interrupted_summary_from_chunks(&assistant_chunks);
+            let _ = update_thread_after_turn(&scope, Some(&summary), Some("idle")).await;
         } else {
+            let _ = clear_live_turn(&scope).await;
             let _ = store.set_status(&scope_key, "failed", Some(error)).await;
             let _ = update_thread_after_turn(&scope, Some(error), Some("failed")).await;
-            let _ = save_system_error(&scope, error).await;
         }
     }
     clear_scope_active(&scope_key);
@@ -486,7 +583,13 @@ async fn dispatch_scope_message_local(
             let _ = store.touch_thread(thread_id).await;
         }
     }
-    spawn_scope_turn(scope.clone(), user_chunks, focus, message_id)?;
+    if let Err(error) = set_live_turn(&scope, "[]", "starting", None).await {
+        tracing::warn!(%error, scope = %scope_key(&scope), "failed to seed starting live turn");
+    }
+    if let Err(error) = spawn_scope_turn(scope.clone(), user_chunks, focus, message_id) {
+        let _ = clear_live_turn(&scope).await;
+        return Err(error);
+    }
     Ok(SendShepherdMessageResponse {
         started: true,
         thread_id: match scope {
@@ -567,6 +670,98 @@ pub async fn send_thread_message(
     send_scope_message(thread_scope(&thread), content, chunks, None).await
 }
 
+pub async fn exec_thread_shell(
+    project_id: i64,
+    thread_id: &str,
+    args: Value,
+) -> Result<ToolResult, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        return decode_server_tool_result(
+            send_server_control_request(&ServerControlRequest::ExecThreadShell {
+                project_id,
+                thread_id: thread_id.to_string(),
+                args,
+            })
+            .await?,
+        );
+    }
+    thread_worker_tool_call_local(project_id, thread_id, WorkerRequest::ExecShell { args }).await
+}
+
+pub async fn write_thread_shell(
+    project_id: i64,
+    thread_id: &str,
+    args: Value,
+) -> Result<ToolResult, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        return decode_server_tool_result(
+            send_server_control_request(&ServerControlRequest::WriteThreadShell {
+                project_id,
+                thread_id: thread_id.to_string(),
+                args,
+            })
+            .await?,
+        );
+    }
+    thread_worker_tool_call_local(project_id, thread_id, WorkerRequest::WriteShell { args }).await
+}
+
+pub async fn forward_thread_port(
+    project_id: i64,
+    thread_id: &str,
+    port: u16,
+    protocol: &str,
+    label: &str,
+) -> Result<PreviewForwardInfo, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        let payload = send_server_control_request(&ServerControlRequest::ForwardThreadPort {
+            project_id,
+            thread_id: thread_id.to_string(),
+            port,
+            protocol: protocol.to_string(),
+            label: label.to_string(),
+        })
+        .await?
+        .ok_or_else(|| "server control reply did not include a preview payload".to_string())?;
+        return serde_json::from_value(payload)
+            .map_err(|error| format!("failed to decode preview payload: {}", error));
+    }
+    open_preview_forward(project_id, thread_id, port, protocol, label).await
+}
+
+pub async fn list_thread_port_forwards(
+    project_id: i64,
+    thread_id: Option<&str>,
+) -> Result<Vec<PreviewForwardInfo>, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        let payload = send_server_control_request(&ServerControlRequest::ListThreadPortForwards {
+            project_id,
+            thread_id: thread_id.map(str::to_string),
+        })
+        .await?
+        .ok_or_else(|| "server control reply did not include a preview list payload".to_string())?;
+        return serde_json::from_value(payload)
+            .map_err(|error| format!("failed to decode preview list payload: {}", error));
+    }
+    Ok(list_preview_forwards(project_id, thread_id).await)
+}
+
+pub async fn close_thread_port_forward(
+    forward_id: &str,
+) -> Result<Option<PreviewForwardInfo>, String> {
+    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
+        let payload = send_server_control_request(&ServerControlRequest::ClosePortForward {
+            forward_id: forward_id.to_string(),
+        })
+        .await?;
+        return payload
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| format!("failed to decode preview close payload: {}", error));
+    }
+    close_preview_forward(forward_id).await
+}
+
 async fn create_thread_local(
     project_id: i64,
     title: &str,
@@ -628,100 +823,6 @@ pub async fn promote_thread(
     promote_thread_local(project_id, thread_id).await
 }
 
-pub async fn get_project_threads(project_id: i64) -> Result<Vec<ShepherdThread>, String> {
-    let store = ShepherdThreadStore::open()
-        .await
-        .map_err(|e| format!("failed to open shepherd thread store: {}", e))?;
-    store
-        .list_project_threads(project_id)
-        .await
-        .map_err(|e| format!("failed to load project threads: {}", e))
-}
-
-pub async fn get_shepherd_conversation(
-    project_id: i64,
-) -> Result<Vec<ShepherdChatMessage>, String> {
-    load_scope_messages(
-        &ShepherdScope::Shepherd {
-            project_id,
-            workspace_path: None,
-            focus: None,
-        },
-        100,
-    )
-    .await
-}
-
-pub async fn get_thread_conversation(
-    project_id: i64,
-    thread_id: &str,
-    title: &str,
-    limit: usize,
-) -> Result<Vec<ShepherdChatMessage>, String> {
-    load_scope_messages(
-        &ShepherdScope::Thread {
-            project_id,
-            thread_id: thread_id.to_string(),
-            title: title.to_string(),
-            workspace_path: None,
-            focus: None,
-        },
-        limit,
-    )
-    .await
-}
-
-pub async fn get_scope_activity(scope: ShepherdScope) -> Result<ShepherdScopeActivity, String> {
-    scope_activity(&scope).await
-}
-
-pub async fn get_shepherd_activity(project_id: i64) -> Result<ShepherdScopeActivity, String> {
-    scope_activity(&ShepherdScope::Shepherd {
-        project_id,
-        workspace_path: None,
-        focus: None,
-    })
-    .await
-}
-
-pub async fn get_thread_activity(
-    project_id: i64,
-    thread_id: &str,
-    title: &str,
-) -> Result<ShepherdScopeActivity, String> {
-    scope_activity(&ShepherdScope::Thread {
-        project_id,
-        thread_id: thread_id.to_string(),
-        title: title.to_string(),
-        workspace_path: None,
-        focus: None,
-    })
-    .await
-}
-
-pub async fn get_shepherd_history(
-    scope: ShepherdScope,
-    limit: usize,
-) -> Result<Vec<ShepherdChatMessage>, String> {
-    let messages = load_scope_messages(&scope, limit).await?;
-    Ok(match scope {
-        ShepherdScope::Shepherd { .. } | ShepherdScope::Thread { .. } => messages,
-        _ => messages.into_iter().take(limit).collect(),
-    })
-}
-
-fn project_survey_objective(project_name: &str) -> String {
-    format!(
-        "Survey the `{project_name}` project from the shepherd container, refresh the canvas and retained context when stale, and summarize the current project picture."
-    )
-}
-
-fn project_survey_prompt(project_name: &str) -> String {
-    format!(
-        "Survey the `{project_name}` codebase from your isolated checkout. Read the workspace, refresh the canvas HTML artifact if it is stale or incomplete, refresh retained context if it is stale, and summarize the architecture, pressure points, and next useful threads."
-    )
-}
-
 fn thread_scope(thread: &ShepherdThread) -> ShepherdScope {
     ShepherdScope::Thread {
         project_id: thread.project_id,
@@ -732,99 +833,50 @@ fn thread_scope(thread: &ShepherdThread) -> ShepherdScope {
     }
 }
 
-pub async fn launch_project_survey_thread(project_id: i64) -> Result<ShepherdThread, String> {
-    let project_store = ProjectStore::open()
-        .await
-        .map_err(|e| format!("failed to open project store: {}", e))?;
-    let project = project_store
-        .get_project(project_id)
-        .await
-        .map_err(|e| format!("failed to load project {}: {}", project_id, e))?;
+fn decode_server_tool_result(payload: Option<Value>) -> Result<ToolResult, String> {
+    let payload = payload
+        .ok_or_else(|| "server control reply did not include a tool result payload".to_string())?;
+    let payload: ServerToolResultPayload = serde_json::from_value(payload)
+        .map_err(|error| format!("failed to decode tool result payload: {}", error))?;
+    Ok(ToolResult {
+        success: payload.success,
+        result: payload.result,
+        images: vec![],
+    })
+}
+
+async fn thread_worker_tool_call_local(
+    project_id: i64,
+    thread_id: &str,
+    request: WorkerRequest,
+) -> Result<ToolResult, String> {
     let thread_store = ShepherdThreadStore::open()
         .await
-        .map_err(|e| format!("failed to open shepherd thread store: {}", e))?;
-    let objective = project_survey_objective(&project.name);
-    let summary = "Surveying the project and refreshing the shared picture.".to_string();
-
-    let thread = match thread_store
-        .find_project_thread_by_title(project_id, PROJECT_SURVEY_THREAD_TITLE)
+        .map_err(|error| format!("failed to open shepherd thread store: {}", error))?;
+    let thread = thread_store
+        .get_thread(thread_id)
         .await
-        .map_err(|e| format!("failed to look up project survey thread: {}", e))?
-    {
-        Some(existing) => {
-            let needs_workspace = existing
-                .workspace_path
-                .as_deref()
-                .is_none_or(|value| value.trim().is_empty())
-                || existing
-                    .checkout_name
-                    .as_deref()
-                    .is_none_or(|value| value.trim().is_empty());
-            if needs_workspace {
-                let (workspace_path, checkout_name) =
-                    prepare_thread_checkout(project_id, PROJECT_SURVEY_THREAD_TITLE).await?;
-                thread_store
-                    .update_thread(
-                        &existing.id,
-                        Some(PROJECT_SURVEY_THREAD_TITLE),
-                        Some(&objective),
-                        Some(&summary),
-                        Some("running"),
-                        Some(Some(&workspace_path)),
-                        Some(Some(&checkout_name)),
-                    )
-                    .await
-                    .map_err(|e| format!("failed to refresh survey thread: {}", e))?;
-            } else {
-                thread_store
-                    .update_thread(
-                        &existing.id,
-                        Some(PROJECT_SURVEY_THREAD_TITLE),
-                        Some(&objective),
-                        Some(&summary),
-                        Some("running"),
-                        None,
-                        None,
-                    )
-                    .await
-                    .map_err(|e| format!("failed to refresh survey thread: {}", e))?;
-            }
-            thread_store
-                .get_thread(&existing.id)
-                .await
-                .map_err(|e| format!("failed to reload survey thread: {}", e))?
-        }
-        None => {
-            let (workspace_path, checkout_name) =
-                prepare_thread_checkout(project_id, PROJECT_SURVEY_THREAD_TITLE).await?;
-            thread_store
-                .create_thread(
-                    project_id,
-                    PROJECT_SURVEY_THREAD_TITLE,
-                    &objective,
-                    &summary,
-                    Some(&workspace_path),
-                    Some(&checkout_name),
-                )
-                .await
-                .map_err(|e| format!("failed to create survey thread: {}", e))?
-        }
-    };
-
-    let activity = get_thread_activity(project_id, &thread.id, &thread.title).await?;
-    if activity.has_active_turn {
-        return Ok(thread);
+        .map_err(|error| format!("failed to load thread {}: {}", thread_id, error))?;
+    if thread.project_id != project_id {
+        return Err(format!(
+            "thread {} does not belong to project {}",
+            thread_id, project_id
+        ));
     }
-
-    send_scope_message(
-        thread_scope(&thread),
-        Some(project_survey_prompt(&project.name)),
-        None,
-        None,
-    )
-    .await?;
-
-    Ok(thread)
+    let session = ensure_scope_session(&thread_scope(&thread)).await?;
+    let stream = connect_worker_socket(std::path::Path::new(&session.socket_path)).await?;
+    let (read_half, mut write_half) = stream.into_split();
+    write_json_line(&mut write_half, &request).await?;
+    let mut reader = BufReader::new(read_half);
+    match read_json_line::<_, WorkerReply>(&mut reader).await? {
+        WorkerReply::ToolResult { success, result } => Ok(ToolResult {
+            success,
+            result,
+            images: vec![],
+        }),
+        WorkerReply::Error { message } => Err(message),
+        other => Err(format!("unexpected worker reply: {:?}", other)),
+    }
 }
 
 async fn promote_thread_local(
@@ -922,6 +974,7 @@ async fn archive_thread_local(project_id: i64, thread_id: &str) -> Result<(), St
             thread_id, project_id
         ));
     }
+    close_thread_preview_forwards(project_id, thread_id).await;
     stop_scope_session(&thread_scope(&thread)).await?;
     store
         .archive_thread(thread_id)
@@ -943,6 +996,7 @@ async fn delete_thread_local(project_id: i64, thread_id: &str) -> Result<(), Str
             thread_id, project_id
         ));
     }
+    close_thread_preview_forwards(project_id, thread_id).await;
     stop_scope_session(&thread_scope(&thread)).await?;
     if let Ok(chat_store) = ShepherdChatStore::open().await {
         let _ = chat_store
@@ -1001,6 +1055,44 @@ async fn handle_server_control_request(
             stop_scope_session(&scope).await?;
             Ok(None)
         }
+        ServerControlRequest::ExecThreadShell {
+            project_id,
+            thread_id,
+            args,
+        } => {
+            let result = thread_worker_tool_call_local(
+                project_id,
+                &thread_id,
+                WorkerRequest::ExecShell { args },
+            )
+            .await?;
+            Ok(Some(
+                serde_json::to_value(ServerToolResultPayload {
+                    success: result.success,
+                    result: result.result,
+                })
+                .map_err(|error| format!("failed to encode shell result payload: {}", error))?,
+            ))
+        }
+        ServerControlRequest::WriteThreadShell {
+            project_id,
+            thread_id,
+            args,
+        } => {
+            let result = thread_worker_tool_call_local(
+                project_id,
+                &thread_id,
+                WorkerRequest::WriteShell { args },
+            )
+            .await?;
+            Ok(Some(
+                serde_json::to_value(ServerToolResultPayload {
+                    success: result.success,
+                    result: result.result,
+                })
+                .map_err(|error| format!("failed to encode shell result payload: {}", error))?,
+            ))
+        }
         ServerControlRequest::ArchiveThread {
             project_id,
             thread_id,
@@ -1017,12 +1109,79 @@ async fn handle_server_control_request(
                 format!("failed to encode promotion response: {}", error)
             })?))
         }
+        ServerControlRequest::ForwardThreadPort {
+            project_id,
+            thread_id,
+            port,
+            protocol,
+            label,
+        } => {
+            let response =
+                open_preview_forward(project_id, &thread_id, port, &protocol, &label).await?;
+            Ok(Some(serde_json::to_value(response).map_err(|error| {
+                format!("failed to encode preview response: {}", error)
+            })?))
+        }
+        ServerControlRequest::ListThreadPortForwards {
+            project_id,
+            thread_id,
+        } => Ok(Some(
+            serde_json::to_value(list_preview_forwards(project_id, thread_id.as_deref()).await)
+                .map_err(|error| format!("failed to encode preview list: {}", error))?,
+        )),
+        ServerControlRequest::ClosePortForward { forward_id } => {
+            Ok(close_preview_forward(&forward_id)
+                .await?
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|error| format!("failed to encode preview close response: {}", error))?)
+        }
         ServerControlRequest::DeleteThread {
             project_id,
             thread_id,
         } => {
             delete_thread_local(project_id, &thread_id).await?;
             Ok(None)
+        }
+        ServerControlRequest::LoadScopeMessages {
+            scope,
+            limit,
+            skip_message_id,
+        } => Ok(Some(
+            serde_json::to_value(load_scope_messages_local(&scope, limit, skip_message_id).await?)
+                .map_err(|error| format!("failed to encode scope messages: {}", error))?,
+        )),
+        ServerControlRequest::LoadScopeState { scope } => Ok(Some(
+            serde_json::to_value(load_scope_state_local(&scope).await?)
+                .map_err(|error| format!("failed to encode scope state: {}", error))?,
+        )),
+        ServerControlRequest::ExecuteShepherdTool {
+            project_id,
+            name,
+            args,
+        } => {
+            let result = execute_shepherd_server_tool_local(project_id, &name, &args).await;
+            Ok(Some(
+                serde_json::to_value(ServerToolResultPayload {
+                    success: result.success,
+                    result: result.result,
+                })
+                .map_err(|error| format!("failed to encode tool result payload: {}", error))?,
+            ))
+        }
+        ServerControlRequest::ExecuteLibrarianTool {
+            project_id,
+            name,
+            args,
+        } => {
+            let result = execute_librarian_server_tool_local(project_id, &name, &args).await;
+            Ok(Some(
+                serde_json::to_value(ServerToolResultPayload {
+                    success: result.success,
+                    result: result.result,
+                })
+                .map_err(|error| format!("failed to encode tool result payload: {}", error))?,
+            ))
         }
     }
 }
@@ -1092,6 +1251,8 @@ async fn interrupt_scope_turn_local(scope: &ShepherdScope) -> Result<(), String>
                 let _ = write_json_line(&mut write_half, &WorkerRequest::Interrupt).await;
             }
         }
+        let _ = store.set_status(&key, "interrupting", None).await;
+        let _ = update_live_turn_status(scope, "interrupting", None).await;
     }
     Ok(())
 }

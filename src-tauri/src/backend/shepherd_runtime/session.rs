@@ -1,56 +1,12 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
-use tokio::sync::OnceCell;
+use surrealdb::types::SurrealValue;
 
-use crate::backend::db::{global_pool, utc_now};
+use crate::backend::db::{global_db, utc_now, DbClient};
+use crate::backend::live_updates::{self, LiveUpdateKind};
 
-const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS shepherd_sessions (
-    project_id INTEGER,
-    scope_key TEXT NOT NULL PRIMARY KEY,
-    scope_json TEXT NOT NULL,
-    workspace_path TEXT,
-    env_fingerprint TEXT,
-    status TEXT NOT NULL,
-    container_name TEXT,
-    socket_path TEXT NOT NULL,
-    bootstrap_flake INTEGER NOT NULL DEFAULT 0,
-    last_error TEXT,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    last_seen_at TEXT
-);
+const SHEPHERD_SESSION_TABLE: &str = "shepherd_session";
 
-CREATE INDEX IF NOT EXISTS idx_shepherd_sessions_project
-ON shepherd_sessions(project_id, updated_at);
-"#;
-
-static SCHEMA_INIT: OnceCell<()> = OnceCell::const_new();
-
-async fn ensure_schema(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    SCHEMA_INIT
-        .get_or_try_init(|| async {
-            sqlx::raw_sql(SCHEMA).execute(pool).await?;
-            if let Err(error) =
-                sqlx::query("ALTER TABLE shepherd_sessions ADD COLUMN env_fingerprint TEXT")
-                    .execute(pool)
-                    .await
-            {
-                let duplicate_column = error
-                    .to_string()
-                    .to_ascii_lowercase()
-                    .contains("duplicate column name");
-                if !duplicate_column {
-                    return Err(error);
-                }
-            }
-            Ok::<(), sqlx::Error>(())
-        })
-        .await?;
-    Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(rename_all = "camelCase")]
 pub struct ShepherdScopeSession {
     pub project_id: Option<i64>,
@@ -58,6 +14,7 @@ pub struct ShepherdScopeSession {
     pub scope_json: String,
     pub workspace_path: Option<String>,
     pub env_fingerprint: Option<String>,
+    pub runtime_fingerprint: Option<String>,
     pub status: String,
     pub container_name: Option<String>,
     pub socket_path: String,
@@ -71,7 +28,7 @@ pub struct ShepherdScopeSession {
 #[derive(Debug, thiserror::Error)]
 pub enum ShepherdSessionError {
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] surrealdb::Error),
 }
 
 pub type ShepherdSessionResult<T> = Result<T, ShepherdSessionError>;
@@ -80,50 +37,28 @@ pub struct ShepherdSessionStore;
 
 impl ShepherdSessionStore {
     pub async fn open() -> ShepherdSessionResult<Self> {
-        let pool = global_pool().await;
-        ensure_schema(pool).await?;
+        let _ = global_db().await;
         Ok(Self)
     }
 
-    async fn pool(&self) -> &'static SqlitePool {
-        global_pool().await
-    }
-
-    fn row_to_session(row: sqlx::sqlite::SqliteRow) -> ShepherdScopeSession {
-        ShepherdScopeSession {
-            project_id: row.get("project_id"),
-            scope_key: row.get("scope_key"),
-            scope_json: row.get("scope_json"),
-            workspace_path: row.get("workspace_path"),
-            env_fingerprint: row.get("env_fingerprint"),
-            status: row.get("status"),
-            container_name: row.get("container_name"),
-            socket_path: row.get("socket_path"),
-            bootstrap_flake: row.get::<i64, _>("bootstrap_flake") != 0,
-            last_error: row.get("last_error"),
-            created_at: row.get("created_at"),
-            updated_at: row.get("updated_at"),
-            last_seen_at: row.get("last_seen_at"),
-        }
+    async fn db(&self) -> &'static DbClient {
+        global_db().await
     }
 
     pub async fn get_session(
         &self,
         scope_key: &str,
     ) -> ShepherdSessionResult<Option<ShepherdScopeSession>> {
-        let pool = self.pool().await;
-        let row = sqlx::query(
-            "SELECT project_id, scope_key, scope_json, workspace_path, status, container_name,
-                    env_fingerprint, socket_path, bootstrap_flake, last_error, created_at, updated_at, last_seen_at
-             FROM shepherd_sessions
-             WHERE scope_key = ?",
-        )
-        .bind(scope_key)
-        .fetch_optional(pool)
-        .await?;
-        Ok(row.map(Self::row_to_session))
+        let db = self.db().await;
+        Ok(db.select((SHEPHERD_SESSION_TABLE, scope_key)).await?)
     }
 
+    pub async fn list_sessions(&self) -> ShepherdSessionResult<Vec<ShepherdScopeSession>> {
+        let db = self.db().await;
+        Ok(db.select(SHEPHERD_SESSION_TABLE).await?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_session(
         &self,
         project_id: Option<i64>,
@@ -131,46 +66,41 @@ impl ShepherdSessionStore {
         scope_json: &str,
         workspace_path: Option<&str>,
         env_fingerprint: Option<&str>,
+        runtime_fingerprint: Option<&str>,
         socket_path: &str,
         bootstrap_flake: bool,
         container_name: Option<&str>,
         status: &str,
         last_error: Option<&str>,
     ) -> ShepherdSessionResult<()> {
-        let pool = self.pool().await;
+        let db = self.db().await;
+        let existing = self.get_session(scope_key).await?;
         let now = utc_now();
-        sqlx::query(
-            "INSERT INTO shepherd_sessions (
-                project_id, scope_key, scope_json, workspace_path, env_fingerprint, status,
-                container_name, socket_path, bootstrap_flake, last_error, created_at, updated_at, last_seen_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-             ON CONFLICT(scope_key)
-             DO UPDATE SET
-                project_id = excluded.project_id,
-                scope_json = excluded.scope_json,
-                workspace_path = excluded.workspace_path,
-                env_fingerprint = excluded.env_fingerprint,
-                status = excluded.status,
-                container_name = excluded.container_name,
-                socket_path = excluded.socket_path,
-                bootstrap_flake = excluded.bootstrap_flake,
-                last_error = excluded.last_error,
-                updated_at = excluded.updated_at",
-        )
-        .bind(project_id)
-        .bind(scope_key)
-        .bind(scope_json)
-        .bind(workspace_path)
-        .bind(env_fingerprint)
-        .bind(status)
-        .bind(container_name)
-        .bind(socket_path)
-        .bind(if bootstrap_flake { 1 } else { 0 })
-        .bind(last_error)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
+        let record = ShepherdScopeSession {
+            project_id,
+            scope_key: scope_key.to_string(),
+            scope_json: scope_json.to_string(),
+            workspace_path: workspace_path.map(ToOwned::to_owned),
+            env_fingerprint: env_fingerprint.map(ToOwned::to_owned),
+            runtime_fingerprint: runtime_fingerprint.map(ToOwned::to_owned),
+            status: status.to_string(),
+            container_name: container_name.map(ToOwned::to_owned),
+            socket_path: socket_path.to_string(),
+            bootstrap_flake,
+            last_error: last_error.map(ToOwned::to_owned),
+            created_at: existing
+                .as_ref()
+                .map(|session| session.created_at.clone())
+                .unwrap_or_else(|| now.clone()),
+            updated_at: now,
+            last_seen_at: existing.and_then(|session| session.last_seen_at),
+        };
+
+        let _: Option<ShepherdScopeSession> = db
+            .upsert((SHEPHERD_SESSION_TABLE, scope_key))
+            .content(record.clone())
+            .await?;
+        publish_session_activity(record.project_id, &record.scope_key);
         Ok(())
     }
 
@@ -180,46 +110,95 @@ impl ShepherdSessionStore {
         status: &str,
         last_error: Option<&str>,
     ) -> ShepherdSessionResult<()> {
-        let pool = self.pool().await;
-        let now = utc_now();
-        sqlx::query(
-            "UPDATE shepherd_sessions
-             SET status = ?,
-                 last_error = ?,
-                 updated_at = ?
-             WHERE scope_key = ?",
-        )
-        .bind(status)
-        .bind(last_error)
-        .bind(&now)
-        .bind(scope_key)
-        .execute(pool)
-        .await?;
+        let db = self.db().await;
+        if let Some(mut session) = self.get_session(scope_key).await? {
+            session.status = status.to_string();
+            session.last_error = last_error.map(ToOwned::to_owned);
+            session.updated_at = utc_now();
+
+            let _: Option<ShepherdScopeSession> = db
+                .upsert((SHEPHERD_SESSION_TABLE, scope_key))
+                .content(session.clone())
+                .await?;
+            publish_session_activity(session.project_id, &session.scope_key);
+        }
         Ok(())
     }
 
     pub async fn touch_seen(&self, scope_key: &str) -> ShepherdSessionResult<()> {
-        let pool = self.pool().await;
-        let now = utc_now();
-        sqlx::query(
-            "UPDATE shepherd_sessions
-             SET last_seen_at = ?, updated_at = ?
-             WHERE scope_key = ?",
-        )
-        .bind(&now)
-        .bind(&now)
-        .bind(scope_key)
-        .execute(pool)
-        .await?;
+        let db = self.db().await;
+        if let Some(mut session) = self.get_session(scope_key).await? {
+            let now = utc_now();
+            session.last_seen_at = Some(now.clone());
+            session.updated_at = now;
+
+            let _: Option<ShepherdScopeSession> = db
+                .upsert((SHEPHERD_SESSION_TABLE, scope_key))
+                .content(session.clone())
+                .await?;
+            publish_session_activity(session.project_id, &session.scope_key);
+        }
         Ok(())
     }
 
     pub async fn delete_session(&self, scope_key: &str) -> ShepherdSessionResult<()> {
-        let pool = self.pool().await;
-        sqlx::query("DELETE FROM shepherd_sessions WHERE scope_key = ?")
-            .bind(scope_key)
-            .execute(pool)
-            .await?;
+        let db = self.db().await;
+        if let Some(session) = self.get_session(scope_key).await? {
+            let _: Option<ShepherdScopeSession> =
+                db.delete((SHEPHERD_SESSION_TABLE, scope_key)).await?;
+            publish_session_activity(session.project_id, &session.scope_key);
+        }
         Ok(())
+    }
+
+    pub async fn clear_stale_startup_state(&self) -> ShepherdSessionResult<usize> {
+        let db = self.db().await;
+        let mut cleared = 0usize;
+
+        for mut session in self.list_sessions().await? {
+            let mut changed = false;
+
+            if session.last_error.is_some() {
+                session.last_error = None;
+                changed = true;
+            }
+
+            if session.status != "idle" {
+                session.status = "idle".to_string();
+                changed = true;
+            }
+
+            if !changed {
+                continue;
+            }
+
+            session.updated_at = utc_now();
+            let _: Option<ShepherdScopeSession> = db
+                .upsert((SHEPHERD_SESSION_TABLE, session.scope_key.clone()))
+                .content(session.clone())
+                .await?;
+            publish_session_activity(session.project_id, &session.scope_key);
+            cleared += 1;
+        }
+
+        Ok(cleared)
+    }
+}
+
+fn publish_session_activity(project_id: Option<i64>, scope_key: &str) {
+    let Some(project_id) = live_updates::scope_project_id(project_id) else {
+        return;
+    };
+    if let Some(thread_id) = live_updates::scope_thread_id(Some(scope_key)) {
+        live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
+        live_updates::publish_thread(
+            project_id,
+            thread_id.to_string(),
+            LiveUpdateKind::ThreadActivityChanged,
+        );
+    } else if live_updates::scope_is_librarian(Some(scope_key)) {
+        live_updates::publish_project(project_id, LiveUpdateKind::LibrarianActivityChanged);
+    } else {
+        live_updates::publish_project(project_id, LiveUpdateKind::ProjectActivityChanged);
     }
 }

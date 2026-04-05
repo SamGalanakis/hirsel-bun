@@ -57,7 +57,7 @@ pub fn init_process_tracing(process_role: &str) {
 
     fn default_filter() -> EnvFilter {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("hirsel=info,sqlx=warn,rustls=warn,rustls_platform_verifier=warn,hyper=warn,reqwest=warn")
+            EnvFilter::new("hirsel=info,surrealdb=warn,rustls=warn,rustls_platform_verifier=warn,hyper=warn,reqwest=warn")
         })
     }
 

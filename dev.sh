@@ -134,28 +134,18 @@ build_binaries() {
     build_target "hirsel-desktop" "$desktop_features"
 }
 
-worker_image_build_label() {
-    local version
-    local sha
-
-    version=$(grep '^version = "' "$SCRIPT_DIR/src-tauri/Cargo.toml" | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
-    sha=$(git -C "$SCRIPT_DIR" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    if ! git -C "$SCRIPT_DIR" diff --quiet --ignore-submodules HEAD -- 2>/dev/null; then
-        sha="${sha}-dirty"
-    fi
-
-    printf "%s-%s" "$version" "$sha"
-}
-
 build_worker_image() {
     local image="hirsel-worker:local"
     local expected_label
+    local cargo_profile
 
-    expected_label="$(worker_image_build_label)"
-    echo "Building fresh worker image $image..."
+    expected_label="$("$SERVER_BIN" --worker-image-build-label)"
+    cargo_profile="$("$SERVER_BIN" --worker-image-cargo-profile)"
+    echo "Building fresh worker image $image ($cargo_profile)..."
     docker build \
         -f "$SCRIPT_DIR/deploy/worker.Dockerfile" \
         --build-arg "HIRSEL_WORKER_BUILD_LABEL=$expected_label" \
+        --build-arg "HIRSEL_WORKER_CARGO_PROFILE=$cargo_profile" \
         -t "$image" \
         "$SCRIPT_DIR" 2>&1 | tee -a "$LOG_FILE"
     if [[ ${PIPESTATUS[0]} -ne 0 ]]; then
@@ -181,7 +171,13 @@ build_shell_assets() {
 }
 
 prepare_local_backend() {
-    export HIRSEL_API_KEY="${HIRSEL_API_KEY:-${HIRSEL_DEV_API_KEY:-}}"
+    local dev_auth="${HIRSEL_DEV_AUTH:-0}"
+    if [[ "$dev_auth" == "1" || "$dev_auth" == "true" || "$dev_auth" == "yes" || "$dev_auth" == "on" ]]; then
+        export HIRSEL_API_KEY="${HIRSEL_API_KEY:-${HIRSEL_DEV_API_KEY:-}}"
+    else
+        unset HIRSEL_API_KEY
+    fi
+    export HIRSEL_WORKER_CARGO_PROFILE="${HIRSEL_WORKER_CARGO_PROFILE:-dev}"
     export HIRSEL_ROOT="${HIRSEL_ROOT:-$DEV_ROOT_DEFAULT}"
 
     mkdir -p "$HIRSEL_ROOT"
@@ -202,7 +198,7 @@ EOF
     if [[ -n "$HIRSEL_API_KEY" ]]; then
         echo "  API key: $HIRSEL_API_KEY"
     else
-        echo "  API key: disabled"
+        echo "  API key: disabled (set HIRSEL_DEV_AUTH=1 to enable)"
     fi
     echo ""
 }
@@ -215,26 +211,140 @@ remove_container_if_present() {
     docker rm -f "$name" >/dev/null 2>&1 || true
 }
 
+kill_pid_list() {
+    local signal="$1"
+    shift
+    if [[ $# -eq 0 ]]; then
+        return
+    fi
+
+    kill "-$signal" "$@" >/dev/null 2>&1 || true
+}
+
+wait_for_pids_exit() {
+    local timeout_secs="$1"
+    shift
+    if [[ $# -eq 0 ]]; then
+        return 0
+    fi
+
+    local deadline=$((SECONDS + timeout_secs))
+    while (( SECONDS < deadline )); do
+        local alive=0
+        local pid
+        for pid in "$@"; do
+            if kill -0 "$pid" >/dev/null 2>&1; then
+                alive=1
+                break
+            fi
+        done
+        if (( alive == 0 )); then
+            return 0
+        fi
+        sleep 0.1
+    done
+    return 1
+}
+
+kill_matching_processes() {
+    local label="$1"
+    local pattern="$2"
+    local -a pids=()
+    mapfile -t pids < <(
+        pgrep -u "$(id -u)" -f -- "$pattern" 2>/dev/null \
+            | awk -v self="$$" '$0 != self' \
+            || true
+    )
+    if [[ ${#pids[@]} -eq 0 ]]; then
+        return
+    fi
+
+    echo "  Killing $label: ${pids[*]}"
+    kill_pid_list TERM "${pids[@]}"
+    if ! wait_for_pids_exit 3 "${pids[@]}"; then
+        kill_pid_list KILL "${pids[@]}"
+        wait_for_pids_exit 1 "${pids[@]}" || true
+    fi
+}
+
+list_tcp_port_pids() {
+    local port="$1"
+
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+        return
+    fi
+
+    if command -v fuser >/dev/null 2>&1; then
+        fuser -n tcp "$port" 2>/dev/null | tr ' ' '\n' | sed '/^$/d' || true
+        return
+    fi
+
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp "( sport = :$port )" 2>/dev/null \
+            | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' \
+            | sort -u || true
+    fi
+}
+
+kill_processes_on_port() {
+    local port="$1"
+    local label="$2"
+    local -a pids=()
+    mapfile -t pids < <(list_tcp_port_pids "$port")
+    if [[ ${#pids[@]} -eq 0 ]]; then
+        return
+    fi
+
+    echo "  Killing listeners on tcp/$port for $label: ${pids[*]}"
+    kill_pid_list TERM "${pids[@]}"
+    if ! wait_for_pids_exit 3 "${pids[@]}"; then
+        kill_pid_list KILL "${pids[@]}"
+        wait_for_pids_exit 1 "${pids[@]}" || true
+    fi
+}
+
+remove_hirsel_dev_containers() {
+    if ! command -v docker >/dev/null 2>&1; then
+        return
+    fi
+
+    local -a containers=()
+    mapfile -t containers < <(
+        docker ps -aq --format '{{.Names}}' 2>/dev/null | awk '/^hirsel-/ { print $0 }'
+    )
+    if [[ ${#containers[@]} -eq 0 ]]; then
+        return
+    fi
+
+    echo "  Removing Hirsel containers: ${containers[*]}"
+    local name
+    for name in "${containers[@]}"; do
+        remove_container_if_present "$name"
+    done
+}
+
 stop_existing_local_runtime() {
     echo "Stopping existing local Hirsel runtime..."
 
-    pkill -f "$DESKTOP_BIN" 2>/dev/null || true
-    pkill -f "$SERVER_BIN" 2>/dev/null || true
+    kill_matching_processes "other dev launchers" '(^|[ /])dev\.sh($| )'
+    kill_matching_processes "debug desktop" "$DESKTOP_BIN"
+    kill_matching_processes "debug server" "$SERVER_BIN"
+    kill_matching_processes "cargo hirsel builds" 'cargo build.*hirsel-(server|desktop|worker)'
+    kill_matching_processes "worker image rebuilds" 'docker build.*worker\.Dockerfile'
+    kill_matching_processes "desktop processes" '(^|/)(hirsel-desktop)( |$)'
+    kill_matching_processes "server processes" '(^|/)(hirsel-server)( |$)'
+    kill_matching_processes "cargo-run server wrappers" 'cargo.*hirsel-server'
 
-    if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$HIRSEL_ROOT/hirsel.db" ]]; then
-        while IFS= read -r container_name; do
-            remove_container_if_present "$container_name"
-        done < <(
-            sqlite3 "$HIRSEL_ROOT/hirsel.db" \
-                "select container_name from shepherd_sessions where container_name is not null and trim(container_name) <> '';"
-        )
-
-        sqlite3 "$HIRSEL_ROOT/hirsel.db" <<'SQL' >/dev/null 2>&1 || true
-DELETE FROM shepherd_sessions;
-SQL
+    kill_processes_on_port "$REMOTE_PORT" "dev backend"
+    if [[ "$mcp_mode" == true ]]; then
+        kill_processes_on_port "$TAURI_DRIVER_PORT" "tauri-driver"
     fi
 
+    remove_hirsel_dev_containers
+
     rm -rf "$HIRSEL_ROOT/agent-sessions"
+    rm -rf "$HIRSEL_ROOT/logs"
     rm -f "$HIRSEL_ROOT/server/control.sock"
 }
 
@@ -281,6 +391,7 @@ ensure_tauri_driver() {
 }
 
 prepare_local_backend
+stop_existing_local_runtime
 build_binaries
 build_worker_image
 build_shell_assets

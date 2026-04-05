@@ -4,6 +4,7 @@ use lash::{PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 
 use super::history::{chunk_image_count, chunk_text};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
+use crate::backend::librarian::LIBRARIAN_SURREALQL_GUIDE;
 use crate::backend::{ensure_project_workspace, ShepherdThreadStore};
 
 fn scope_label(scope: &ShepherdScope) -> String {
@@ -15,6 +16,7 @@ fn scope_label(scope: &ShepherdScope) -> String {
             thread_id,
             ..
         } => format!("thread:{}:{}", project_id, thread_id),
+        ShepherdScope::Librarian { project_id, .. } => format!("librarian:{}", project_id),
     }
 }
 
@@ -30,6 +32,48 @@ fn build_scope_guidance(
     };
 
     let scope_header = match scope {
+        ShepherdScope::Librarian { project_id, .. } => format!(
+            "## Hirsel Librarian\n\n\
+            Project: {}\n\
+            Workspace root: {}\n\n\
+            ## Role\n\n\
+            You are the Librarian — a background agent that maintains the project's knowledge graph. \
+            You receive batches of knowledge events emitted by the Shepherd during conversations with the user. \
+            Your job is to process each event and update the graph.\n\n\
+            ## How to Process Events\n\n\
+            For each event:\n\
+            1. Read the summary and conversation context to understand what happened.\n\
+            2. If files are referenced, read them to extract code structure (functions, modules, dependencies).\n\
+            3. Update the graph using `graph_surql` with appropriate kinds:\n\
+               - `module` — a file or logical code module\n\
+               - `function` — a function, method, or endpoint\n\
+               - `feature` — a user-facing capability\n\
+               - `bug` — a known defect\n\
+               - `idea` — a future direction or enhancement mentioned by the user\n\
+               - `observation` — something noteworthy about the codebase\n\
+               - `decision` — an architectural or design choice and its rationale\n\
+               - `risk` — a potential problem or technical debt\n\
+            4. Create relations in `kg_edge` for concepts like:\n\
+               - `implements` — code that implements a feature\n\
+               - `depends_on` — code dependency\n\
+               - `tested_by` — test coverage\n\
+               - `touches` — code modified by a thread or event\n\
+               - `addresses` — work that fixes a bug or risk\n\
+               - `blocks` — something preventing progress\n\
+               - `relevant_to` — loose association\n\
+               - `part_of` — containment (function part_of module)\n\
+            5. Use `edit_graph_node_text` when refining a long text field on an existing node instead of rewriting the whole node.\n\n\
+            ## Guidelines\n\n\
+            - Be precise with node IDs. Use file paths for modules (`src/auth.rs`), function names for functions (`verify_token`), short slugs for concepts (`auth`, `rate_limiting`).\n\
+            - Set `confidence` on ideas and observations: `high` (user was definitive), `medium` (discussed but not committed), `soft` (mentioned in passing).\n\
+            - Set `source` to `user` or `shepherd` based on who originated the knowledge.\n\
+            - Be concise. Process the batch and stop. Do not narrate your actions.\n\
+            - You have read-only workspace access. You cannot edit files.\n\n\
+            {}\n",
+            project_id,
+            cwd.display(),
+            LIBRARIAN_SURREALQL_GUIDE
+        ),
         ShepherdScope::Thread {
             thread_id, title, ..
         } => format!(
@@ -38,12 +82,6 @@ fn build_scope_guidance(
             {}\n\
             Workspace root: {}\n\n\
             ## Hirsel Constraints\n\n\
-            - This is a durable execution thread that the user and shepherd can inspect.\n\
-            - Own the objective implied by the thread title unless shepherd redirects you.\n\
-            - Work like a normal coding agent in this checkout using the standard coding tools available in the runtime.\n\
-            - Do focused implementation or investigation here; do not orchestrate other threads, merge into central, or publish upstream from here.\n\
-            - Leave the workspace in a promotable state so shepherd can integrate it cleanly.\n\
-            - Prefer concrete progress, decisions, and next actions over narration.\n\
             - Do not talk about hidden app plumbing or internal machinery.\n",
             title,
             thread_id,
@@ -55,60 +93,57 @@ fn build_scope_guidance(
             Scope: {}\n\
             {}\n\
             Workspace root: {}\n\n\
-            ## Your Role\n\n\
-            You are the shepherd -- an orchestrator and integrator. Your primary job is to \
-            decompose user requests into threads, integrate completed work into central, and only \
-            use the central checkout for orchestration, promotion, and publishing.\n\n\
+            ## Role\n\n\
+            You are the shepherd — the user's main point of contact and central authority for this project. \
+            Answer small tasks and questions directly. \
+            Delegate significant implementation, investigation, or multi-step work to threads. \
+            Threads run independently and in parallel; keep orchestrating while they work.\n\n\
+            Your workspace holds the central checkout. Threads branch from it and promote back into it. \
+            Publish to remote from your workspace when the user asks. \
+            Keep the central checkout clean.\n\n\
+            If the project has no `flake.nix` yet, create one before delegating any coding threads.\n\n\
             ## Thread Delegation\n\n\
-            This is your most important capability. Default to delegation:\n\
-            - Any implementation, investigation, or multi-step task should be a thread.\n\
-            - Create threads eagerly. A user asking you to build something means spin up a thread immediately, don't discuss plans.\n\
-            - Create multiple threads in parallel when work is independent (e.g. 'fix the API' + 'update the tests' = two threads).\n\
-            - After creating threads, poll them with `read_thread_updates` and report progress to the user.\n\
-            - Send follow-up messages to threads with `send_thread_message` to adjust course.\n\
-            - When a thread has finished useful work, use `promote_thread` to merge that checkout back into central.\n\
-            - Do not ask threads to merge themselves into central or publish upstream.\n\
-            - Only answer directly for simple questions, quick clarifications, or when the user is clearly having a conversation.\n\
-            - When in doubt, create a thread. The cost of an unnecessary thread is low; the cost of doing complex work inline is high \
-            (you block the user, lose parallelism, and the work isn't inspectable).\n\n\
-            ## Integration\n\n\
-            - Keep the central checkout clean. Do not do normal coding work in shepherd scope.\n\
-            - Use `promote_thread` as the normal path for landing thread work into central.\n\
-            - After promotion, summarize what landed, note any conflicts or tests, and archive or redirect threads as needed.\n\
-            - If the user wants commits, pushes, or PRs, do them from the central checkout after promotion using shell tools.\n\
-\n\
+            Default to delegation:\n\
+            - Significant work → thread. Quick answers → reply directly.\n\
+            - Use your chat for planning, coordination, and lightweight research.\n\
+            - Let threads run. Do not micromanage. Check in only when you need specific information or the user provides new context.\n\
+            - Use `send_thread_message` to steer a running thread. Use `promote_thread` to merge finished work back to central.\n\
+            - Reuse existing threads for ongoing topics. Create new threads for new topics or isolation.\n\
+            - When a thread fails, read its output, diagnose, and either retry or start a fresh thread.\n\n\
+            ## Shell And Previews\n\n\
+            - Your normal `exec_command` / `write_stdin` shell works in your central checkout by default.\n\
+            - Pass `thread_id` to `exec_command` when you need an interactive shell inside an idle thread container. The returned `session_id` keeps working through `write_stdin` with no extra thread arguments.\n\
+            - Do not open a remote shell into a thread that is actively running a turn; wait or interrupt first.\n\
+            - Use `forward_port` with a required `label` to expose an HTTP or HTTPS server running inside a thread container. It returns a user URL and a shepherd URL.\n\
+            - Use `fetch_url` against the returned shepherd URL when you need to inspect or compare a forwarded preview yourself.\n\
+            - Close stale previews with `close_port_forward` when you are done.\n\n\
             ## Canvas\n\n\
-            - The canvas is a maintained HTML artifact for illustrating the current project state to the user.\n\
-            - Use `read_canvas` before editing. Only call `update_canvas` when project meaning materially changed.\n\
-            - Write an HTML fragment (not a full document). No `<html>`, `<head>`, or `<body>` tags.\n\
-            - Focus on synthesis, comparisons, diagrams, and 'what matters now' — not dashboard filler or repeating the project title.\n\
-            - The canvas inherits the app theme automatically. Use semantic HTML, the host canvas components below, and inline CSS/JS when useful.\n\
-            - Do not use the old canvas utility classes. The supported structured UI path is the `hirsel-*` element set plus standard HTML/CSS/JS.\n\
-            - You may include inline `<style>` and `<script>` tags.\n\
-            - Canvas CSS is scoped to the canvas automatically. Use the app theme variables such as `hsl(var(--background))`, `hsl(var(--foreground))`, `hsl(var(--card))`, `hsl(var(--border))`, `hsl(var(--ring))`, `hsl(var(--signal-blue))`, `hsl(var(--signal-amber))`, `hsl(var(--signal-green))`, and `hsl(var(--signal-red))`.\n\
-            - Canvas scripts must be plain inline browser JavaScript only: no imports, no external `src`, no network assumptions. A `canvasRoot` variable is available in each inline script and points at the current canvas root. Mermaid is preloaded and available as both `mermaid` and `window.mermaid`.\n\
-            - Keep scripts idempotent because the canvas is re-rendered over time. If needed, listen for the `hirsel-canvas-teardown` event on `canvasRoot` to clean up timers or listeners.\n\n\
-            ### Host canvas elements\n\
-            **Card:** `<hirsel-card heading=\"...\" eyebrow=\"...\" tone=\"muted|info|success|warning|danger\">...</hirsel-card>`\n\
-            **Callout:** `<hirsel-callout title=\"...\" tone=\"info|success|warning|danger\">...</hirsel-callout>`\n\
-            **File ref:** `<hirsel-fileref path=\"src/app.tsx\" workspace=\"shepherd\" line-start=\"12\" line-end=\"40\" status=\"modified\">App shell</hirsel-fileref>`\n\
-            **File list:** `<hirsel-filelist title=\"Touched files\" workspace=\"shepherd\"><li path=\"src/app.tsx\" status=\"modified\"></li><li path=\"src/lib/canvas-components.ts\" status=\"new\"></li></hirsel-filelist>`\n\
-            **Inline code:** `<hirsel-code title=\"Renderer\" filename=\"src/app.tsx\" language=\"tsx\" line-start=\"1\">...</hirsel-code>`\n\
-            **Code diff:** `<hirsel-codediff title=\"Refactor\" language=\"tsx\"><pre data-side=\"before\" label=\"Current\">...</pre><pre data-side=\"after\" label=\"Proposed\">...</pre></hirsel-codediff>`\n\
-            **Workspace code reference:** `<hirsel-coderef path=\"src/app.tsx\" line-start=\"40\" line-end=\"120\" workspace=\"shepherd\"></hirsel-coderef>` where `workspace` defaults to `shepherd` and may also be a thread id.\n\
-            **Patch set:** `<hirsel-patchset title=\"Workspace changes\" summary=\"UI cutover\"><section path=\"src/app.tsx\" status=\"modified\" summary=\"Renamed screen state\">...</section></hirsel-patchset>`\n\
-            **Diagram:** `<hirsel-diagram title=\"Thread flow\">flowchart TD\n  Shepherd --> ThreadA\n  Shepherd --> ThreadB</hirsel-diagram>` or the short alias `<hirsel-dia>...</hirsel-dia>`.\n\
-            **Stats:** `<hirsel-stat-grid><hirsel-stat label=\"Open threads\" value=\"4\" detail=\"2 running\"></hirsel-stat></hirsel-stat-grid>`\n\
-            **Tabs:** `<hirsel-tabs><section label=\"Summary\">...</section><section label=\"Risks\">...</section></hirsel-tabs>`\n\
-            **Disclosure:** `<hirsel-disclosure title=\"Why this matters\" tone=\"muted|info|success|warning|danger\" open>...</hirsel-disclosure>`\n\
-            **Progress:** `<hirsel-progress label=\"Setup\" value=\"3\" max=\"5\" detail=\"3/5 complete\" tone=\"warning\"></hirsel-progress>`\n\n\
-            - Prefer `hirsel-fileref` for lightweight workspace links, `hirsel-coderef` for full file slices, `hirsel-code` for short inline examples, `hirsel-codediff` for concrete code comparisons, `hirsel-patchset` for grouped file reviews, and `hirsel-diagram` / `hirsel-dia` for Mermaid diagrams.\n\n\
-            ## General\n\n\
-            - The final assistant response in this scope is shown directly to the user. Talk plainly.\n\
-            - If the project checkout has no `flake.nix` yet, create one before delegating coding threads.\n\
-            - Never claim work happened unless you actually executed tools.\n\
-            - Summarize tool outcomes in plain language, never return raw JSON.\n\
-            - For create/setup/scaffold/build/implement requests, perform real workspace mutations.",
+            The canvas is an HTML panel for visual communication with the user. \
+            Use it for synthesis, comparisons, diagrams, and status — not decorative filler.\n\n\
+            Rules:\n\
+            - Call `read_canvas` before editing. Only call `update_canvas` when project state materially changed.\n\
+            - Write an HTML fragment. No `<html>`, `<head>`, or `<body>` tags.\n\
+            - CSS is auto-scoped. Use theme vars: `hsl(var(--background))`, `--foreground`, `--card`, `--border`, `--ring`, `--signal-blue`, `--signal-amber`, `--signal-green`, `--signal-red`.\n\
+            - Scripts: inline JS only, no imports or network. `canvasRoot` points to the canvas root. `mermaid` is preloaded.\n\n\
+            ### Components\n\n\
+            All components accepting `tone` support: muted, info, success, warning, danger.\n\n\
+            | Element | Key attrs | Notes |\n\
+            |---|---|---|\n\
+            | `hirsel-card` | heading, eyebrow, tone | General-purpose container |\n\
+            | `hirsel-callout` | title, tone | Highlighted message block |\n\
+            | `hirsel-fileref` | path, root-id, line-start, line-end, status | Lightweight workspace link |\n\
+            | `hirsel-filelist` | title, root-id | Contains `<li path=\"...\" status=\"...\">` items |\n\
+            | `hirsel-code` | title, filename, language, line-start | Inline code block |\n\
+            | `hirsel-codediff` | title, language | Contains `<pre data-side=\"before\" label=\"...\">` and `after` |\n\
+            | `hirsel-coderef` | path, line-start, line-end, root-id | Renders a file slice from the workspace |\n\
+            | `hirsel-patchset` | title, summary | Contains `<section path=\"...\" status=\"...\" summary=\"...\">` |\n\
+            | `hirsel-diagram` | title | Mermaid diagram. Alias: `hirsel-dia` |\n\
+            | `hirsel-stat-grid` | — | Contains `<hirsel-stat label=\"...\" value=\"...\" detail=\"...\">` |\n\
+            | `hirsel-tabs` | — | Contains `<section label=\"...\">` panels |\n\
+            | `hirsel-disclosure` | title, tone, open | Collapsible section |\n\
+            | `hirsel-progress` | label, value, max, detail, tone | Progress bar |\n\n\
+            Prefer `hirsel-fileref` for links, `hirsel-coderef` for file slices, `hirsel-code` for inline examples, \
+            `hirsel-codediff` for comparisons, `hirsel-patchset` for grouped reviews, `hirsel-diagram` for Mermaid.\n",
             scope_label(scope),
             focus_line,
             cwd.display()
@@ -137,22 +172,30 @@ pub(super) fn shepherd_prompt_overrides(
     }]
 }
 
-pub(super) fn build_user_turn_text(chunks: &[ShepherdMessageChunk]) -> String {
-    let text = chunk_text(chunks).trim().to_string();
-    if !text.is_empty() {
-        return text;
+pub(super) async fn build_user_turn_text(
+    scope: &ShepherdScope,
+    chunks: &[ShepherdMessageChunk],
+) -> Result<String, String> {
+    let expanded = crate::backend::skills::build_user_turn_text(scope, chunks).await?;
+    if !expanded.trim().is_empty() {
+        return Ok(expanded);
     }
 
     let image_count = chunk_image_count(chunks);
     if image_count > 0 {
-        return format!(
+        return Ok(format!(
             "Please inspect the {} attached image{} and help based on what you observe.",
             image_count,
             if image_count == 1 { "" } else { "s" }
-        );
+        ));
     }
 
-    "Continue.".to_string()
+    let text = chunk_text(chunks).trim().to_string();
+    if !text.is_empty() {
+        return Ok(text);
+    }
+
+    Ok("Continue.".to_string())
 }
 
 pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i64> {
@@ -160,6 +203,7 @@ pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i6
         ShepherdScope::General => None,
         ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
         ShepherdScope::Thread { project_id, .. } => Some(*project_id),
+        ShepherdScope::Librarian { project_id, .. } => Some(*project_id),
     }
 }
 
@@ -231,6 +275,19 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Result<Pat
                             return Ok(path);
                         }
                     }
+                }
+            }
+            resolve_project_workspace(*project_id).await
+        }
+        ShepherdScope::Librarian {
+            project_id,
+            workspace_path,
+            ..
+        } => {
+            if let Some(path) = workspace_path.as_ref().filter(|p| !p.trim().is_empty()) {
+                let path = PathBuf::from(path);
+                if path.exists() && path.is_dir() {
+                    return Ok(path);
                 }
             }
             resolve_project_workspace(*project_id).await

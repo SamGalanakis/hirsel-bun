@@ -1,4 +1,5 @@
 import { type Component, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { ApiError } from "@/lib/api/core";
 import ConnectPage from "@/pages/ConnectPage";
 import WorkspacePage from "@/pages/WorkspacePage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -9,6 +10,7 @@ type ScreenState =
   | { page: "connect" }
   | { page: "project"; projectId: number }
   | { page: "thread"; projectId: number; threadId: string }
+  | { page: "librarian"; projectId: number }
   | { page: "settings" }
   | { page: "new" }
   | { page: "loading" };
@@ -31,6 +33,10 @@ function parseHash(hash: string): ScreenState | null {
       threadId: threadMatch[2],
     };
 
+  const librarianMatch = h.match(/^librarian\/(\d+)$/);
+  if (librarianMatch)
+    return { page: "librarian", projectId: parseInt(librarianMatch[1], 10) };
+
   return null;
 }
 
@@ -51,8 +57,13 @@ const App: Component = () => {
             window.location.hash = "#new";
           }
         })
-        .catch(() => {
-          window.location.hash = "#connect";
+        .catch((error) => {
+          if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+            window.location.hash = "#connect";
+            return;
+          }
+          console.error("Failed to load projects", error);
+          window.location.hash = "#new";
         });
     }
   };
@@ -77,6 +88,13 @@ const App: Component = () => {
         <WorkspacePage
           projectId={(screen() as { projectId: number }).projectId}
           threadId={(screen() as { threadId: string }).threadId}
+        />
+      </Show>
+
+      <Show when={screen().page === "librarian"}>
+        <WorkspacePage
+          projectId={(screen() as { projectId: number }).projectId}
+          librarianView={true}
         />
       </Show>
 

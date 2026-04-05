@@ -154,7 +154,7 @@ pub enum HirselError {
     // State/Database variants
     // =========================================================================
     #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
+    Database(#[from] surrealdb::Error),
 
     #[error("State error: {0}")]
     State(String),

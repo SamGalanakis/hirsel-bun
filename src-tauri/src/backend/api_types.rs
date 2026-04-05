@@ -42,6 +42,26 @@ pub struct AgentModelOverridesResponse {
     pub high: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleModelConfigResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_variant: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct RoleModelOverridesResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shepherd: Option<RoleModelConfigResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub librarian: Option<RoleModelConfigResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread: Option<RoleModelConfigResponse>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmConfigResponse {
@@ -51,6 +71,8 @@ pub struct LlmConfigResponse {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_variant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role_models: Option<RoleModelOverridesResponse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_models: Option<AgentModelOverridesResponse>,
 }
@@ -62,6 +84,20 @@ impl From<config::LlmConfig> for LlmConfigResponse {
             openrouter_base_url: value.openrouter_base_url,
             model: value.model,
             model_variant: value.model_variant,
+            role_models: value.role_models.map(|roles| RoleModelOverridesResponse {
+                shepherd: roles.shepherd.map(|cfg| RoleModelConfigResponse {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
+                librarian: roles.librarian.map(|cfg| RoleModelConfigResponse {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
+                thread: roles.thread.map(|cfg| RoleModelConfigResponse {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
+            }),
             agent_models: value.agent_models.map(|am| AgentModelOverridesResponse {
                 low: am.low,
                 medium: am.medium,
@@ -78,6 +114,20 @@ impl From<LlmConfigResponse> for config::LlmConfig {
             openrouter_base_url: value.openrouter_base_url,
             model: value.model,
             model_variant: value.model_variant,
+            role_models: value.role_models.map(|roles| config::RoleModelOverrides {
+                shepherd: roles.shepherd.map(|cfg| config::RoleModelConfig {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
+                librarian: roles.librarian.map(|cfg| config::RoleModelConfig {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
+                thread: roles.thread.map(|cfg| config::RoleModelConfig {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
+            }),
             agent_models: value.agent_models.map(|am| config::AgentModelOverrides {
                 low: am.low,
                 medium: am.medium,

@@ -31,8 +31,12 @@ fn slugify(value: &str) -> String {
         .join("-")
 }
 
-pub fn workspace_name_for_project(project_id: i64) -> String {
+pub fn legacy_workspace_name_for_project_id(project_id: i64) -> String {
     format!("project-{}", project_id)
+}
+
+pub fn workspace_name_for_project(project: &Project) -> String {
+    format!("project-{}-{}", project.id, project.workspace_key)
 }
 
 fn thread_checkout_name(title: &str) -> String {
@@ -126,7 +130,7 @@ pub async fn ensure_project_workspace(project_id: i64) -> Result<ProjectWorkspac
         .await
         .map_err(|error| format!("failed to load project {}: {}", project_id, error))?;
 
-    let workspace_name = workspace_name_for_project(project_id);
+    let workspace_name = workspace_name_for_project(&project);
     let workspace_dir = crate::backend::config::workspace_dir(&workspace_name);
     let central_dir = workspace_dir.join("work").join("central");
 

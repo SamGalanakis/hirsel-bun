@@ -11,7 +11,8 @@ use super::types::ShepherdScope;
 use crate::backend::ensure_thread_checkout;
 use crate::backend::project::ProjectStore;
 use crate::backend::sandbox::{
-    ensure_sandbox_image_available, humanize_docker_error, SandboxConfig,
+    current_worker_runtime_fingerprint, ensure_sandbox_image_available, humanize_docker_error,
+    SandboxConfig,
 };
 
 const BOOTSTRAP_FLAKE: &str = r#"
@@ -58,6 +59,7 @@ pub(crate) fn scope_key(scope: &ShepherdScope) -> String {
         ShepherdScope::General => "general".to_string(),
         ShepherdScope::Shepherd { project_id, .. } => format!("shepherd-{project_id}"),
         ShepherdScope::Thread { thread_id, .. } => format!("thread-{thread_id}"),
+        ShepherdScope::Librarian { project_id, .. } => format!("librarian-{project_id}"),
     }
 }
 
@@ -190,40 +192,49 @@ fn push_env(args: &mut Vec<String>, key: &str, value: &str) {
     }
 }
 
-fn current_env_fingerprint(
-    work_dir: &Path,
-    bootstrap_flake: bool,
-) -> Result<Option<String>, String> {
-    if bootstrap_flake {
-        return Ok(Some("bootstrap".to_string()));
-    }
-
-    let flake = work_dir.join("flake.nix");
-    let lock = work_dir.join("flake.lock");
-    if !flake.is_file() && !lock.is_file() {
-        return Ok(None);
-    }
+async fn current_env_fingerprint(work_dir: &Path, bootstrap_flake: bool) -> Result<String, String> {
+    let (config, _) = crate::backend::config::Config::load()
+        .map_err(|error| format!("failed to load config: {}", error))?;
+    let forwarded = crate::backend::credentials::load_forwarded_credentials().await;
 
     let mut bytes = Vec::new();
-    if flake.is_file() {
-        bytes.extend_from_slice(b"flake.nix\0");
-        bytes.extend_from_slice(
-            &std::fs::read(&flake)
-                .map_err(|error| format!("failed to read '{}': {}", flake.display(), error))?,
-        );
+    if bootstrap_flake {
+        bytes.extend_from_slice(b"bootstrap\0");
+    } else {
+        let flake = work_dir.join("flake.nix");
+        let lock = work_dir.join("flake.lock");
+        if flake.is_file() {
+            bytes.extend_from_slice(b"flake.nix\0");
+            bytes.extend_from_slice(
+                &std::fs::read(&flake)
+                    .map_err(|error| format!("failed to read '{}': {}", flake.display(), error))?,
+            );
+        }
+        bytes.extend_from_slice(b"\0");
+        if lock.is_file() {
+            bytes.extend_from_slice(b"flake.lock\0");
+            bytes.extend_from_slice(
+                &std::fs::read(&lock)
+                    .map_err(|error| format!("failed to read '{}': {}", lock.display(), error))?,
+            );
+        }
     }
-    bytes.extend_from_slice(b"\0");
-    if lock.is_file() {
-        bytes.extend_from_slice(b"flake.lock\0");
-        bytes.extend_from_slice(
-            &std::fs::read(&lock)
-                .map_err(|error| format!("failed to read '{}': {}", lock.display(), error))?,
-        );
-    }
+    bytes.extend_from_slice(b"\0llm\0");
+    bytes.extend_from_slice(
+        &serde_json::to_vec(&config.llm)
+            .map_err(|error| format!("failed to serialize llm config fingerprint: {}", error))?,
+    );
+    bytes.extend_from_slice(b"\0forwarded\0");
+    bytes.extend_from_slice(&serde_json::to_vec(&forwarded).map_err(|error| {
+        format!(
+            "failed to serialize forwarded credential fingerprint: {}",
+            error
+        )
+    })?);
 
     let oid = Oid::hash_object(ObjectType::Blob, &bytes)
         .map_err(|error| format!("failed to fingerprint scope environment: {}", error))?;
-    Ok(Some(oid.to_string()))
+    Ok(oid.to_string())
 }
 
 async fn load_sandbox_config(scope: &ShepherdScope) -> Result<SandboxConfig, String> {
@@ -235,6 +246,7 @@ async fn load_sandbox_config(scope: &ShepherdScope) -> Result<SandboxConfig, Str
         ShepherdScope::General => None,
         ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
         ShepherdScope::Thread { project_id, .. } => Some(*project_id),
+        ShepherdScope::Librarian { project_id, .. } => Some(*project_id),
     };
 
     if let Some(project_id) = project_id {
@@ -364,8 +376,9 @@ fn write_scope_file(scope: &ShepherdScope) -> Result<(), String> {
 
 async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSession, String> {
     let (work_dir, allow_bootstrap, sandbox) = prepare_scope_runtime(scope).await?;
-    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap)?;
     let forwarded = crate::backend::credentials::load_forwarded_credentials().await;
+    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap).await?;
+    let runtime_fingerprint = current_worker_runtime_fingerprint(&sandbox.image)?;
     let hirsel_root = crate::backend::config::hirsel_dir();
     std::fs::create_dir_all(hirsel_root.join("server"))
         .map_err(|error| format!("failed to create hirsel server dir: {}", error))?;
@@ -388,6 +401,8 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
         "-d".to_string(),
         "--name".to_string(),
         container_name.clone(),
+        "--add-host".to_string(),
+        "host.docker.internal:host-gateway".to_string(),
         "--user".to_string(),
         format!("{}:{}", unsafe { libc::getuid() }, unsafe {
             libc::getgid()
@@ -452,11 +467,13 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
                 ShepherdScope::General => None,
                 ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
                 ShepherdScope::Thread { project_id, .. } => Some(*project_id),
+                ShepherdScope::Librarian { project_id, .. } => Some(*project_id),
             },
             &scope_key,
             &scope_json,
             Some(&work_dir.display().to_string()),
-            env_fingerprint.as_deref(),
+            Some(env_fingerprint.as_str()),
+            runtime_fingerprint.as_deref(),
             &socket_path.display().to_string(),
             allow_bootstrap,
             Some(&container_name),
@@ -517,8 +534,9 @@ pub(super) async fn ensure_scope_session(
     scope: &ShepherdScope,
 ) -> Result<ShepherdScopeSession, String> {
     let scope_key = scope_key(scope);
-    let (work_dir, allow_bootstrap, _) = prepare_scope_runtime(scope).await?;
-    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap)?;
+    let (work_dir, allow_bootstrap, sandbox) = prepare_scope_runtime(scope).await?;
+    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap).await?;
+    let runtime_fingerprint = current_worker_runtime_fingerprint(&sandbox.image)?;
     let socket_path = worker_socket_path(scope);
     let store = ShepherdSessionStore::open()
         .await
@@ -528,7 +546,8 @@ pub(super) async fn ensure_scope_session(
         .await
         .map_err(|error| format!("failed to load session record: {}", error))?
     {
-        if session.env_fingerprint == env_fingerprint
+        if session.env_fingerprint.as_deref() == Some(env_fingerprint.as_str())
+            && session.runtime_fingerprint == runtime_fingerprint
             && socket_path.exists()
             && wait_for_worker_socket(&socket_path, Duration::from_millis(200))
                 .await

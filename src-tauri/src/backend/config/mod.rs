@@ -19,7 +19,7 @@ use thiserror::Error;
 
 pub use backend::BackendConfig;
 pub use lash::McpServerConfig;
-pub use llm::{AgentModelOverrides, LlmConfig, LlmProvider};
+pub use llm::{AgentModelOverrides, LlmConfig, LlmProvider, RoleModelConfig, RoleModelOverrides};
 pub use paths::{global_db_path, hirsel_dir, project_assets_dir, workspace_dir, workspaces_dir};
 
 /// Context window sizes per model (in tokens).

@@ -3,6 +3,7 @@ name = "hirsel"
 version = "0.3.2"
 description = "Herd your AI coding agents"
 edition = "2021"
+license = "MIT"
 autobins = false
 default-run = "hirsel-desktop"
 
@@ -23,7 +24,7 @@ gui = [
 ]
 
 # Headless backend server
-server = ["dep:axum", "dep:tower-http"]
+server = ["dep:tower-http"]
 
 # Development features (debug logging, etc.)
 dev = []
@@ -42,13 +43,13 @@ tauri-plugin-single-instance = { version = "2", optional = true }
 tauri-plugin-opener = { version = "2", optional = true }
 
 # === Server dependencies (feature-gated) ===
-axum = { version = "0.8", features = ["multipart"], optional = true }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 tower-http = { version = "0.6", features = ["cors", "fs"], optional = true }
 
 # === Core dependencies (always included) ===
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+surrealdb = { version = "3.0.5", default-features = false, features = ["kv-surrealkv"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2"
 git2 = { version = "0.20", features = ["vendored-libgit2"] }
@@ -72,7 +73,10 @@ walkdir = "2"
 aes-gcm = "0.10"
 hex = "0.4"
 base64 = "0.22"
-lash = { git = "https://github.com/SamGalanakis/lash", rev = "2a927b95dd20a7c50ef17d97e8bdb39cd4496ff7", package = "lash" }
+mime_guess = "2"
+imara-diff = "0.2"
+lash = { git = "https://github.com/SamGalanakis/lash", rev = "a2572c5d20767a758c64401b1ba17fa83ddcf434", package = "lash" }
+portable-pty = "0.9"
 
 tempfile = "3"
 

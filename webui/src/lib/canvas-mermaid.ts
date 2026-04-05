@@ -19,7 +19,7 @@ function applyMermaidTheme(target: Element): void {
     startOnLoad: false,
     securityLevel: "loose",
     theme: "base",
-    fontFamily: '"Bricolage Grotesque", serif',
+    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
     themeVariables: {
       background: themeColor(style, "--background", "#f6f5f1"),
       primaryColor: themeColor(style, "--card", "#ffffff"),

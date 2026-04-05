@@ -49,6 +49,16 @@ Health check:
 curl http://127.0.0.1:8080/health -H 'x-api-key: replace-me'
 ```
 
+## Local Dev Auth
+
+`./dev.sh` now disables HTTP API key auth by default in debug builds, even if your shell already has `HIRSEL_API_KEY` set.
+
+Opt in explicitly when you want to test the auth flow:
+
+```bash
+HIRSEL_DEV_AUTH=1 HIRSEL_DEV_API_KEY=replace-me ./dev.sh
+```
+
 ## Desktop Shell
 
 The Tauri app is only a thin wrapper now. It stores:
