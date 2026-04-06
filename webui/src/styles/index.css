@@ -1199,6 +1199,73 @@ body, #root {
   gap: 0.45rem;
 }
 
+/* ── Document link card ── */
+.canvas-html .hirsel-doc-link-card {
+  display: block;
+  border: 1px solid hsl(var(--border));
+  padding: 0.65rem 0.85rem;
+  margin: 0.5rem 0;
+  background: hsl(var(--card));
+  transition: border-color 0.15s, background 0.15s;
+  cursor: pointer;
+}
+.canvas-html .hirsel-doc-link-card:hover {
+  border-color: hsl(var(--ring));
+  background: hsl(var(--accent));
+}
+.canvas-html .hirsel-doc-link-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.canvas-html .hirsel-doc-link-kind {
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #b07cd4;
+  border: 1px solid #b07cd466;
+  padding: 0.1em 0.4em;
+  flex-shrink: 0;
+}
+.canvas-html .hirsel-doc-link-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+.canvas-html .hirsel-doc-link-summary {
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  line-height: 1.55;
+  color: hsl(var(--muted-foreground));
+}
+
+/* ── Document embed ── */
+.canvas-html .hirsel-doc-embed-shell {
+  border: 1px solid hsl(var(--border));
+  margin: 0.75rem 0;
+  background: hsl(var(--background));
+}
+.canvas-html .hirsel-doc-embed-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid hsl(var(--border));
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  background: hsl(var(--card));
+}
+.canvas-html .hirsel-doc-embed-body {
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: hsl(var(--foreground));
+  max-height: 500px;
+  overflow-y: auto;
+}
+
 .canvas-html .hirsel-diff-body {
   background: hsl(var(--card));
 }
@@ -1798,7 +1865,7 @@ body, #root {
   height: 100%;
 }
 
-.kg-root > canvas {
+.kg-root > canvas.kg-scene {
   display: block;
   width: 100%;
   height: 100%;
@@ -2048,6 +2115,67 @@ body, #root {
   margin-bottom: 0.85rem;
 }
 
+.kg-detail-document {
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.kg-detail-doc-content {
+  margin-top: 0.5rem;
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid hsl(var(--border) / 0.5);
+  padding: 0.75rem;
+  background: hsl(var(--background) / 0.6);
+  font-size: 0.75rem;
+  line-height: 1.7;
+  color: hsl(var(--foreground));
+}
+
+.kg-detail-doc-content h1,
+.kg-detail-doc-content h2,
+.kg-detail-doc-content h3 {
+  font-weight: 600;
+  margin: 0.75em 0 0.35em;
+  color: hsl(var(--foreground));
+}
+.kg-detail-doc-content h1 { font-size: 1.1em; }
+.kg-detail-doc-content h2 { font-size: 1em; }
+.kg-detail-doc-content h3 { font-size: 0.9em; }
+.kg-detail-doc-content p { margin: 0 0 0.5em; }
+.kg-detail-doc-content ul, .kg-detail-doc-content ol { padding-left: 1.2em; margin: 0.3em 0; }
+.kg-detail-doc-content li { margin: 0.15em 0; }
+.kg-detail-doc-content code {
+  font-family: "Martian Mono", ui-monospace, monospace;
+  font-size: 0.85em;
+  padding: 0.1em 0.3em;
+  background: hsl(var(--secondary));
+}
+.kg-detail-doc-content pre {
+  padding: 0.6rem;
+  background: hsl(var(--secondary));
+  overflow-x: auto;
+  margin: 0.4em 0;
+  font-size: 0.8em;
+}
+.kg-detail-doc-content pre code { padding: 0; background: none; }
+
+.kg-detail-richfield {
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+}
+
+.kg-detail-richfield-body {
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  line-height: 1.65;
+  color: hsl(var(--muted-foreground));
+  max-height: 300px;
+  overflow-y: auto;
+}
+
 .kg-detail-meta {
   display: flex;
   flex-direction: column;
@@ -2277,26 +2405,6 @@ body, #root {
   height: 1px;
   margin: 0.2rem 0.3rem;
   background: hsl(var(--border));
-}
-
-/* ── Minimap ── */
-
-.kg-minimap {
-  position: absolute;
-  bottom: 0.5rem;
-  left: 0.5rem;
-  z-index: 10;
-  width: 140px;
-  height: 100px;
-  border: 1px solid hsl(var(--border) / 0.5);
-  background: hsl(var(--card) / 0.5);
-  pointer-events: none;
-  opacity: 0.6;
-  transition: opacity 200ms ease;
-}
-
-.kg-root:hover .kg-minimap {
-  opacity: 0.85;
 }
 
 /* ═══════════════════════════════════════

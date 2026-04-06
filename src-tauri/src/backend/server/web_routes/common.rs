@@ -1,7 +1,9 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::backend::project::{Project, ProjectPreparationStep, ProjectRuntimePreparation};
+use crate::backend::project::{
+    Project, ProjectPreparationStatus, ProjectPreparationStep, ProjectRuntimePreparation,
+};
 use crate::backend::shepherd_runtime::{self, ShepherdMessageChunk};
 use crate::backend::{ShepherdChatMessage, ShepherdThread};
 
@@ -18,7 +20,7 @@ pub struct ApiProject {
 pub struct ApiPreparationStep {
     pub id: String,
     pub label: String,
-    pub status: String,
+    pub status: ProjectPreparationStatus,
     pub detail: Option<String>,
     pub progress: Option<f64>,
 }
@@ -27,11 +29,12 @@ pub struct ApiPreparationStep {
 pub struct ApiProjectPreparation {
     pub project: ApiProject,
     pub worker_image: String,
-    pub status: String,
+    pub status: ProjectPreparationStatus,
     pub headline: String,
     pub detail: Option<String>,
     pub progress: f64,
     pub steps: Vec<ApiPreparationStep>,
+    pub current_step_id: Option<String>,
     pub started_at: String,
     pub updated_at: String,
 }
@@ -138,7 +141,7 @@ pub fn to_api_project_preparation(
     ApiProjectPreparation {
         project: to_api_project(project),
         worker_image,
-        status: preparation.status.clone(),
+        status: preparation.status,
         headline: preparation.headline.clone(),
         detail: preparation.detail.clone(),
         progress: preparation.progress,
@@ -147,6 +150,7 @@ pub fn to_api_project_preparation(
             .iter()
             .map(to_api_preparation_step)
             .collect(),
+        current_step_id: preparation.current_step_id.clone(),
         started_at: preparation.started_at.clone(),
         updated_at: preparation.updated_at.clone(),
     }

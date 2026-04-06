@@ -1,5 +1,5 @@
 import {
-  type ChatMessage,
+  type ChatMessage as ApiChatMessage,
   type Component,
   For,
   Show,
@@ -16,22 +16,21 @@ import { cn } from "@/lib/cn";
 import CanvasSurface from "@/components/CanvasSurface";
 import ChatComposer from "@/components/ChatComposer";
 import ChatMessage from "@/components/ChatMessage";
-import ProjectPreparationScreen from "@/components/ProjectPreparationScreen";
 import SettingsForm from "@/components/SettingsForm";
 import { matchesAction } from "@/lib/keybindings";
 import {
   type Project,
-  type ProjectPreparation,
   type ProjectSurface,
   type ScopeActivity,
   type LiveTurn,
   type LiveUpdateEvent,
+  type SettingsResponse,
+  type ThreadDetail,
   type ThreadSummary,
-  getProjectPreparation,
+  getSettings,
   getWorkspaceSnapshot,
   listProjects,
   listThreads,
-  retryProjectPreparation,
   sendChatMessage,
   sendThreadMessage,
   stopChat,
@@ -252,17 +251,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [project, setProject] = createSignal<Project | null>(null);
   const [projectActivity, setProjectActivity] = createSignal<ScopeActivity | null>(null);
-  const [projectHistory, setProjectHistory] = createSignal<ChatMessage[]>([]);
+  const [projectHistory, setProjectHistory] = createSignal<ApiChatMessage[]>([]);
   const [projectSurface, setProjectSurface] = createSignal<ProjectSurface | null>(null);
   const [threads, setThreads] = createSignal<ThreadSummary[]>([]);
   const [threadDetail, setThreadDetail] = createSignal<ThreadDetail | null>(null);
-  const [threadHistory, setThreadHistory] = createSignal<ChatMessage[]>([]);
+  const [threadHistory, setThreadHistory] = createSignal<ApiChatMessage[]>([]);
   const [librarianActivity, setLibrarianActivity] = createSignal<ScopeActivity | null>(null);
-  const [librarianHistory, setLibrarianHistory] = createSignal<ChatMessage[]>([]);
-  const [preparation, setPreparation] = createSignal<ProjectPreparation | null>(null);
+  const [librarianHistory, setLibrarianHistory] = createSignal<ApiChatMessage[]>([]);
   const [error, setError] = createSignal("");
   const [connectionOk, setConnectionOk] = createSignal(true);
-  const [retryingPreparation, setRetryingPreparation] = createSignal(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
   const [compactViewport, setCompactViewport] = createSignal(
     window.matchMedia(MOBILE_MEDIA).matches,
@@ -290,6 +287,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [composerFocusNonce, setComposerFocusNonce] = createSignal(0);
   const [stickToBottom, setStickToBottom] = createSignal(true);
   const [justStopped, setJustStopped] = createSignal(false);
+  const [optimisticUserMessage, setOptimisticUserMessage] = createSignal<ApiChatMessage | null>(null);
   const [expandedProjects, setExpandedProjects] = createSignal<Set<number>>(new Set());
   const [otherProjectThreads, setOtherProjectThreads] = createSignal<Map<number, ThreadSummary[]>>(new Map());
   const [dismissedRuntimeErrorRaw, setDismissedRuntimeErrorRaw] = createSignal<string | null>(null);
@@ -299,6 +297,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [terminalHeight, setTerminalHeight] = createSignal(
     Math.max(150, Number(localStorage.getItem("hirsel_terminal_height")) || 250),
   );
+  const [roleModels, setRoleModels] = createSignal<SettingsResponse["role_models"] | null>(null);
   let liveUpdatesCleanup: (() => void) | undefined;
   const scheduledRefreshes = new Map<string, number>();
   let transcriptRef: HTMLDivElement | undefined;
@@ -374,44 +373,28 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     }
   };
 
-  const loadPreparation = async (): Promise<boolean> => {
+  const listAndApplyProjects = async (): Promise<void> => {
     try {
-      const state = await getProjectPreparation(props.projectId);
-      setPreparation(state);
-      setConnectionOk(true);
-      setError("");
-      if (state.status === "done") {
-        await refreshWorkspace();
-      }
-      return true;
-    } catch (err) {
-      setConnectionOk(false);
-      setError(err instanceof Error ? err.message : "Failed to load project setup");
-      return false;
+      setProjects(await listProjects());
+    } catch {
+      // ignore project list refresh failures; workspace refresh carries the main state
     }
   };
 
   const handleLiveUpdate = (event: LiveUpdateEvent) => {
     if (event.projectId !== props.projectId) return;
 
-    if (showPreparation()) {
-      if (
-        event.kind === "project_preparation_changed" ||
-        event.kind === "project_changed"
-      ) {
-        scheduleRefresh("preparation", loadPreparation, 40);
-      }
-      return;
-    }
-
     switch (event.kind) {
       case "project_changed":
+        scheduleRefresh("projects", listAndApplyProjects, 0);
+        scheduleRefresh("workspace", refreshWorkspace, 0);
+        break;
       case "project_surface_changed":
       case "project_history_changed":
       case "project_activity_changed":
       case "librarian_history_changed":
       case "librarian_activity_changed":
-        scheduleRefresh("workspace", refreshWorkspace, 60);
+        scheduleRefresh("workspace", refreshWorkspace, 0);
         break;
       case "knowledge_graph_changed":
         setKnowledgeGraphReloadToken((current) => current + 1);
@@ -420,7 +403,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       case "thread_changed":
       case "thread_history_changed":
       case "thread_activity_changed":
-        scheduleRefresh("workspace", refreshWorkspace, 80);
+        scheduleRefresh("workspace", refreshWorkspace, 0);
         break;
       case "project_preparation_changed":
         break;
@@ -449,17 +432,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         setThreads([]);
         setThreadDetail(null);
         setThreadHistory([]);
-        setPreparation(null);
         setError("");
         setInput("");
         clearOptimisticTurn();
+        setOptimisticUserMessage(null);
         setMobileSidebarOpen(false);
         setSettingsOpen(false);
         setProjectSettingsOpen(false);
         clearLiveUpdates();
 
         void (async () => {
-          await loadPreparation();
+          await loadWorkspaceSnapshotResource();
           connectLiveUpdates();
         })();
 
@@ -594,6 +577,9 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   onMount(() => {
     const media = window.matchMedia(MOBILE_MEDIA);
+    const loadRoleModels = () => {
+      void getSettings().then((settings) => setRoleModels(settings.role_models)).catch(() => {});
+    };
     const handleMedia = () => {
       const compact = media.matches;
       setCompactViewport(compact);
@@ -607,19 +593,27 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
     media.addEventListener("change", handleMedia);
     handleMedia();
+    loadRoleModels();
+    window.addEventListener("hirsel-settings-changed", loadRoleModels);
 
     onCleanup(() => {
       media.removeEventListener("change", handleMedia);
+      window.removeEventListener("hirsel-settings-changed", loadRoleModels);
     });
   });
 
-  const showPreparation = () => {
-    const state = preparation();
-    return state !== null && state.status !== "done";
-  };
-
   const projectName = () =>
-    project()?.name ?? preparation()?.project.name ?? `Project ${props.projectId}`;
+    project()?.name ?? `Project ${props.projectId}`;
+
+  const activeModel = () => {
+    const models = roleModels();
+    if (!models) return "";
+    const role = props.librarianView ? models.librarian : props.threadId ? models.thread : models.shepherd;
+    const model = role.effective_model;
+    const variant = role.effective_model_variant;
+    if (!model) return "";
+    return variant ? `${model} · ${variant}` : model;
+  };
 
   const activeThreadPanel = createMemo(
     () => threads().find((thread) => thread.thread.id === props.threadId) ?? null,
@@ -650,10 +644,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     !props.threadId && !props.librarianView && isRunning() ? "running" : "ready";
 
   const activeMessages = () => {
-    if (props.librarianView) return librarianHistory().filter((m) => m.role !== "system");
-    return (props.threadId ? threadHistory() : projectHistory()).filter(
+    const history = (props.librarianView ? librarianHistory() : (props.threadId ? threadHistory() : projectHistory())).filter(
       (message) => message.role !== "system",
     );
+    const optimistic = optimisticUserMessage();
+    if (!optimistic) return history;
+    const lastMessage = history[history.length - 1];
+    if (!lastMessage || lastMessage.role !== "user" || lastMessage.timestamp < optimistic.timestamp) {
+      return [...history, optimistic];
+    }
+    setOptimisticUserMessage(null);
+    return history;
   };
 
   const activeLiveTurn = () => {
@@ -752,22 +753,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   };
   const focusSource = () => focusSourceLabel(projectSurface()?.canvas_source);
 
-  const handleRetryPreparation = async () => {
-    setRetryingPreparation(true);
-    try {
-      const state = await retryProjectPreparation(props.projectId);
-      setPreparation(state);
-      setError("");
-      if (state.status === "done") {
-        await refreshWorkspace();
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to retry preparation");
-    } finally {
-      setRetryingPreparation(false);
-    }
-  };
-
   const handleStop = async () => {
     // Clear the live turn immediately so the UI doesn't show a lingering "Stopping" bubble.
     // The backend will persist the interrupted message into history via SSE.
@@ -808,6 +793,12 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     setInput("");
     setStickToBottom(true);
     setJustStopped(false);
+    setOptimisticUserMessage({
+      id: -1,
+      role: "user",
+      chunks_json: JSON.stringify([{ type: "text", content }]),
+      timestamp: new Date().toISOString(),
+    });
     const shouldStartOptimisticTurn = !isRunning();
     if (shouldStartOptimisticTurn) {
       beginOptimisticTurn("starting");
@@ -824,6 +815,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       }
     } catch (err) {
       clearOptimisticTurn();
+      setOptimisticUserMessage(null);
       setInput(content);
       setError(err instanceof Error ? err.message : "Failed to send message");
     }
@@ -854,17 +846,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   };
 
   return (
-    <Show
-      when={!showPreparation()}
-      fallback={
-        <ProjectPreparationScreen
-          preparation={preparation()!}
-          retrying={retryingPreparation()}
-          onRetry={handleRetryPreparation}
-        />
-      }
-    >
-      <div class="workspace-shell relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div class="workspace-shell relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
         <header class="relative z-20 flex h-[54px] shrink-0 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur">
           <button
             type="button"
@@ -1221,6 +1203,14 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 </span>
                 <Show when={!settingsOpen() && !projectSettingsOpen()}>
                   <span class={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(activeStatus()))} />
+                  <button
+                    type="button"
+                    class="ml-1 font-mono text-[10px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+                    onClick={() => setSettingsOpen(true)}
+                    title="Model settings"
+                  >
+                    {activeModel()}
+                  </button>
                 </Show>
                 <Show when={!settingsOpen() && !projectSettingsOpen() && !inspectorOpen()}>
                   <div class="ml-auto flex shrink-0 items-center">
@@ -1852,8 +1842,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
             </Suspense>
           </div>
         </Show>
-      </div>
-    </Show>
+    </div>
   );
 };
 

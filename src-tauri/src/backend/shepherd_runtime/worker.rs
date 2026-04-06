@@ -378,17 +378,20 @@ async fn create_runtime_from_history(
     cwd: &Path,
     history: &[ShepherdChatMessage],
 ) -> Result<LashRuntime, String> {
-    let (hirsel_config, _) = crate::backend::config::Config::load()
-        .map_err(|e| format!("failed to load config: {}", e))?;
-    let provider = llm_provider::resolve_provider(&hirsel_config).await?;
+    let settings = crate::backend::AppSettingsStore::open()
+        .await
+        .map_err(|e| format!("failed to open app settings store: {}", e))?
+        .load_llm_settings()
+        .await
+        .map_err(|e| format!("failed to load llm settings: {}", e))?;
+    let provider = llm_provider::resolve_provider(&settings).await?;
     let role = match scope {
         ShepherdScope::Shepherd { .. } => llm_provider::RuntimeModelRole::Shepherd,
         ShepherdScope::Thread { .. } => llm_provider::RuntimeModelRole::Thread,
         ShepherdScope::Librarian { .. } => llm_provider::RuntimeModelRole::Librarian,
         ShepherdScope::General => llm_provider::RuntimeModelRole::Shepherd,
     };
-    let (model, model_variant) =
-        llm_provider::resolve_model_for_role(&hirsel_config, &provider, role);
+    let (model, model_variant) = llm_provider::resolve_model_for_role(&settings, &provider, role);
     let execution_mode = default_execution_mode();
     let context_strategy = default_context_strategy();
     let session_policy = SessionPolicy {
@@ -468,6 +471,7 @@ async fn emit_stream_event(
 
 struct StreamingRpcSink {
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
+    snapshot_template: AgentStateEnvelope,
 }
 
 #[async_trait::async_trait]
@@ -476,6 +480,30 @@ impl EventSink for StreamingRpcSink {
         match event {
             AgentEvent::TextDelta { content } => {
                 emit_stream_event(&self.writer, WorkerStreamEvent::TextDelta { content }).await;
+            }
+            AgentEvent::DurableSnapshot { snapshot } => {
+                let mut state = self.snapshot_template.clone();
+                state.messages = snapshot.messages;
+                state.tool_calls = snapshot.tool_calls;
+                state.iteration = snapshot.iteration;
+                match serde_json::to_string(&state) {
+                    Ok(state_json) => {
+                        emit_stream_event(
+                            &self.writer,
+                            WorkerStreamEvent::DurableSnapshot { state_json },
+                        )
+                        .await;
+                    }
+                    Err(error) => {
+                        emit_stream_event(
+                            &self.writer,
+                            WorkerStreamEvent::Error {
+                                message: format!("failed to serialize durable snapshot: {}", error),
+                            },
+                        )
+                        .await;
+                    }
+                }
             }
             AgentEvent::ToolCall {
                 call_id,
@@ -509,7 +537,6 @@ impl EventSink for StreamingRpcSink {
             AgentEvent::Error { message, .. } => {
                 emit_stream_event(&self.writer, WorkerStreamEvent::Error { message }).await;
             }
-            AgentEvent::DurableSnapshot { .. } => {}
             _ => {}
         }
     }
@@ -522,7 +549,7 @@ async fn run_scope_turn(
     user_message_id: Option<i64>,
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
     cancel: CancellationToken,
-) -> Result<(Vec<ShepherdMessageChunk>, String, String), String> {
+) -> Result<(Vec<ShepherdMessageChunk>, String, String, bool), String> {
     let focus = focus.or_else(|| match scope {
         ShepherdScope::Shepherd { focus, .. } | ShepherdScope::Thread { focus, .. } => {
             focus.clone()
@@ -569,7 +596,10 @@ async fn run_scope_turn(
     }
 
     let mut runtime = runtime;
-    let sink = StreamingRpcSink { writer };
+    let sink = StreamingRpcSink {
+        writer,
+        snapshot_template: runtime.export_state(),
+    };
     let turn = runtime
         .stream_turn(
             TurnInput {
@@ -582,10 +612,6 @@ async fn run_scope_turn(
         )
         .await
         .map_err(|e| format!("failed to run shepherd turn: {}", e))?;
-
-    if cancel.is_cancelled() {
-        return Err("Turn interrupted.".to_string());
-    }
 
     let final_text = sanitize_assistant_text(&turn.assistant_output.safe_text);
     let mut assistant_chunks = Vec::new();
@@ -620,7 +646,7 @@ async fn run_scope_turn(
     let state_json = serde_json::to_string(&runtime.export_state())
         .map_err(|e| format!("failed to serialize shepherd scope state: {}", e))?;
     let summary = result_summary_from_chunks(&assistant_chunks);
-    Ok((assistant_chunks, state_json, summary))
+    Ok((assistant_chunks, state_json, summary, cancel.is_cancelled()))
 }
 
 #[derive(Clone)]
@@ -883,7 +909,7 @@ async fn handle_connection(
             .await;
             *control.cancel.lock().await = None;
             match result {
-                Ok((assistant_chunks, state_json, summary)) => {
+                Ok((assistant_chunks, state_json, summary, interrupted)) => {
                     control.set_status("idle").await;
                     let mut guard = writer.lock().await;
                     write_json_line(
@@ -892,6 +918,7 @@ async fn handle_connection(
                             assistant_chunks,
                             state_json,
                             summary,
+                            interrupted,
                         },
                     )
                     .await?;
@@ -907,11 +934,7 @@ async fn handle_connection(
     Ok(())
 }
 
-pub async fn serve_worker_session(
-    scope_file: &Path,
-    socket_path: &Path,
-    _bootstrap_flake: bool,
-) -> Result<(), String> {
+pub async fn serve_worker_session(scope_file: &Path, socket_path: &Path) -> Result<(), String> {
     let bytes = tokio::fs::read(scope_file)
         .await
         .map_err(|error| format!("failed to read scope file: {}", error))?;

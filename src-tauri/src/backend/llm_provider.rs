@@ -2,29 +2,17 @@
 
 use lash::provider::Provider;
 
+use crate::backend::app_settings::LlmSettings;
 use crate::backend::config::{Config, LlmProvider, RoleModelConfig};
 use crate::backend::credentials::{
     resolve_codex_oauth_credentials, CodexOAuthCredentials, CredentialStore,
 };
-
-const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeModelRole {
     Shepherd,
     Librarian,
     Thread,
-}
-
-fn normalize_openrouter_base_url(config: &Config) -> String {
-    config
-        .llm
-        .openrouter_base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .unwrap_or(DEFAULT_OPENROUTER_BASE_URL)
-        .to_string()
 }
 
 async fn load_codex_oauth(
@@ -82,8 +70,8 @@ async fn load_openrouter_key(store: &CredentialStore) -> Result<String, String> 
     Err("OpenRouter API key not configured. Set it in Settings or OPENROUTER_API_KEY".to_string())
 }
 
-pub fn provider_metadata(config: &Config) -> Provider {
-    match config.llm.provider {
+pub fn provider_metadata(settings: &LlmSettings) -> Provider {
+    match settings.provider {
         LlmProvider::Codex => Provider::Codex {
             access_token: String::new(),
             refresh_token: String::new(),
@@ -93,19 +81,17 @@ pub fn provider_metadata(config: &Config) -> Provider {
         },
         LlmProvider::Openrouter => Provider::OpenAiGeneric {
             api_key: String::new(),
-            base_url: normalize_openrouter_base_url(config),
+            base_url: settings.normalized_openrouter_base_url(),
             options: lash::provider::ProviderOptions::default(),
         },
     }
 }
 
-fn role_override<'a>(config: &'a Config, role: RuntimeModelRole) -> Option<&'a RoleModelConfig> {
-    let roles = config.llm.role_models.as_ref()?;
-    match role {
-        RuntimeModelRole::Shepherd => roles.shepherd.as_ref(),
-        RuntimeModelRole::Librarian => roles.librarian.as_ref(),
-        RuntimeModelRole::Thread => roles.thread.as_ref(),
-    }
+fn role_override<'a>(
+    settings: &'a LlmSettings,
+    role: RuntimeModelRole,
+) -> Option<&'a RoleModelConfig> {
+    settings.role_override(role)
 }
 
 /// Resolve the model and variant from config, falling back to provider defaults.
@@ -138,12 +124,13 @@ pub fn resolve_model(config: &Config, provider: &Provider) -> (String, Option<St
 /// Resolve model + variant for a specific Hirsel runtime role, falling back to
 /// the legacy global model config and then the provider defaults.
 pub fn resolve_model_for_role(
-    config: &Config,
+    settings: &LlmSettings,
     provider: &Provider,
     role: RuntimeModelRole,
 ) -> (String, Option<String>) {
-    let (fallback_model, fallback_variant) = resolve_model(config, provider);
-    let Some(role_cfg) = role_override(config, role) else {
+    let config = Config::default();
+    let (fallback_model, fallback_variant) = resolve_model(&config, provider);
+    let Some(role_cfg) = role_override(settings, role) else {
         return (fallback_model, fallback_variant);
     };
 
@@ -178,9 +165,9 @@ pub fn resolve_model_for_tier(
     resolve_model(config, provider)
 }
 
-pub async fn resolve_provider(config: &Config) -> Result<Provider, String> {
+pub async fn resolve_provider(settings: &LlmSettings) -> Result<Provider, String> {
     if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
-        return match config.llm.provider {
+        return match settings.provider {
             LlmProvider::Codex => {
                 let codex = load_codex_oauth_from_env()?;
                 Ok(Provider::Codex {
@@ -198,7 +185,7 @@ pub async fn resolve_provider(config: &Config) -> Result<Provider, String> {
                 })?;
                 Ok(Provider::OpenAiGeneric {
                     api_key,
-                    base_url: normalize_openrouter_base_url(config),
+                    base_url: settings.normalized_openrouter_base_url(),
                     options: lash::provider::ProviderOptions::default(),
                 })
             }
@@ -209,7 +196,7 @@ pub async fn resolve_provider(config: &Config) -> Result<Provider, String> {
         .await
         .map_err(|e| format!("failed to open credential store: {}", e))?;
 
-    match config.llm.provider {
+    match settings.provider {
         LlmProvider::Codex => {
             let codex = load_codex_oauth(&store).await?;
             Ok(Provider::Codex {
@@ -224,7 +211,7 @@ pub async fn resolve_provider(config: &Config) -> Result<Provider, String> {
             let api_key = load_openrouter_key(&store).await?;
             Ok(Provider::OpenAiGeneric {
                 api_key,
-                base_url: normalize_openrouter_base_url(config),
+                base_url: settings.normalized_openrouter_base_url(),
                 options: lash::provider::ProviderOptions::default(),
             })
         }

@@ -6,10 +6,12 @@ export interface Project {
   created_at: string;
 }
 
+export type ProjectPreparationStatus = "pending" | "working" | "done" | "failed";
+
 export interface ProjectPreparationStep {
   id: string;
   label: string;
-  status: string;
+  status: ProjectPreparationStatus;
   detail: string | null;
   progress: number | null;
 }
@@ -17,11 +19,12 @@ export interface ProjectPreparationStep {
 export interface ProjectPreparation {
   project: Project;
   worker_image: string;
-  status: string;
+  status: ProjectPreparationStatus;
   headline: string;
   detail: string | null;
   progress: number;
   steps: ProjectPreparationStep[];
+  current_step_id: string | null;
   started_at: string;
   updated_at: string;
 }
@@ -31,7 +34,6 @@ export interface ProjectCreateProbe {
   suggested_name: string;
   selected_branch: string;
   branch_source: "explicit" | "url" | "detected";
-  has_root_flake: boolean;
   worker_image: string;
 }
 
@@ -252,6 +254,12 @@ export interface KnowledgeGraphNode {
   node_id: string;
   label: string;
   summary: string;
+  description?: string;
+  detail?: string;
+  notes?: string;
+  rationale?: string;
+  markdown?: string;
+  body_html?: string;
   confidence: string;
   source: string;
   metadata: Record<string, unknown>;

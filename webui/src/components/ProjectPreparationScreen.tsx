@@ -3,7 +3,7 @@ import Badge from "@/components/ui/badge";
 import Button from "@/components/ui/button";
 import Progress from "@/components/ui/progress";
 import { cn } from "@/lib/cn";
-import type { ProjectPreparation, ProjectPreparationStep } from "@/lib/api";
+import type { ProjectPreparation, ProjectPreparationStatus } from "@/lib/api";
 
 interface ProjectPreparationScreenProps {
   preparation: ProjectPreparation;
@@ -15,7 +15,7 @@ function formatPercent(progress: number): string {
   return `${Math.round(progress * 100)}%`;
 }
 
-function statusLabel(status: string): string {
+function statusLabel(status: ProjectPreparationStatus): string {
   switch (status) {
     case "done":
       return "Done";
@@ -28,7 +28,7 @@ function statusLabel(status: string): string {
   }
 }
 
-const badgeVariant = (status: string) => {
+const badgeVariant = (status: ProjectPreparationStatus) => {
   switch (status) {
     case "done":
       return "success" as const;
@@ -41,7 +41,7 @@ const badgeVariant = (status: string) => {
   }
 };
 
-function stepTone(status: string): string {
+function stepTone(status: ProjectPreparationStatus): string {
   switch (status) {
     case "done":
       return "border-signal-green/35 bg-signal-green/8";
@@ -54,7 +54,7 @@ function stepTone(status: string): string {
   }
 }
 
-function progressTone(status: string): string {
+function progressTone(status: ProjectPreparationStatus): string {
   switch (status) {
     case "done":
       return "bg-signal-green";
@@ -82,14 +82,6 @@ function stepIcon(id: string) {
           <path d="M3 7.5h18" />
           <path d="M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
           <path d="M8 12h8" />
-        </svg>
-      );
-    case "flake":
-      return (
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M12 3 7.5 7.5 12 12l4.5-4.5L12 3Z" />
-          <path d="M7.5 12 3 16.5 7.5 21 12 16.5 7.5 12Z" />
-          <path d="m16.5 12-4.5 4.5L16.5 21 21 16.5 16.5 12Z" />
         </svg>
       );
     case "image":
@@ -128,6 +120,7 @@ function stepIcon(id: string) {
 
 const ProjectPreparationScreen: Component<ProjectPreparationScreenProps> = (props) => {
   const currentStep = createMemo(() =>
+    props.preparation.steps.find((step) => step.id === props.preparation.current_step_id) ??
     props.preparation.steps.find((step) => step.status === "working") ??
     props.preparation.steps.find((step) => step.status === "failed") ??
     props.preparation.steps[props.preparation.steps.length - 1],
@@ -236,10 +229,7 @@ const ProjectPreparationScreen: Component<ProjectPreparationScreenProps> = (prop
           </Show>
 
           <div class="space-y-0">
-            <For each={[...props.preparation.steps].sort((a, b) => {
-              const order: Record<string, number> = { done: 0, working: 1, failed: 2, pending: 3 };
-              return (order[a.status] ?? 3) - (order[b.status] ?? 3);
-            })}>
+            <For each={props.preparation.steps}>
               {(step, index) => {
                 const progress = () => Math.round((step.progress ?? 0) * 100);
                 const active = () => step.id === currentStep()?.id;

@@ -216,9 +216,20 @@ function flattenBatch(batch: ToolChunk): ToolChunk[] {
   return [batch];
 }
 
-export function buildBlocks(chunks: ChatChunk[]): RenderBlock[] {
+export function buildBlocks(chunks: ChatChunk[], live = false): RenderBlock[] {
   const blocks: RenderBlock[] = [];
   let explorationBatch: ToolChunk[] = [];
+
+  // When a message is in history (not live), tools stuck in "running" were
+  // interrupted — normalize them so the UI doesn't show a perpetual spinner.
+  const normalizeTool = (tool: ToolChunk): ToolChunk => {
+    if (live) return tool;
+    const s = tool.status.toLowerCase();
+    if (s === "running" || s === "active") {
+      return { ...tool, status: "done" };
+    }
+    return tool;
+  };
 
   const flushExploration = () => {
     if (explorationBatch.length === 0) return;
@@ -227,12 +238,13 @@ export function buildBlocks(chunks: ChatChunk[]): RenderBlock[] {
   };
 
   const pushTool = (tool: ToolChunk) => {
-    if (getToolDisplayKind(tool.title) === "exploration") {
-      explorationBatch.push(tool);
+    const normalized = normalizeTool(tool);
+    if (getToolDisplayKind(normalized.title) === "exploration") {
+      explorationBatch.push(normalized);
       return;
     }
     flushExploration();
-    blocks.push({ kind: "tool", tool });
+    blocks.push({ kind: "tool", tool: normalized });
   };
 
   for (const chunk of chunks) {
@@ -300,9 +312,9 @@ export function buildBlocks(chunks: ChatChunk[]): RenderBlock[] {
   return blocks;
 }
 
-export function parseChatBlocks(chunksJson: string): RenderBlock[] {
+export function parseChatBlocks(chunksJson: string, live = false): RenderBlock[] {
   try {
-    return buildBlocks(JSON.parse(chunksJson) as ChatChunk[]);
+    return buildBlocks(JSON.parse(chunksJson) as ChatChunk[], live);
   } catch {
     return [{ kind: "text", content: chunksJson }];
   }

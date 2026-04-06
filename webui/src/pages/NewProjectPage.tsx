@@ -215,14 +215,7 @@ const NewProjectPage: Component = () => {
 
           <Show when={probe()}>
             <div class="flex items-center gap-2 text-xs text-muted-foreground">
-              <Badge variant={probe()!.has_root_flake ? "success" : "warning"}>
-                {probe()!.has_root_flake ? "Flake found" : "No flake"}
-              </Badge>
-              <span>
-                {probe()!.has_root_flake
-                  ? "Ready to start -- threads can run immediately."
-                  : "Setup will have shepherd create a flake before the project is marked ready."}
-              </span>
+              <Badge variant="success">Ready to create</Badge>
             </div>
           </Show>
 

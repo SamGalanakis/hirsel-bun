@@ -309,6 +309,7 @@ pub async fn graph_surql(project_id: i64, args: &Value) -> ToolResult {
     let mut response = match query_builder.await {
         Ok(response) => response,
         Err(error) => {
+            tracing::error!(%error, project_id, "graph_surql query failed");
             return ToolResult::err(json!({
                 "error": format!("graph_surql failed: {error}")
             }));
@@ -318,17 +319,19 @@ pub async fn graph_surql(project_id: i64, args: &Value) -> ToolResult {
     let statement_count = response.num_statements();
     let errors = response.take_errors();
     if !errors.is_empty() {
+        let msg = format_graph_errors(errors);
+        tracing::warn!(project_id, error = %msg, "graph_surql statement errors");
         return ToolResult::err(json!({
-            "error": format_graph_errors(errors)
+            "error": msg
         }));
     }
 
     let mut results = Vec::with_capacity(statement_count);
     for index in 0..statement_count {
-        let value: Option<Value> = response.take(index).unwrap_or(None);
+        let rows: Vec<Value> = response.take(index).unwrap_or_default();
         results.push(json!({
             "index": index,
-            "value": value.unwrap_or(Value::Null),
+            "value": rows,
         }));
     }
 
@@ -433,6 +436,7 @@ pub async fn edit_graph_node_text(project_id: i64, args: &Value) -> ToolResult {
         .bind(("value", patched.new_text.clone()))
         .await
     {
+        tracing::error!(%error, project_id, kind, node_id, field, "edit_graph_node_text update failed");
         return ToolResult::err(json!({
             "error": format!("failed to update graph node text: {error}")
         }));

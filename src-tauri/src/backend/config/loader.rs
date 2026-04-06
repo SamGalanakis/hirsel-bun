@@ -122,7 +122,7 @@ fn load_mcp_servers(
 #[cfg(test)]
 mod tests {
     use super::load_config_file;
-    use crate::backend::config::{Config, ConfigError, LlmProvider};
+    use crate::backend::config::{Config, ConfigError};
     use std::fs;
     use tempfile::TempDir;
 
@@ -169,13 +169,6 @@ high = "gpt-5"
         let warnings = load_config_file(&mut config, &config_path).expect("load config");
 
         assert!(warnings.is_empty());
-        assert_eq!(config.llm.provider, LlmProvider::Openrouter);
-        assert_eq!(
-            config.llm.openrouter_base_url.as_deref(),
-            Some("https://openrouter.example/api")
-        );
-        assert_eq!(config.llm.model.as_deref(), Some("gpt-5"));
-        assert_eq!(config.llm.model_variant.as_deref(), Some("high"));
         assert_eq!(
             config
                 .llm

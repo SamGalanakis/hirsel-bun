@@ -181,7 +181,7 @@ pub fn remote_default_branch(url: &str) -> Result<Option<String>> {
 
 pub fn inspect_remote_branches(url: &str) -> Result<RemoteBranchInspection> {
     let output = Command::new("git")
-        .args(["ls-remote", "--symref", "--heads", url, "HEAD"])
+        .args(["ls-remote", "--symref", url])
         .env("GIT_TERMINAL_PROMPT", "0")
         .env(
             "GIT_SSH_COMMAND",
@@ -245,15 +245,9 @@ pub fn remote_branch_has_file(url: &str, branch: &str, path: &str) -> Result<boo
         return Ok(false);
     }
 
-    Err(GitError::Other(format!(
-        "git archive failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    )))
-}
-
-/// Check whether a remote branch contains a root `flake.nix`.
-pub fn remote_branch_has_flake(url: &str, branch: &str) -> Result<bool> {
-    remote_branch_has_file(url, branch, "flake.nix")
+    // git archive --remote is unsupported by GitHub/GitLab over HTTPS.
+    // Treat as unknown rather than fatal — the file will be detected during preparation.
+    Ok(false)
 }
 
 fn run_git_command(current_dir: &Path, args: &[&str]) -> Result<()> {
@@ -527,18 +521,6 @@ fn git_output_lines(current_dir: &Path, args: &[&str]) -> Result<Vec<String>> {
         .collect())
 }
 
-fn tree_entry_fingerprint(
-    repo: &Repository,
-    commit: Oid,
-    path: &str,
-) -> Result<Option<(Oid, i32)>> {
-    let tree = repo.find_commit(commit)?.tree()?;
-    Ok(tree
-        .get_path(Path::new(path))
-        .ok()
-        .map(|entry| (entry.id(), entry.filemode())))
-}
-
 pub fn promote_thread_checkout(
     central_dir: &Path,
     thread_dir: &Path,
@@ -614,15 +596,7 @@ pub fn promote_thread_checkout(
             ],
         )?
     };
-    let env_changed = if before == after {
-        false
-    } else {
-        let before_flake = tree_entry_fingerprint(&central_repo, before, "flake.nix")?;
-        let after_flake = tree_entry_fingerprint(&after_repo, after, "flake.nix")?;
-        let before_lock = tree_entry_fingerprint(&central_repo, before, "flake.lock")?;
-        let after_lock = tree_entry_fingerprint(&after_repo, after, "flake.lock")?;
-        before_flake != after_flake || before_lock != after_lock
-    };
+    let env_changed = false;
     let _ = run_git_command(central_dir, &["update-ref", "-d", &merge_ref]);
 
     Ok(PromoteThreadResult {

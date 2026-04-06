@@ -1,4 +1,5 @@
 import { type Component, For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
+import { createStore } from "solid-js/store";
 import Badge from "@/components/ui/badge";
 import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
@@ -56,6 +57,8 @@ const ROLE_MODEL_META: Record<RoleModelKey, { label: string; description: string
 
 type CodexAuthFlow = CodexDeviceStartResponse & { error: string | null };
 type RoleModelDraft = Record<RoleModelKey, { model: string; model_variant: string }>;
+
+type RoleModelOptionsMap = Record<RoleModelKey, SelectOption[]>;
 
 const KeybindingsEditor: Component = () => {
   const [recording, setRecording] = createSignal<string | null>(null);
@@ -139,7 +142,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
   const [llmSaving, setLlmSaving] = createSignal(false);
   const [llmReconnecting, setLlmReconnecting] = createSignal(false);
   const [llmStatus, setLlmStatus] = createSignal("");
-  const [roleModelDraft, setRoleModelDraft] = createSignal<RoleModelDraft>(defaultRoleDraft());
+  const [roleModelDraft, setRoleModelDraft] = createStore<RoleModelDraft>(defaultRoleDraft());
   const [modelSaving, setModelSaving] = createSignal(false);
   const [modelStatus, setModelStatus] = createSignal("");
   const [codexFlow, setCodexFlow] = createSignal<CodexAuthFlow | null>(null);
@@ -210,53 +213,100 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
 
   const roleEffective = (role: RoleModelKey) => settings()?.role_models[role];
   const roleActiveModel = (role: RoleModelKey) => {
-    const draft = roleModelDraft()[role];
+    const draft = roleModelDraft[role];
     if (draft.model !== DEFAULT_MODEL_SENTINEL) return draft.model;
     return roleEffective(role)?.effective_model ?? "";
   };
-  const roleVariantOptions = (role: RoleModelKey): SelectOption[] => {
-    const model = roleActiveModel(role);
-    const variants = variantOptionsByModel()[model] ?? [];
-    const defaultVariant = defaultVariantsByModel()[model] ?? null;
-    if (variants.length === 0) {
-      return [{ value: DEFAULT_VARIANT_SENTINEL, label: "No variant", description: "This model does not expose configurable variants." }];
-    }
-    return [
-      {
-        value: DEFAULT_VARIANT_SENTINEL,
-        label: defaultVariant ? `Default (${defaultVariant})` : "Default",
-        description: "Use the provider's recommended variant.",
-      },
-      ...variants.map((variant) => ({
-        value: variant,
-        label: variant.charAt(0).toUpperCase() + variant.slice(1),
-        description: variant === defaultVariant ? "Recommended by lash defaults." : undefined,
+  const roleModelOptions = createMemo<RoleModelOptionsMap>(() => ({
+    shepherd: [
+      (() => {
+        const effective = roleEffective("shepherd");
+        return {
+          value: DEFAULT_MODEL_SENTINEL,
+          label: "Provider default",
+          description: effective
+            ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
+            : "Use the provider default for this role.",
+        };
+      })(),
+      ...modelOptions().map((option) => ({
+        value: option.value,
+        label: option.label,
+        description: option.description ?? undefined,
       })),
-    ];
-  };
-  const roleModelOptions = (role: RoleModelKey): SelectOption[] => [
-    (() => {
-      const effective = roleEffective(role);
-      return {
-        value: DEFAULT_MODEL_SENTINEL,
-        label: "Provider default",
-        description: effective
-          ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
-          : "Use the provider default for this role.",
-      };
-    })(),
-    ...modelOptions().map((option) => ({
-      value: option.value,
-      label: option.label,
-      description: option.description ?? undefined,
-    })),
-  ];
+    ],
+    librarian: [
+      (() => {
+        const effective = roleEffective("librarian");
+        return {
+          value: DEFAULT_MODEL_SENTINEL,
+          label: "Provider default",
+          description: effective
+            ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
+            : "Use the provider default for this role.",
+        };
+      })(),
+      ...modelOptions().map((option) => ({
+        value: option.value,
+        label: option.label,
+        description: option.description ?? undefined,
+      })),
+    ],
+    thread: [
+      (() => {
+        const effective = roleEffective("thread");
+        return {
+          value: DEFAULT_MODEL_SENTINEL,
+          label: "Provider default",
+          description: effective
+            ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
+            : "Use the provider default for this role.",
+        };
+      })(),
+      ...modelOptions().map((option) => ({
+        value: option.value,
+        label: option.label,
+        description: option.description ?? undefined,
+      })),
+    ],
+  }));
+  const roleVariantOptions = createMemo<RoleModelOptionsMap>(() => {
+    const variantsByModel = variantOptionsByModel();
+    const defaultsByModel = defaultVariantsByModel();
+    const buildOptions = (role: RoleModelKey): SelectOption[] => {
+      const model = roleActiveModel(role);
+      const variants = variantsByModel[model] ?? [];
+      const defaultVariant = defaultsByModel[model] ?? null;
+      if (variants.length === 0) {
+        return [{ value: DEFAULT_VARIANT_SENTINEL, label: "No variant", description: "This model does not expose configurable variants." }];
+      }
+      return [
+        {
+          value: DEFAULT_VARIANT_SENTINEL,
+          label: defaultVariant ? `Default (${defaultVariant})` : "Default",
+          description: "Use the provider's recommended variant.",
+        },
+        ...variants.map((variant) => ({
+          value: variant,
+          label: variant.charAt(0).toUpperCase() + variant.slice(1),
+          description: variant === defaultVariant ? "Recommended by lash defaults." : undefined,
+        })),
+      ];
+    };
+    return {
+      shepherd: buildOptions("shepherd"),
+      librarian: buildOptions("librarian"),
+      thread: buildOptions("thread"),
+    };
+  });
 
   const updateRoleDraft = (role: RoleModelKey, patch: Partial<{ model: string; model_variant: string }>) => {
-    setRoleModelDraft((current) => ({
-      ...current,
-      [role]: { ...current[role], ...patch },
-    }));
+    if (patch.model !== undefined) {
+      setRoleModelDraft(role, "model", patch.model);
+    }
+    if (patch.model_variant !== undefined) {
+      setRoleModelDraft(role, "model_variant", patch.model_variant);
+    }
   };
 
   const handleRoleModelChange = (role: RoleModelKey, model: string) => {
@@ -265,7 +315,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
         model === DEFAULT_MODEL_SENTINEL ? roleEffective(role)?.effective_model ?? "" : model;
       return variantOptionsByModel()[effectiveModel] ?? [];
     })();
-    const currentVariant = roleModelDraft()[role].model_variant;
+    const currentVariant = roleModelDraft[role].model_variant;
     const variantStillValid =
       currentVariant === DEFAULT_VARIANT_SENTINEL || nextOptions.includes(currentVariant);
     updateRoleDraft(role, {
@@ -277,7 +327,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
   const handleSaveRoleModels = async () => {
     setModelSaving(true);
     setModelStatus("");
-    const draft = roleModelDraft();
+    const draft = roleModelDraft;
     try {
       await saveRoleModels({
         shepherd: {
@@ -580,7 +630,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
               {(role) => {
                 const meta = ROLE_MODEL_META[role];
                 const effective = () => roleEffective(role);
-                const currentDraft = () => roleModelDraft()[role];
+                const currentDraft = () => roleModelDraft[role];
                 const variantDisabled = () => (variantOptionsByModel()[roleActiveModel(role)] ?? []).length === 0;
 
                 return (
@@ -599,7 +649,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
                       <div class="space-y-1.5">
                         <Label>{meta.label} model</Label>
                         <Select
-                          options={roleModelOptions(role)}
+                          options={roleModelOptions()[role]}
                           value={currentDraft().model}
                           onChange={(value) => handleRoleModelChange(role, value)}
                         />
@@ -607,7 +657,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
                       <div class="space-y-1.5">
                         <Label>{meta.label} variant</Label>
                         <Select
-                          options={roleVariantOptions(role)}
+                          options={roleVariantOptions()[role]}
                           value={variantDisabled() ? DEFAULT_VARIANT_SENTINEL : currentDraft().model_variant}
                           onChange={(value) => updateRoleDraft(role, { model_variant: value })}
                           disabled={variantDisabled()}

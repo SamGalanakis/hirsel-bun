@@ -8,7 +8,6 @@ pub mod web_routes;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::{ServeDir, ServeFile};
 
@@ -17,8 +16,6 @@ use crate::backend::config::Config;
 /// Application state shared across HTTP handlers.
 pub struct AppState {
     pub api_key: String,
-    /// Mutable config for API updates
-    pub config: Arc<RwLock<Config>>,
 }
 
 fn env_flag_enabled(name: &str) -> bool {
@@ -74,10 +71,8 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         tracing::warn!("{}", warning);
     }
 
-    let config = Arc::new(RwLock::new(config));
     let state = Arc::new(AppState {
         api_key: api_key.clone(),
-        config,
     });
 
     crate::backend::shepherd_runtime::scrub_stale_startup_state()
@@ -91,6 +86,7 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     // Resolve SPA directory
     let webui_dir = resolve_webui_dist();
     let index_html = webui_dir.join("index.html");
+    let assets_dir = webui_dir.join("assets");
     tracing::info!(path = %webui_dir.display(), "Serving SPA from");
 
     // Build router: API routes first, then SPA fallback
@@ -106,8 +102,34 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        // Serve SPA static files, falling back to index.html for client-side routing
-        .fallback_service(ServeDir::new(&webui_dir).fallback(ServeFile::new(&index_html)));
+        .nest_service("/assets", ServeDir::new(&assets_dir))
+        .route_service(
+            "/favicon.ico",
+            ServeFile::new(webui_dir.join("favicon.ico")),
+        )
+        .fallback({
+            let index_html = index_html.clone();
+            move || {
+                let index_html = index_html.clone();
+                async move {
+                    match tokio::fs::read(&index_html).await {
+                        Ok(bytes) => axum::http::Response::builder()
+                            .status(axum::http::StatusCode::OK)
+                            .header(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")
+                            .header(
+                                axum::http::header::CACHE_CONTROL,
+                                "no-store, no-cache, must-revalidate",
+                            )
+                            .body(axum::body::Body::from(bytes))
+                            .expect("failed to build index response"),
+                        Err(_) => axum::http::Response::builder()
+                            .status(axum::http::StatusCode::INTERNAL_SERVER_ERROR)
+                            .body(axum::body::Body::empty())
+                            .expect("failed to build 500 response"),
+                    }
+                }
+            }
+        });
 
     let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     tracing::info!("Hirsel server listening on 0.0.0.0:{}", port);

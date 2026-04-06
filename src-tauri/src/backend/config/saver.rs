@@ -121,9 +121,7 @@ fn write_sandbox_section(output: &mut String, config: &Config) {
 mod tests {
     use super::save_config;
     use crate::backend::config::loader::load_config_file;
-    use crate::backend::config::{
-        AgentModelOverrides, BackendConfig, Config, LlmConfig, LlmProvider,
-    };
+    use crate::backend::config::{AgentModelOverrides, BackendConfig, Config, LlmConfig};
     use crate::backend::sandbox::SandboxConfig;
     use tempfile::TempDir;
 
@@ -135,11 +133,6 @@ mod tests {
         let config = Config {
             root: temp.path().to_path_buf(),
             llm: LlmConfig {
-                provider: LlmProvider::Openrouter,
-                openrouter_base_url: Some("https://openrouter.example/api".to_string()),
-                model: Some("gpt-5".to_string()),
-                model_variant: Some("high".to_string()),
-                role_models: None,
                 agent_models: Some(AgentModelOverrides {
                     low: Some("gpt-5-mini".to_string()),
                     medium: None,
@@ -163,13 +156,6 @@ mod tests {
         assert!(warnings.is_empty());
         assert_eq!(loaded.backend.url, config.backend.url);
         assert_eq!(loaded.backend.api_key, config.backend.api_key);
-        assert_eq!(loaded.llm.provider, config.llm.provider);
-        assert_eq!(
-            loaded.llm.openrouter_base_url,
-            config.llm.openrouter_base_url
-        );
-        assert_eq!(loaded.llm.model, config.llm.model);
-        assert_eq!(loaded.llm.model_variant, config.llm.model_variant);
         assert_eq!(
             loaded.llm.agent_models.as_ref().and_then(|m| m.low.clone()),
             Some("gpt-5-mini".to_string())

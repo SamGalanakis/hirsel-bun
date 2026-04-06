@@ -151,6 +151,18 @@ impl ToolContext {
         let root = self.workspace_root()?;
         let mut candidate = root.to_path_buf();
         if let Some(value) = relative.map(str::trim).filter(|value| !value.is_empty()) {
+            // If the LLM passes an absolute path that starts with the workspace root,
+            // silently strip the prefix and treat it as relative.
+            let value = if let Some(stripped) = value.strip_prefix(root.to_str().unwrap_or("")) {
+                let stripped = stripped.strip_prefix('/').unwrap_or(stripped);
+                if stripped.is_empty() {
+                    "."
+                } else {
+                    stripped
+                }
+            } else {
+                value
+            };
             let rel = Path::new(value);
             if rel.is_absolute() {
                 return Err(ToolResult::err_fmt(

@@ -18,6 +18,8 @@ const DOCUMENT_REFERENCE_TAGS: &[&str] = &[
     "hirsel-node-field",
     "hirsel-node-list",
     "hirsel-doc-target",
+    "hirsel-doc-link",
+    "hirsel-doc-embed",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

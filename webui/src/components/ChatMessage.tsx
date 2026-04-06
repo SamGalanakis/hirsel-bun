@@ -27,6 +27,8 @@ function isExpanded(id: string): boolean { return !!expandedTools[id]; }
 
 function statusDot(status: string | undefined): string {
   switch ((status ?? "").toLowerCase()) {
+    case "starting": return "bg-signal-amber animate-pulse-dot";
+    case "interrupting": return "bg-signal-red animate-pulse-dot";
     case "running": case "active": return "bg-signal-amber animate-pulse-dot";
     case "done": case "completed": case "success": return "bg-signal-green";
     case "failed": case "error": return "bg-signal-red";
@@ -870,7 +872,9 @@ const LiveStatusRow: Component<{ status?: string }> = (props) => {
       case "queued":
         return "Queued";
       case "interrupting":
-        return "Stopping";
+        return "Stopping…";
+      case "starting":
+        return "Starting";
       default:
         return "Thinking";
     }
@@ -878,12 +882,7 @@ const LiveStatusRow: Component<{ status?: string }> = (props) => {
 
   return (
     <div class="flex items-center gap-2 py-1 text-xs text-muted-foreground">
-      <span class={cn(
-        "h-1.5 w-1.5 rounded-full",
-        props.status === "interrupting"
-          ? "bg-signal-amber animate-pulse-dot"
-          : "bg-signal-amber animate-pulse-dot",
-      )} />
+      <span class="h-1.5 w-1.5 rounded-full bg-signal-amber animate-pulse-dot" />
       <span>{label()}</span>
     </div>
   );
@@ -897,12 +896,15 @@ function formatTime(ts: string): string {
 }
 
 const ChatMessage: Component<{ role: string; chunksJson: string; timestamp: string; liveStatus?: string }> = (props) => {
-  const blocks = createMemo(() => parseChatBlocks(props.chunksJson));
+  const blocks = createMemo(() => parseChatBlocks(props.chunksJson, !!props.liveStatus));
   const isUser = () => props.role === "user";
   const showLiveStatus = () =>
     !isUser()
     && !!props.liveStatus
-    && (blocks().length === 0 || props.liveStatus === "interrupting" || props.liveStatus === "starting");
+    && (blocks().length === 0
+      || props.liveStatus === "queued"
+      || props.liveStatus === "starting"
+      || props.liveStatus === "interrupting");
 
   return (
     <div

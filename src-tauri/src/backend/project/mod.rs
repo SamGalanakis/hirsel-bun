@@ -14,11 +14,12 @@ mod store;
 mod types;
 
 pub use prepare::{
-    ensure_project_runtime_preparation_started, get_project_runtime_preparation,
-    project_runtime_is_ready, retry_project_runtime_preparation,
+    get_project_runtime_preparation, project_runtime_is_ready, retry_project_runtime_preparation,
+    start_project_runtime_preparation,
 };
 pub use store::{ProjectError, ProjectResult, ProjectStore};
 pub use types::{
-    CreateProjectRequest, Project, ProjectPreparationStep, ProjectRetainedContext,
-    ProjectRuntimePreparation, ProjectSurfaceSnapshot, UpdateProjectRequest,
+    CreateProjectRequest, Project, ProjectPreparationStatus, ProjectPreparationStep,
+    ProjectRetainedContext, ProjectRuntimePreparation, ProjectSurfaceSnapshot,
+    UpdateProjectRequest,
 };

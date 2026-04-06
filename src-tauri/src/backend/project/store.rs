@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
 use super::types::{
-    CreateProjectRequest, Project, ProjectPreparationStep, ProjectRetainedContext,
-    ProjectRuntimePreparation, UpdateProjectRequest,
+    CreateProjectRequest, Project, ProjectPreparationStatus, ProjectPreparationStep,
+    ProjectRetainedContext, ProjectRuntimePreparation, UpdateProjectRequest,
 };
 use crate::backend::db::{global_db, next_sequence, utc_now, DbClient};
 use crate::backend::live_updates::{self, LiveUpdateKind};
@@ -42,11 +42,12 @@ struct ProjectRetainedContextRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct ProjectRuntimePreparationRecord {
     project_id: i64,
-    status: String,
+    status: ProjectPreparationStatus,
     headline: String,
     detail: Option<String>,
     progress: f64,
     steps: Vec<ProjectPreparationStep>,
+    current_step_id: Option<String>,
     started_at: String,
     updated_at: String,
 }
@@ -226,11 +227,25 @@ impl ProjectStore {
             }
         }
 
+        // Clean up knowledge graph data
+        let _ = db
+            .query("DELETE FROM kg_edge WHERE project_id = $pid; DELETE FROM kg_node WHERE project_id = $pid; DELETE FROM librarian_event WHERE project_id = $pid;")
+            .bind(("pid", id))
+            .await;
+
+        // Clean up scope sessions
+        let _ = db
+            .query("DELETE FROM shepherd_scope_state WHERE project_id = $pid; DELETE FROM shepherd_session WHERE project_id = $pid; DELETE FROM shepherd_live_turn WHERE project_id = $pid;")
+            .bind(("pid", id))
+            .await;
+
         let _: Option<ProjectRetainedContextRecord> =
             db.delete((PROJECT_RETAINED_CONTEXT_TABLE, id)).await?;
         let _: Option<ProjectRuntimePreparationRecord> =
             db.delete((PROJECT_RUNTIME_PREPARATION_TABLE, id)).await?;
         let _: Option<ProjectRecord> = db.delete((PROJECT_TABLE, id)).await?;
+
+        tracing::info!(project_id = id, "project deleted with all associated data");
         live_updates::publish_project(id, LiveUpdateKind::ProjectChanged);
 
         Ok(())
@@ -317,11 +332,12 @@ impl ProjectStore {
         let _ = self.get_project(state.project_id).await?;
         let record = ProjectRuntimePreparationRecord {
             project_id: state.project_id,
-            status: state.status.clone(),
+            status: state.status,
             headline: state.headline.clone(),
             detail: state.detail.clone(),
             progress: state.progress,
             steps: state.steps.clone(),
+            current_step_id: state.current_step_id.clone(),
             started_at: state.started_at.clone(),
             updated_at: state.updated_at.clone(),
         };
@@ -416,6 +432,7 @@ impl ProjectRuntimePreparationRecord {
             headline: self.headline,
             detail: self.detail,
             progress: self.progress,
+            current_step_id: self.current_step_id,
             steps: self.steps,
             started_at: self.started_at,
             updated_at: self.updated_at,

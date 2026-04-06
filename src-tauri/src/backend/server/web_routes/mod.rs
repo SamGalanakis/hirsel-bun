@@ -40,6 +40,10 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             get(projects::get_project_preparation),
         )
         .route(
+            "/api/projects/{project_id}/preparation/start",
+            post(projects::start_project_preparation),
+        )
+        .route(
             "/api/projects/{project_id}/preparation/retry",
             post(projects::retry_project_preparation),
         )

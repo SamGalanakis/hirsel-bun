@@ -25,8 +25,6 @@ enum WorkerCommand {
         scope_file: PathBuf,
         #[arg(long)]
         socket_path: PathBuf,
-        #[arg(long, default_value_t = false)]
-        bootstrap_flake: bool,
     },
 }
 
@@ -49,14 +47,9 @@ fn main() {
         WorkerCommand::Serve {
             scope_file,
             socket_path,
-            bootstrap_flake,
         } => runtime.block_on(async {
-            hirsel_lib::backend::shepherd_runtime::serve_worker_session(
-                &scope_file,
-                &socket_path,
-                bootstrap_flake,
-            )
-            .await
+            hirsel_lib::backend::shepherd_runtime::serve_worker_session(&scope_file, &socket_path)
+                .await
         }),
     };
 

@@ -56,6 +56,8 @@ pub enum WorkerReply {
         assistant_chunks: Vec<ShepherdMessageChunk>,
         state_json: String,
         summary: String,
+        #[serde(default)]
+        interrupted: bool,
     },
     Error {
         message: String,
@@ -106,6 +108,9 @@ pub struct ServerToolResultPayload {
 pub enum WorkerStreamEvent {
     TextDelta {
         content: String,
+    },
+    DurableSnapshot {
+        state_json: String,
     },
     Tool {
         id: String,

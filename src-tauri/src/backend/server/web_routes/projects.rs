@@ -9,7 +9,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::draft::StartingPoint;
-use crate::backend::git::{inspect_remote_branches, parse_github_url, remote_branch_has_flake};
+use crate::backend::git::{inspect_remote_branches, parse_github_url};
 use crate::backend::live_updates;
 use crate::backend::{app, shepherd_runtime, ProjectStore};
 
@@ -25,7 +25,6 @@ pub struct ApiProjectCreateProbe {
     suggested_name: String,
     selected_branch: String,
     branch_source: String,
-    has_root_flake: bool,
     worker_image: String,
 }
 
@@ -48,7 +47,6 @@ struct ProjectCreateProbe {
     suggested_name: String,
     selected_branch: String,
     branch_source: String,
-    has_root_flake: bool,
     worker_image: String,
 }
 
@@ -149,15 +147,11 @@ fn probe_project_create(
         ));
     }
 
-    let has_root_flake = remote_branch_has_flake(&normalized_repo_url, &selected_branch)
-        .map_err(|error| error.to_string())?;
-
     Ok(ProjectCreateProbe {
         suggested_name: derive_project_name_from_repo_url(&normalized_repo_url),
         normalized_repo_url,
         selected_branch,
         branch_source,
-        has_root_flake,
         worker_image: current_default_sandbox_image(),
     })
 }
@@ -181,7 +175,7 @@ async fn persist_project_and_start_runtime_preparation(
     .await
     .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
 
-    crate::backend::ensure_project_runtime_preparation_started(project.id)
+    crate::backend::start_project_runtime_preparation(project.id)
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
 
@@ -194,7 +188,6 @@ fn to_api_project_create_probe(probe: ProjectCreateProbe) -> ApiProjectCreatePro
         suggested_name: probe.suggested_name,
         selected_branch: probe.selected_branch,
         branch_source: probe.branch_source,
-        has_root_flake: probe.has_root_flake,
         worker_image: probe.worker_image,
     }
 }
@@ -304,7 +297,27 @@ pub async fn get_project_preparation(
     Path(project_id): Path<i64>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let project = load_project(project_id).await?;
-    let state = crate::backend::ensure_project_runtime_preparation_started(project_id)
+    let state = crate::backend::get_project_runtime_preparation(project_id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
+        .ok_or_else(|| {
+            (
+                StatusCode::NOT_FOUND,
+                "project runtime preparation has not started".to_string(),
+            )
+        })?;
+    Ok(Json(to_api_project_preparation(
+        &project,
+        &state,
+        effective_project_worker_image(project.sandbox_image.as_deref()),
+    )))
+}
+
+pub async fn start_project_preparation(
+    Path(project_id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let project = load_project(project_id).await?;
+    let state = crate::backend::start_project_runtime_preparation(project_id)
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(to_api_project_preparation(

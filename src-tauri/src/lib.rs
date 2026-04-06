@@ -16,12 +16,15 @@ pub mod version;
 #[cfg(feature = "gui")]
 use tauri::{WebviewUrl, WebviewWindowBuilder};
 
-/// Initialize tracing subscriber with profiling support.
-/// When built with `--features profiling` AND HIRSEL_PROFILING=1, outputs Chrome Trace Format
-/// JSON to `~/.hirsel/profiling/trace-{timestamp}.json` for viewing in Perfetto UI.
+/// Initialize tracing subscriber with a central log file and profiling support.
+///
+/// All processes (server, desktop, worker) write to a single `$HIRSEL_ROOT/logs/hirsel.log`.
+/// The file is rotated by size: when it exceeds `HIRSEL_LOG_MAX_MB` (default 20MB),
+/// existing logs shift (`hirsel.log` → `hirsel.log.1` → … → `hirsel.log.N`) and
+/// the oldest is deleted. The `process_role` is embedded in each log line via a
+/// field prefix so entries from different processes are distinguishable.
 pub fn init_process_tracing(process_role: &str) {
     use std::fs;
-    use std::path::Path;
     #[cfg(feature = "profiling")]
     use std::path::PathBuf;
     use std::sync::{Mutex, OnceLock};
@@ -31,37 +34,14 @@ pub fn init_process_tracing(process_role: &str) {
     static FILE_GUARD: OnceLock<Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>> =
         OnceLock::new();
 
-    fn cleanup_old_logs(dir: &Path, keep_files: usize) {
-        let Ok(read_dir) = fs::read_dir(dir) else {
-            return;
-        };
-
-        let mut files = read_dir
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| {
-                let path = entry.path();
-                let metadata = entry.metadata().ok()?;
-                if !metadata.is_file() {
-                    return None;
-                }
-                let modified = metadata.modified().ok()?;
-                Some((path, modified))
-            })
-            .collect::<Vec<_>>();
-
-        files.sort_by(|a, b| b.1.cmp(&a.1));
-        for (path, _) in files.into_iter().skip(keep_files) {
-            let _ = fs::remove_file(path);
-        }
-    }
-
     fn default_filter() -> EnvFilter {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| {
             EnvFilter::new("hirsel=info,surrealdb=warn,rustls=warn,rustls_platform_verifier=warn,hyper=warn,reqwest=warn")
         })
     }
 
-    let logs_dir = backend::hirsel_dir().join("logs").join(process_role);
+    // ── Central log directory ──
+    let logs_dir = backend::hirsel_dir().join("logs");
     if let Err(error) = fs::create_dir_all(&logs_dir) {
         eprintln!(
             "[hirsel] failed to create log directory {}: {}",
@@ -69,16 +49,46 @@ pub fn init_process_tracing(process_role: &str) {
             error
         );
     }
-    let keep_files = std::env::var("HIRSEL_LOG_KEEP_FILES")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(14);
-    cleanup_old_logs(&logs_dir, keep_files);
 
-    let log_prefix = format!("{}.log", process_role);
-    let file_appender = tracing_appender::rolling::daily(&logs_dir, log_prefix);
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    // ── Size-based rotation ──
+    let max_bytes: u64 = std::env::var("HIRSEL_LOG_MAX_MB")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(20)
+        * 1024
+        * 1024;
+    let keep_rotated: usize = std::env::var("HIRSEL_LOG_KEEP_FILES")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(5);
+
+    let log_path = logs_dir.join("hirsel.log");
+    let should_rotate = log_path
+        .metadata()
+        .map(|m| m.len() >= max_bytes)
+        .unwrap_or(false);
+    if should_rotate {
+        // Shift existing rotated files: hirsel.log.4 → delete, .3→.4, .2→.3, .1→.2
+        for i in (1..keep_rotated).rev() {
+            let from = logs_dir.join(format!("hirsel.log.{}", i));
+            let to = logs_dir.join(format!("hirsel.log.{}", i + 1));
+            let _ = fs::rename(&from, &to);
+        }
+        // Current → .1
+        let _ = fs::rename(&log_path, logs_dir.join("hirsel.log.1"));
+        // Delete oldest if over limit
+        let oldest = logs_dir.join(format!("hirsel.log.{}", keep_rotated + 1));
+        let _ = fs::remove_file(oldest);
+    }
+
+    // ── File appender (append mode, no built-in rotation) ──
+    let log_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .expect("Failed to open hirsel.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(log_file);
     *FILE_GUARD.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(guard);
 
     let stdout_filter = default_filter();
@@ -114,7 +124,7 @@ pub fn init_process_tracing(process_role: &str) {
                 std::env::var("HIRSEL_TRACE_FILENAME").unwrap_or_else(|_| "trace.json".to_string());
             let trace_file = profiling_dir.join(trace_filename);
             eprintln!("[profiling] Writing trace to {}", trace_file.display());
-            eprintln!("[hirsel] {} logs -> {}", process_role, logs_dir.display());
+            eprintln!("[hirsel] {} logs -> {}", process_role, log_path.display());
 
             let (chrome_layer, guard) = tracing_chrome::ChromeLayerBuilder::new()
                 .file(trace_file)
@@ -133,7 +143,7 @@ pub fn init_process_tracing(process_role: &str) {
         }
     }
 
-    eprintln!("[hirsel] {} logs -> {}", process_role, logs_dir.display());
+    eprintln!("[hirsel] {} logs -> {}", process_role, log_path.display());
     let _ = tracing_subscriber::registry()
         .with(stdout_layer)
         .with(file_layer)

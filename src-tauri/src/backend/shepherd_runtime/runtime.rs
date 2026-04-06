@@ -68,7 +68,6 @@ async fn build_scope_guidance(
     focus: Option<&ShepherdTaskFocus>,
     cwd: &Path,
 ) -> String {
-    let bootstrap_flake = std::env::var("HIRSEL_BOOTSTRAP_FLAKE").as_deref() == Ok("1");
     let focus_line = match focus {
         Some(f) => format!("Focus item: {} ({})", f.task_name, f.task_id),
         None => "Focus item: none".to_string(),
@@ -144,7 +143,7 @@ async fn build_scope_guidance(
             Your workspace holds the central checkout. Threads branch from it and promote back into it. \
             Publish to remote from your workspace when the user asks. \
             Keep the central checkout clean.\n\n\
-            If the project has no `flake.nix` yet, create one before delegating any coding threads.\n\n\
+            \
             ## Thread Delegation\n\n\
             Default to delegation:\n\
             - Significant work → thread. Quick answers → reply directly.\n\
@@ -189,7 +188,9 @@ async fn build_scope_guidance(
             | `hirsel-node-ref` | node | Render a linked graph node chip |\n\
             | `hirsel-node-field` | node, field | Render one field from a graph node |\n\
             | `hirsel-node-list` | node, relation | Render related graph nodes |\n\
-            | `hirsel-doc-target` | node | Mark what the document is explicitly about |\n\n\
+            | `hirsel-doc-target` | node | Mark what the document is explicitly about |\n\
+            | `hirsel-doc-link` | node | Clickable card linking to another document node |\n\
+            | `hirsel-doc-embed` | node | Embed another document's full body inline |\n\n\
             Prefer `hirsel-fileref` for links, `hirsel-coderef` for file slices, `hirsel-code` for inline examples, \
             `hirsel-codediff` for comparisons, `hirsel-patchset` for grouped reviews, `hirsel-diagram` for Mermaid.\n\n\
             ## Capturing Lore\n\n\
@@ -224,9 +225,6 @@ async fn build_scope_guidance(
     let mut result = scope_header;
     if !lore_section.is_empty() {
         result.push_str(&lore_section);
-    }
-    if bootstrap_flake {
-        result.push_str("\n\n## Bootstrap Mode\n\n- This project central checkout has no project flake yet.\n- Create a valid `flake.nix` in the workspace before doing normal coding work.\n- Do not create or start coding threads until the project flake exists.\n");
     }
     result
 }

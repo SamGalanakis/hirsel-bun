@@ -18,7 +18,6 @@ pub struct ShepherdScopeSession {
     pub status: String,
     pub container_name: Option<String>,
     pub socket_path: String,
-    pub bootstrap_flake: bool,
     pub last_error: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -68,7 +67,6 @@ impl ShepherdSessionStore {
         env_fingerprint: Option<&str>,
         runtime_fingerprint: Option<&str>,
         socket_path: &str,
-        bootstrap_flake: bool,
         container_name: Option<&str>,
         status: &str,
         last_error: Option<&str>,
@@ -86,7 +84,6 @@ impl ShepherdSessionStore {
             status: status.to_string(),
             container_name: container_name.map(ToOwned::to_owned),
             socket_path: socket_path.to_string(),
-            bootstrap_flake,
             last_error: last_error.map(ToOwned::to_owned),
             created_at: existing
                 .as_ref()

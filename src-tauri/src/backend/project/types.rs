@@ -48,12 +48,21 @@ pub struct ProjectSurfaceSnapshot {
     pub canvas: Option<crate::backend::documents::ProjectCanvasDocument>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPreparationStatus {
+    Pending,
+    Working,
+    Done,
+    Failed,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectPreparationStep {
     pub id: String,
     pub label: String,
-    pub status: String,
+    pub status: ProjectPreparationStatus,
     #[serde(default)]
     pub detail: Option<String>,
     #[serde(default)]
@@ -64,12 +73,14 @@ pub struct ProjectPreparationStep {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRuntimePreparation {
     pub project_id: i64,
-    pub status: String,
+    pub status: ProjectPreparationStatus,
     pub headline: String,
     #[serde(default)]
     pub detail: Option<String>,
     pub progress: f64,
     pub steps: Vec<ProjectPreparationStep>,
+    #[serde(default)]
+    pub current_step_id: Option<String>,
     pub started_at: String,
     pub updated_at: String,
 }

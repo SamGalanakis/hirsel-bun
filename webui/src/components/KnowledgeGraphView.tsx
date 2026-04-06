@@ -1,31 +1,38 @@
 import { type Component, For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import * as THREE from "three";
 import { getKnowledgeGraph, type KnowledgeGraphNode, type KnowledgeGraphEdge } from "@/lib/api";
+import { renderMarkdown } from "@/lib/markdown";
 
 // ── Color system ──
 
 const KIND_COLORS: Record<string, number> = {
-  module:      0x5a9bcf,
-  function:    0x7cc47c,
+  artifact:    0x7a8fa5,
   feature:     0xd4a843,
-  bug:         0xd45050,
-  idea:        0xb07cd4,
-  observation: 0x5ac4c4,
+  issue:       0xc94040,
   decision:    0xd4843a,
+  lore:        0x5db86c,
+  document:    0xb07cd4,
+  module:      0x5a9bcf,
+  function:    0x4caf80,
+  bug:         0xe05555,
+  idea:        0xc490d8,
+  observation: 0x5ac4c4,
   risk:        0xd45080,
-  lore:        0x8bc78b,
 };
 
 const KIND_CSS: Record<string, string> = {
-  module:      "#5a9bcf",
-  function:    "#7cc47c",
+  artifact:    "#7a8fa5",
   feature:     "#d4a843",
-  bug:         "#d45050",
-  idea:        "#b07cd4",
-  observation: "#5ac4c4",
+  issue:       "#c94040",
   decision:    "#d4843a",
+  lore:        "#5db86c",
+  document:    "#b07cd4",
+  module:      "#5a9bcf",
+  function:    "#4caf80",
+  bug:         "#e05555",
+  idea:        "#c490d8",
+  observation: "#5ac4c4",
   risk:        "#d45080",
-  lore:        "#8bc78b",
 };
 
 const DEFAULT_COLOR = 0x888888;
@@ -210,67 +217,6 @@ function simulateForces(nodes: SimNode[], edges: SimEdge[], alpha: number) {
   }
 }
 
-// ── Minimap renderer ──
-
-function drawMinimap(
-  canvas: HTMLCanvasElement,
-  nodes: SimNode[],
-  camera: THREE.OrthographicCamera,
-  hidden: Set<string>,
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  const w = canvas.width;
-  const h = canvas.height;
-  ctx.clearRect(0, 0, w, h);
-
-  const visible = nodes.filter((n) => !hidden.has(n.kind));
-  if (visible.length === 0) return;
-
-  // Compute graph bounds
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const n of visible) {
-    if (n.x < minX) minX = n.x;
-    if (n.x > maxX) maxX = n.x;
-    if (n.y < minY) minY = n.y;
-    if (n.y > maxY) maxY = n.y;
-  }
-  const pad = 3;
-  minX -= pad; maxX += pad; minY -= pad; maxY += pad;
-  const gw = maxX - minX || 1;
-  const gh = maxY - minY || 1;
-
-  const toX = (x: number) => ((x - minX) / gw) * w;
-  const toY = (y: number) => h - ((y - minY) / gh) * h;
-
-  // Draw edges
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 0.5;
-  const nodeMap = new Map<string, SimNode>();
-  for (const n of visible) nodeMap.set(n.key, n);
-
-  // Draw nodes
-  for (const n of visible) {
-    const hex = KIND_COLORS[n.kind] ?? DEFAULT_COLOR;
-    const r = ((hex >> 16) & 0xff);
-    const g = ((hex >> 8) & 0xff);
-    const b = (hex & 0xff);
-    ctx.fillStyle = `rgba(${r},${g},${b},0.8)`;
-    ctx.beginPath();
-    ctx.arc(toX(n.x), toY(n.y), 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // Draw viewport rect
-  const vl = toX(camera.left);
-  const vr = toX(camera.right);
-  const vt = toY(camera.top);
-  const vb = toY(camera.bottom);
-  ctx.strokeStyle = "rgba(255,255,255,0.35)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(vl, vt, vr - vl, vb - vt);
-}
-
 // ── Component ──
 
 interface KnowledgeGraphViewProps {
@@ -280,7 +226,6 @@ interface KnowledgeGraphViewProps {
 
 const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
   let containerRef: HTMLDivElement | undefined;
-  let minimapRef: HTMLCanvasElement | undefined;
   let renderer: THREE.WebGLRenderer | null = null;
   let scene: THREE.Scene | null = null;
   let camera: THREE.OrthographicCamera | null = null;
@@ -461,18 +406,59 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
   const buildGraph = (data: { nodes: KnowledgeGraphNode[]; edges: KnowledgeGraphEdge[] }) => {
     if (!scene) return;
 
+    const previousNodes = new Map(
+      simNodes.map((node) => [
+        node.key,
+        { x: node.x, y: node.y, vx: node.vx, vy: node.vy, pinned: node.pinned },
+      ]),
+    );
+    const previousSelectedKey = selected()?.key ?? null;
+    const previousCenter = (() => {
+      if (simNodes.length === 0) return { x: 0, y: 0 };
+      const total = simNodes.reduce(
+        (acc, node) => ({ x: acc.x + node.x, y: acc.y + node.y }),
+        { x: 0, y: 0 },
+      );
+      return { x: total.x / simNodes.length, y: total.y / simNodes.length };
+    })();
+    const adjacency = new Map<string, string[]>();
+    for (const edge of data.edges) {
+      const fromKey = extractRecordKey(edge.in);
+      const toKey = extractRecordKey(edge.out);
+      adjacency.set(fromKey, [...(adjacency.get(fromKey) ?? []), toKey]);
+      adjacency.set(toKey, [...(adjacency.get(toKey) ?? []), fromKey]);
+    }
+
     for (const n of simNodes) {
       scene.remove(n.mesh);
       scene.remove(n.ring);
       scene.remove(n.labelSprite);
+      n.mesh.geometry.dispose();
+      (n.mesh.material as THREE.Material).dispose();
+      n.ring.geometry.dispose();
+      (n.ring.material as THREE.Material).dispose();
+      if (n.labelSprite.material instanceof THREE.SpriteMaterial && n.labelSprite.material.map) {
+        n.labelSprite.material.map.dispose();
+      }
+      (n.labelSprite.material as THREE.Material).dispose();
     }
     for (const e of simEdges) {
       scene.remove(e.line);
-      if (e.labelSprite) scene.remove(e.labelSprite);
+      e.line.geometry.dispose();
+      (e.line.material as THREE.Material).dispose();
+      if (e.labelSprite) {
+        scene.remove(e.labelSprite);
+        if (e.labelSprite.material instanceof THREE.SpriteMaterial && e.labelSprite.material.map) {
+          e.labelSprite.material.map.dispose();
+        }
+        (e.labelSprite.material as THREE.Material).dispose();
+      }
     }
     simNodes = [];
     simEdges = [];
-    alpha = 1.0;
+    setHovered(null);
+    setHoveredEdge(null);
+    setContextMenu(null);
 
     const kinds = new Set<string>();
 
@@ -500,7 +486,42 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
       const displayLabel = label.length > 22 ? label.slice(0, 20) + "\u2026" : label;
       const sprite = makeTextSprite(displayLabel, LABEL_COLOR);
 
-      mesh.position.set((Math.random() - 0.5) * 12, (Math.random() - 0.5) * 12, 0);
+      const prior = previousNodes.get(key);
+      const position = (() => {
+        if (prior) {
+          return prior;
+        }
+
+        const connected = (adjacency.get(key) ?? [])
+          .map((neighborKey) => previousNodes.get(neighborKey))
+          .filter((neighbor): neighbor is NonNullable<typeof neighbor> => Boolean(neighbor));
+
+        if (connected.length > 0) {
+          const average = connected.reduce(
+            (acc, neighbor) => ({ x: acc.x + neighbor.x, y: acc.y + neighbor.y }),
+            { x: 0, y: 0 },
+          );
+          const jitter = 0.9;
+          return {
+            x: average.x / connected.length + (Math.random() - 0.5) * jitter,
+            y: average.y / connected.length + (Math.random() - 0.5) * jitter,
+            vx: 0,
+            vy: 0,
+            pinned: false,
+          };
+        }
+
+        const jitter = previousNodes.size > 0 ? 1.4 : 12;
+        return {
+          x: previousCenter.x + (Math.random() - 0.5) * jitter,
+          y: previousCenter.y + (Math.random() - 0.5) * jitter,
+          vx: 0,
+          vy: 0,
+          pinned: false,
+        };
+      })();
+
+      mesh.position.set(position.x, position.y, 0);
       ring.position.copy(mesh.position);
       sprite.position.set(mesh.position.x, mesh.position.y - r - 0.55, 0.1);
 
@@ -522,13 +543,13 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
         updatedAt: node.updated_at || "",
         x: mesh.position.x,
         y: mesh.position.y,
-        vx: 0,
-        vy: 0,
+        vx: position.vx,
+        vy: position.vy,
         mesh,
         ring,
         labelSprite: sprite,
         raw: node,
-        pinned: false,
+        pinned: position.pinned,
       });
     }
 
@@ -553,6 +574,14 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
 
     setNodeCount(simNodes.length);
     setAllKinds(Array.from(kinds).sort());
+
+    const nextSelected = previousSelectedKey
+      ? simNodes.find((node) => node.key === previousSelectedKey) ?? null
+      : null;
+    setSelected(nextSelected);
+    setConnectedKeys(nextSelected ? getConnectedKeys(nextSelected.key) : new Set());
+
+    alpha = previousNodes.size === 0 ? 1.0 : Math.max(alpha, 0.12);
   };
 
   const updatePositions = () => {
@@ -678,11 +707,6 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
     updatePositions();
     renderer.render(scene, camera);
 
-    // Update minimap every ~10 frames
-    if (minimapRef && camera && animFrame % 10 === 0) {
-      drawMinimap(minimapRef, simNodes, camera, hiddenKinds());
-    }
-
     animFrame = requestAnimationFrame(animate);
   };
 
@@ -704,6 +728,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setClearColor(getBgColor());
+    renderer.domElement.classList.add("kg-scene");
     containerRef.appendChild(renderer.domElement);
 
     scene = new THREE.Scene();
@@ -1033,6 +1058,33 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
             <p class="kg-detail-summary">{selected()!.summary}</p>
           </Show>
 
+          {/* ── Document body (rendered HTML) ── */}
+          <Show when={selected()!.raw.body_html}>
+            <div class="kg-detail-document">
+              <div class="kg-detail-section-label">Document</div>
+              <div class="kg-detail-doc-content canvas-scope" innerHTML={selected()!.raw.body_html!} />
+            </div>
+          </Show>
+
+          {/* ── Rich text fields ── */}
+          <For each={
+            (["description", "detail", "notes", "rationale", "markdown"] as const)
+              .filter((f) => {
+                const v = selected()!.raw[f];
+                return typeof v === "string" && v.trim().length > 0;
+              })
+          }>
+            {(field) => (
+              <div class="kg-detail-richfield">
+                <div class="kg-detail-section-label">{field.charAt(0).toUpperCase() + field.slice(1)}</div>
+                <div
+                  class="kg-detail-richfield-body markdown-body"
+                  innerHTML={renderMarkdown(selected()!.raw[field] as string)}
+                />
+              </div>
+            )}
+          </For>
+
           <div class="kg-detail-meta">
             <Show when={selected()!.confidence}>
               <div class="kg-detail-field">
@@ -1075,16 +1127,6 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
             </div>
           </Show>
         </div>
-      </Show>
-
-      {/* ── Minimap ── */}
-      <Show when={!loading() && nodeCount() > 0}>
-        <canvas
-          ref={minimapRef}
-          class="kg-minimap"
-          width={140}
-          height={100}
-        />
       </Show>
 
       {/* ── Loading / Empty ── */}

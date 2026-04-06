@@ -76,7 +76,7 @@ hex = "0.4"
 base64 = "0.22"
 mime_guess = "2"
 imara-diff = "0.2"
-lash = { git = "https://github.com/SamGalanakis/lash", rev = "a2572c5d20767a758c64401b1ba17fa83ddcf434", package = "lash" }
+lash = { git = "https://github.com/SamGalanakis/lash", rev = "b2c508b9efbf1015a835e9b86e694e5739f0d4b8", package = "lash" }
 portable-pty = "0.9"
 
 tempfile = "3"

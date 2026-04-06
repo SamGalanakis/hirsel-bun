@@ -5,6 +5,7 @@
 
 pub mod api_types;
 pub mod app;
+pub mod app_settings;
 pub mod config;
 pub mod credentials;
 pub mod db;
@@ -29,6 +30,7 @@ pub(crate) mod text_patch;
 pub(crate) mod tool_results;
 pub mod workspace;
 
+pub use app_settings::{AppSettingsStore, LlmSettings};
 pub use config::*;
 pub use credentials::{CredentialError, CredentialResult, CredentialStore, ForwardedCredentials};
 pub use draft::{
@@ -37,9 +39,9 @@ pub use draft::{
 };
 pub use error::{ErrorKind, HirselError, HirselResult};
 pub use project::{
-    ensure_project_runtime_preparation_started, get_project_runtime_preparation,
-    project_runtime_is_ready, retry_project_runtime_preparation, CreateProjectRequest, Project,
-    ProjectError, ProjectResult, ProjectRuntimePreparation, ProjectStore, UpdateProjectRequest,
+    get_project_runtime_preparation, project_runtime_is_ready, retry_project_runtime_preparation,
+    start_project_runtime_preparation, CreateProjectRequest, Project, ProjectError, ProjectResult,
+    ProjectRuntimePreparation, ProjectStore, UpdateProjectRequest,
 };
 pub use sandbox::{ensure_docker_available, humanize_docker_error, SandboxConfig, SandboxError};
 pub use shepherd_chat::{

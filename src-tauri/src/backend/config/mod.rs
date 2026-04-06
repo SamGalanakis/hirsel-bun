@@ -87,7 +87,7 @@ impl Default for Config {
         Self {
             root: default_root(),
             llm: LlmConfig::default(),
-            sandbox: crate::backend::sandbox::SandboxConfig::docker_nix(),
+            sandbox: crate::backend::sandbox::SandboxConfig::default(),
             backend: BackendConfig::default(),
             mcp_servers: BTreeMap::new(),
         }

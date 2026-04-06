@@ -21,7 +21,7 @@ fn default_image() -> String {
 
 /// Single execution configuration for Hirsel coding agents.
 ///
-/// Agents always run in Docker containers and enter the project through Nix.
+/// Agents always run in Docker containers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxConfig {
@@ -31,12 +31,6 @@ pub struct SandboxConfig {
 
 impl Default for SandboxConfig {
     fn default() -> Self {
-        Self::docker_nix()
-    }
-}
-
-impl SandboxConfig {
-    pub fn docker_nix() -> Self {
         Self {
             image: default_image(),
         }

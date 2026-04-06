@@ -15,41 +15,6 @@ use crate::backend::sandbox::{
     SandboxConfig,
 };
 
-const BOOTSTRAP_FLAKE: &str = r#"
-{
-  description = "Hirsel bootstrap shell";
-
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-
-  outputs = { self, nixpkgs }:
-    let
-      systems = [ "x86_64-linux" "aarch64-linux" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f system);
-    in {
-      devShells = forAllSystems (system:
-        let
-          pkgs = import nixpkgs { inherit system; };
-        in {
-          default = pkgs.mkShell {
-            packages = with pkgs; [
-              bash
-              coreutils
-              findutils
-              gawk
-              git
-              gnugrep
-              gnused
-              jq
-              procps
-              ripgrep
-              which
-            ];
-          };
-        });
-    };
-}
-"#;
-
 fn quote_shell(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -102,87 +67,25 @@ fn container_name(scope: &ShepherdScope) -> String {
         .collect()
 }
 
-fn ensure_bootstrap_flake() -> Result<PathBuf, String> {
-    let dir = crate::backend::config::hirsel_dir().join("bootstrap-flake");
-    std::fs::create_dir_all(&dir)
-        .map_err(|error| format!("failed to create bootstrap flake dir: {}", error))?;
-    std::fs::write(dir.join("flake.nix"), BOOTSTRAP_FLAKE)
-        .map_err(|error| format!("failed to write bootstrap flake: {}", error))?;
-    Ok(dir)
-}
-
-fn build_scope_runtime_script(
-    scope: &ShepherdScope,
-    allow_bootstrap: bool,
-) -> Result<String, String> {
-    let _bootstrap_dir = if allow_bootstrap {
-        Some(ensure_bootstrap_flake()?)
-    } else {
-        None
-    };
+fn build_scope_runtime_script(scope: &ShepherdScope) -> Result<String, String> {
     let serve_cmd = format!(
-        "hirsel-worker serve --scope-file {} --socket-path {}{}",
+        "hirsel-worker serve --scope-file {} --socket-path {}",
         quote_shell(&container_scope_file(scope)),
         quote_shell(&container_worker_socket(scope)),
-        if allow_bootstrap {
-            " --bootstrap-flake"
-        } else {
-            ""
-        }
     );
-    let mut script = String::from(
+    let script = format!(
         r#"set -e
 export HIRSEL_ROOT=/hirsel
 export HOME=/tmp/home
 export HIRSEL_SCOPE_WORKDIR=/work
-mkdir -p "$HOME" /nix
-export PATH="$HOME/.nix-profile/bin:/usr/local/bin:$PATH"
-
-for tool in curl git xz; do
-  if ! command -v "$tool" >/dev/null 2>&1; then
-    echo "Worker image is missing required tool '$tool'. Use the default Hirsel worker image or provide a custom image that includes the standard worker runtime dependencies." >&2
-    exit 1
-  fi
-done
-
+export PATH="/usr/local/bin:$PATH"
+mkdir -p "$HOME"
 export HIRSEL_SERVER_RPC_SOCKET=/hirsel/server/control.sock
-if ! command -v nix >/dev/null 2>&1 && [ ! -x "$HOME/.nix-profile/bin/nix" ]; then
-  if ! sh <(curl -L https://nixos.org/nix/install) --no-daemon >/tmp/hirsel-nix-install.log 2>&1; then
-    cat /tmp/hirsel-nix-install.log >&2
-    exit 1
-  fi
-fi
+exec {}
 "#,
+        serve_cmd
     );
-
-    if allow_bootstrap {
-        script.push_str(&format!(
-            "export HIRSEL_BOOTSTRAP_FLAKE=1\nexec nix --extra-experimental-features \"nix-command flakes\" develop path:/hirsel/bootstrap-flake --command {}\n",
-            serve_cmd
-        ));
-    } else {
-        script.push_str(&format!(
-            "unset HIRSEL_BOOTSTRAP_FLAKE\nexec nix --extra-experimental-features \"nix-command flakes\" develop path:/work --command {}\n",
-            serve_cmd
-        ));
-    }
-
-    if !allow_bootstrap {
-        return Ok(script);
-    }
-
-    if matches!(scope, ShepherdScope::Shepherd { .. }) {
-        Ok(script)
-    } else {
-        let message = match scope {
-            ShepherdScope::Thread { title, .. } => format!(
-                "Thread '{}' cannot start because the central checkout has no flake.nix yet. Ask shepherd to create one first.",
-                title
-            ),
-            _ => "This project central checkout has no flake.nix yet.".to_string(),
-        };
-        Ok(format!("echo {} >&2\nexit 1\n", quote_shell(&message)))
-    }
+    Ok(script)
 }
 
 fn push_env(args: &mut Vec<String>, key: &str, value: &str) {
@@ -192,33 +95,12 @@ fn push_env(args: &mut Vec<String>, key: &str, value: &str) {
     }
 }
 
-async fn current_env_fingerprint(work_dir: &Path, bootstrap_flake: bool) -> Result<String, String> {
+async fn current_env_fingerprint(_work_dir: &Path) -> Result<String, String> {
     let (config, _) = crate::backend::config::Config::load()
         .map_err(|error| format!("failed to load config: {}", error))?;
     let forwarded = crate::backend::credentials::load_forwarded_credentials().await;
 
     let mut bytes = Vec::new();
-    if bootstrap_flake {
-        bytes.extend_from_slice(b"bootstrap\0");
-    } else {
-        let flake = work_dir.join("flake.nix");
-        let lock = work_dir.join("flake.lock");
-        if flake.is_file() {
-            bytes.extend_from_slice(b"flake.nix\0");
-            bytes.extend_from_slice(
-                &std::fs::read(&flake)
-                    .map_err(|error| format!("failed to read '{}': {}", flake.display(), error))?,
-            );
-        }
-        bytes.extend_from_slice(b"\0");
-        if lock.is_file() {
-            bytes.extend_from_slice(b"flake.lock\0");
-            bytes.extend_from_slice(
-                &std::fs::read(&lock)
-                    .map_err(|error| format!("failed to read '{}': {}", lock.display(), error))?,
-            );
-        }
-    }
     bytes.extend_from_slice(b"\0llm\0");
     bytes.extend_from_slice(
         &serde_json::to_vec(&config.llm)
@@ -270,9 +152,7 @@ async fn load_sandbox_config(scope: &ShepherdScope) -> Result<SandboxConfig, Str
     Ok(sandbox)
 }
 
-async fn prepare_scope_runtime(
-    scope: &ShepherdScope,
-) -> Result<(PathBuf, bool, SandboxConfig), String> {
+async fn prepare_scope_runtime(scope: &ShepherdScope) -> Result<(PathBuf, SandboxConfig), String> {
     if let ShepherdScope::Thread {
         project_id,
         thread_id,
@@ -282,17 +162,9 @@ async fn prepare_scope_runtime(
         let _ = ensure_thread_checkout(*project_id, thread_id).await?;
     }
     let work_dir = resolve_scope_workspace(scope).await?;
-    let allow_bootstrap =
-        matches!(scope, ShepherdScope::Shepherd { .. }) && !work_dir.join("flake.nix").exists();
-    if matches!(scope, ShepherdScope::Thread { .. }) && !work_dir.join("flake.nix").exists() {
-        return Err(
-            "Thread containers require a project flake. Ask shepherd to create flake.nix in the central checkout first."
-                .to_string(),
-        );
-    }
     let sandbox = load_sandbox_config(scope).await?;
     ensure_sandbox_image_available(&sandbox.image).await?;
-    Ok((work_dir, allow_bootstrap, sandbox))
+    Ok((work_dir, sandbox))
 }
 
 pub(super) async fn validate_scope_runtime(scope: &ShepherdScope) -> Result<(), String> {
@@ -375,15 +247,13 @@ fn write_scope_file(scope: &ShepherdScope) -> Result<(), String> {
 }
 
 async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSession, String> {
-    let (work_dir, allow_bootstrap, sandbox) = prepare_scope_runtime(scope).await?;
+    let (work_dir, sandbox) = prepare_scope_runtime(scope).await?;
     let forwarded = crate::backend::credentials::load_forwarded_credentials().await;
-    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap).await?;
+    let env_fingerprint = current_env_fingerprint(&work_dir).await?;
     let runtime_fingerprint = current_worker_runtime_fingerprint(&sandbox.image)?;
     let hirsel_root = crate::backend::config::hirsel_dir();
     std::fs::create_dir_all(hirsel_root.join("server"))
         .map_err(|error| format!("failed to create hirsel server dir: {}", error))?;
-    std::fs::create_dir_all(hirsel_root.join("nix"))
-        .map_err(|error| format!("failed to create nix store dir: {}", error))?;
     std::fs::create_dir_all(session_dir(scope).join("home"))
         .map_err(|error| format!("failed to create session home dir: {}", error))?;
     write_scope_file(scope)?;
@@ -395,7 +265,7 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
     let container_name = container_name(scope);
     remove_container_if_present(&container_name)?;
 
-    let script = build_scope_runtime_script(scope, allow_bootstrap)?;
+    let script = build_scope_runtime_script(scope)?;
     let mut args = vec![
         "run".to_string(),
         "-d".to_string(),
@@ -413,8 +283,6 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
         format!("{}:/work", work_dir.display()),
         "-v".to_string(),
         format!("{}:/tmp/home", session_dir(scope).join("home").display()),
-        "-v".to_string(),
-        format!("{}:/nix", hirsel_root.join("nix").display()),
         "-w".to_string(),
         "/work".to_string(),
     ];
@@ -475,7 +343,6 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
             Some(env_fingerprint.as_str()),
             runtime_fingerprint.as_deref(),
             &socket_path.display().to_string(),
-            allow_bootstrap,
             Some(&container_name),
             "starting",
             None,
@@ -534,8 +401,8 @@ pub(super) async fn ensure_scope_session(
     scope: &ShepherdScope,
 ) -> Result<ShepherdScopeSession, String> {
     let scope_key = scope_key(scope);
-    let (work_dir, allow_bootstrap, sandbox) = prepare_scope_runtime(scope).await?;
-    let env_fingerprint = current_env_fingerprint(&work_dir, allow_bootstrap).await?;
+    let (work_dir, sandbox) = prepare_scope_runtime(scope).await?;
+    let env_fingerprint = current_env_fingerprint(&work_dir).await?;
     let runtime_fingerprint = current_worker_runtime_fingerprint(&sandbox.image)?;
     let socket_path = worker_socket_path(scope);
     let store = ShepherdSessionStore::open()
@@ -589,33 +456,4 @@ pub(super) async fn stop_scope_session(scope: &ShepherdScope) -> Result<(), Stri
 
 pub(super) fn current_server_control_socket_path() -> PathBuf {
     server_control_socket_path()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn workspace_scopes_use_path_flakes() {
-        let shepherd_scope = ShepherdScope::Shepherd {
-            project_id: 1,
-            workspace_path: None,
-            focus: None,
-        };
-        let thread_scope = ShepherdScope::Thread {
-            project_id: 1,
-            thread_id: "thread-1".to_string(),
-            title: "Smoke".to_string(),
-            workspace_path: None,
-            focus: None,
-        };
-
-        let bootstrap =
-            build_scope_runtime_script(&shepherd_scope, true).expect("bootstrap script");
-        assert!(bootstrap.contains("develop path:/hirsel/bootstrap-flake"));
-
-        let thread = build_scope_runtime_script(&thread_scope, false).expect("thread script");
-        assert!(thread.contains("develop path:/work"));
-        assert!(!thread.contains("develop /work --command"));
-    }
 }

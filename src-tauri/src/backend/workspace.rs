@@ -1,7 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use git2::Repository;
-
 use crate::backend::draft::create_workspace_provider;
 use crate::backend::git::{create_thread_checkout, create_workspace, get_current_branch};
 use crate::backend::project::{Project, ProjectStore};
@@ -53,24 +51,6 @@ fn thread_checkout_name(title: &str) -> String {
     )
 }
 
-fn repo_has_local_changes(repo_dir: &Path) -> Result<bool, String> {
-    let repo = Repository::open(repo_dir).map_err(|error| {
-        format!(
-            "failed to open thread checkout '{}': {}",
-            repo_dir.display(),
-            error
-        )
-    })?;
-    let statuses = repo.statuses(None).map_err(|error| {
-        format!(
-            "failed to read git status for '{}': {}",
-            repo_dir.display(),
-            error
-        )
-    })?;
-    Ok(!statuses.is_empty())
-}
-
 fn remove_checkout_path(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
@@ -97,7 +77,7 @@ fn remove_checkout_path(path: &Path) -> Result<(), String> {
 fn thread_checkout_needs_rebuild(
     checkout_dir: &Path,
     checkout_name: &str,
-    central_dir: &Path,
+    _central_dir: &Path,
 ) -> Result<bool, String> {
     if !checkout_dir.join(".git").is_dir() {
         return Ok(true);
@@ -108,13 +88,6 @@ fn thread_checkout_needs_rebuild(
         Err(_) => return Ok(true),
     };
     if current_branch == "central" && checkout_name != "central" {
-        return Ok(true);
-    }
-
-    if central_dir.join("flake.nix").is_file()
-        && !checkout_dir.join("flake.nix").is_file()
-        && !repo_has_local_changes(checkout_dir)?
-    {
         return Ok(true);
     }
 
@@ -186,12 +159,6 @@ pub async fn prepare_thread_checkout(
     title: &str,
 ) -> Result<(String, String), String> {
     let workspace = ensure_project_workspace(project_id).await?;
-    if !workspace.central_dir.join("flake.nix").is_file() {
-        return Err(
-            "The project central checkout has no flake.nix yet. Ask shepherd to create one before starting threads."
-                .to_string(),
-        );
-    }
 
     let checkout_name = thread_checkout_name(title);
 
@@ -226,12 +193,6 @@ pub async fn ensure_thread_checkout(
     }
 
     let workspace = ensure_project_workspace(project_id).await?;
-    if !workspace.central_dir.join("flake.nix").is_file() {
-        return Err(
-            "The project central checkout has no flake.nix yet. Ask shepherd to create one before starting threads."
-                .to_string(),
-        );
-    }
 
     let checkout_name = thread
         .checkout_name
@@ -297,6 +258,7 @@ mod tests {
     use crate::backend::config::testing::TestEnv;
     use crate::backend::draft::StartingPoint;
     use crate::backend::shepherd_threads::ShepherdThreadStore;
+    use git2::Repository;
     use git2::Signature;
     use std::fs::File;
     use std::io::Write;

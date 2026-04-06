@@ -41,6 +41,13 @@ export async function getProjectPreparation(projectId: number): Promise<ProjectP
   return parseJson<ProjectPreparation>(res);
 }
 
+export async function startProjectPreparation(projectId: number): Promise<ProjectPreparation> {
+  const res = await apiFetch(`/projects/${projectId}/preparation/start`, {
+    method: "POST",
+  });
+  return parseJson<ProjectPreparation>(res);
+}
+
 export async function retryProjectPreparation(projectId: number): Promise<ProjectPreparation> {
   const res = await apiFetch(`/projects/${projectId}/preparation/retry`, {
     method: "POST",

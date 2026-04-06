@@ -9,6 +9,7 @@ use lash::oauth;
 use lash::provider::Provider;
 use serde::{Deserialize, Serialize};
 
+use crate::backend::app_settings::{AppSettingsStore, LlmSettings};
 use crate::backend::config::{LlmProvider, RoleModelConfig, RoleModelOverrides};
 use crate::backend::credentials::{
     resolve_codex_oauth_credentials, resolve_github_token, resolve_tavily_api_key, CredentialStore,
@@ -207,8 +208,8 @@ fn ensure_model_option(
     });
 }
 
-fn build_model_catalog(config: &crate::backend::config::Config) -> ApiLlmModelCatalog {
-    let provider = llm_provider::provider_metadata(config);
+fn build_model_catalog(settings: &LlmSettings) -> ApiLlmModelCatalog {
+    let provider = llm_provider::provider_metadata(settings);
     let mut model_options = curated_model_options(&provider);
 
     ensure_model_option(
@@ -221,7 +222,7 @@ fn build_model_catalog(config: &crate::backend::config::Config) -> ApiLlmModelCa
         RuntimeModelRole::Librarian,
         RuntimeModelRole::Thread,
     ] {
-        let (effective_model, _) = llm_provider::resolve_model_for_role(config, &provider, role);
+        let (effective_model, _) = llm_provider::resolve_model_for_role(settings, &provider, role);
         ensure_model_option(
             &mut model_options,
             &effective_model,
@@ -255,19 +256,16 @@ fn build_model_catalog(config: &crate::backend::config::Config) -> ApiLlmModelCa
     }
 }
 
-fn role_model_response(
-    config: &crate::backend::config::Config,
-    role: RuntimeModelRole,
-) -> ApiRoleModelResponse {
-    let provider = llm_provider::provider_metadata(config);
-    let overrides = config.llm.role_models.as_ref();
+fn role_model_response(settings: &LlmSettings, role: RuntimeModelRole) -> ApiRoleModelResponse {
+    let provider = llm_provider::provider_metadata(settings);
+    let overrides = settings.role_models.as_ref();
     let configured = match role {
         RuntimeModelRole::Shepherd => overrides.and_then(|value| value.shepherd.as_ref()),
         RuntimeModelRole::Librarian => overrides.and_then(|value| value.librarian.as_ref()),
         RuntimeModelRole::Thread => overrides.and_then(|value| value.thread.as_ref()),
     };
     let (effective_model, effective_model_variant) =
-        llm_provider::resolve_model_for_role(config, &provider, role);
+        llm_provider::resolve_model_for_role(settings, &provider, role);
 
     ApiRoleModelResponse {
         configured_model: configured.and_then(|value| value.model.clone()),
@@ -290,10 +288,24 @@ fn normalize_role_model_input(input: SaveRoleModelInput) -> Option<RoleModelConf
     }
 }
 
+fn schedule_scope_session_reset(reason: &'static str) {
+    tokio::spawn(async move {
+        if let Err(error) = shepherd_runtime::reset_all_scope_sessions().await {
+            tracing::warn!(%error, reason, "failed to reset scope sessions after settings change");
+        }
+    });
+}
+
 pub async fn get_settings(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let config = state.config.read().await.clone();
+    let settings_store = AppSettingsStore::open()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let llm_settings = settings_store
+        .load_llm_settings()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     let store = CredentialStore::open()
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
@@ -307,7 +319,7 @@ pub async fn get_settings(
     let github = resolve_github_token().await;
     let tavily = resolve_tavily_api_key().await;
 
-    let provider = match config.llm.provider {
+    let provider = match llm_settings.provider {
         LlmProvider::Codex => "codex",
         LlmProvider::Openrouter => "openrouter",
     };
@@ -315,13 +327,13 @@ pub async fn get_settings(
     Ok(Json(ApiSettingsResponse {
         provider: provider.to_string(),
         openrouter_key_masked,
-        openrouter_base_url: config.llm.openrouter_base_url.clone(),
+        openrouter_base_url: llm_settings.openrouter_base_url.clone(),
         role_models: ApiRoleModelsResponse {
-            shepherd: role_model_response(&config, RuntimeModelRole::Shepherd),
-            librarian: role_model_response(&config, RuntimeModelRole::Librarian),
-            thread: role_model_response(&config, RuntimeModelRole::Thread),
+            shepherd: role_model_response(&llm_settings, RuntimeModelRole::Shepherd),
+            librarian: role_model_response(&llm_settings, RuntimeModelRole::Librarian),
+            thread: role_model_response(&llm_settings, RuntimeModelRole::Thread),
         },
-        model_catalog: build_model_catalog(&config),
+        model_catalog: build_model_catalog(&llm_settings),
         codex_configured: codex.is_some(),
         codex_source: codex.map(|value| value.source.as_str().to_string()),
         github_configured: github.is_some(),
@@ -347,16 +359,19 @@ pub async fn save_llm_provider(
         _ => LlmProvider::Codex,
     };
 
-    {
-        let mut config = state.config.write().await;
-        config.llm.provider = provider;
-        config
-            .save()
-            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    }
-    shepherd_runtime::reset_all_scope_sessions()
+    let settings_store = AppSettingsStore::open()
         .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let mut settings = settings_store
+        .load_llm_settings()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    settings.provider = provider;
+    settings_store
+        .save_llm_settings(&settings)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    schedule_scope_session_reset("save_llm_provider");
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -365,74 +380,77 @@ pub async fn save_role_models(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SaveRoleModelsBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    {
-        let mut config = state.config.write().await;
-        let role_models = RoleModelOverrides {
-            shepherd: normalize_role_model_input(body.shepherd),
-            librarian: normalize_role_model_input(body.librarian),
-            thread: normalize_role_model_input(body.thread),
+    let settings_store = AppSettingsStore::open()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let mut settings = settings_store
+        .load_llm_settings()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let role_models = RoleModelOverrides {
+        shepherd: normalize_role_model_input(body.shepherd),
+        librarian: normalize_role_model_input(body.librarian),
+        thread: normalize_role_model_input(body.thread),
+    };
+    let provider = llm_provider::provider_metadata(&settings);
+
+    for role in [
+        RuntimeModelRole::Shepherd,
+        RuntimeModelRole::Librarian,
+        RuntimeModelRole::Thread,
+    ] {
+        let role_cfg = match role {
+            RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),
+            RuntimeModelRole::Librarian => role_models.librarian.as_ref(),
+            RuntimeModelRole::Thread => role_models.thread.as_ref(),
         };
-        let provider = llm_provider::provider_metadata(&config);
-
-        for role in [
-            RuntimeModelRole::Shepherd,
-            RuntimeModelRole::Librarian,
-            RuntimeModelRole::Thread,
-        ] {
-            let role_cfg = match role {
-                RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),
-                RuntimeModelRole::Librarian => role_models.librarian.as_ref(),
-                RuntimeModelRole::Thread => role_models.thread.as_ref(),
-            };
-            let Some(role_cfg) = role_cfg else {
-                continue;
-            };
-            if let Some(model) = role_cfg.model.as_deref() {
-                provider
-                    .validate_model_name(model)
-                    .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-            }
-        }
-
-        config.llm.role_models = if role_models.shepherd.is_none()
-            && role_models.librarian.is_none()
-            && role_models.thread.is_none()
-        {
-            None
-        } else {
-            Some(role_models.clone())
+        let Some(role_cfg) = role_cfg else {
+            continue;
         };
-
-        for role in [
-            RuntimeModelRole::Shepherd,
-            RuntimeModelRole::Librarian,
-            RuntimeModelRole::Thread,
-        ] {
-            let role_cfg = match role {
-                RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),
-                RuntimeModelRole::Librarian => role_models.librarian.as_ref(),
-                RuntimeModelRole::Thread => role_models.thread.as_ref(),
-            };
-            let Some(role_cfg) = role_cfg else {
-                continue;
-            };
-            if let Some(variant) = role_cfg.model_variant.as_deref() {
-                let (effective_model, _) =
-                    llm_provider::resolve_model_for_role(&config, &provider, role);
-                provider
-                    .validate_variant(&effective_model, variant)
-                    .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-            }
+        if let Some(model) = role_cfg.model.as_deref() {
+            provider
+                .validate_model_name(model)
+                .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
         }
-
-        config
-            .save()
-            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     }
 
-    shepherd_runtime::reset_all_scope_sessions()
+    settings.role_models = if role_models.shepherd.is_none()
+        && role_models.librarian.is_none()
+        && role_models.thread.is_none()
+    {
+        None
+    } else {
+        Some(role_models.clone())
+    };
+
+    for role in [
+        RuntimeModelRole::Shepherd,
+        RuntimeModelRole::Librarian,
+        RuntimeModelRole::Thread,
+    ] {
+        let role_cfg = match role {
+            RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),
+            RuntimeModelRole::Librarian => role_models.librarian.as_ref(),
+            RuntimeModelRole::Thread => role_models.thread.as_ref(),
+        };
+        let Some(role_cfg) = role_cfg else {
+            continue;
+        };
+        if let Some(variant) = role_cfg.model_variant.as_deref() {
+            let (effective_model, _) =
+                llm_provider::resolve_model_for_role(&settings, &provider, role);
+            provider
+                .validate_variant(&effective_model, variant)
+                .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+        }
+    }
+
+    settings_store
+        .save_llm_settings(&settings)
         .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+
+    schedule_scope_session_reset("save_role_models");
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -440,16 +458,19 @@ pub async fn save_role_models(
 pub async fn start_codex_device_flow(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    {
-        let mut config = state.config.write().await;
-        config.llm.provider = LlmProvider::Codex;
-        config
-            .save()
-            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    }
-    shepherd_runtime::reset_all_scope_sessions()
+    let settings_store = AppSettingsStore::open()
         .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let mut settings = settings_store
+        .load_llm_settings()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    settings.provider = LlmProvider::Codex;
+    settings_store
+        .save_llm_settings(&settings)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    schedule_scope_session_reset("start_codex_device_flow");
 
     let device = oauth::codex_request_device_code().await.map_err(|error| {
         (
@@ -508,9 +529,7 @@ pub async fn poll_codex_device_flow(
         })
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    shepherd_runtime::reset_all_scope_sessions()
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    schedule_scope_session_reset("poll_codex_device_flow");
 
     Ok(Json(ApiCodexDevicePollResponse {
         status: "connected".to_string(),
@@ -522,14 +541,19 @@ pub async fn save_openrouter_key(
     State(state): State<Arc<AppState>>,
     Json(body): Json<SaveOpenrouterKeyBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    {
-        let mut config = state.config.write().await;
-        config.llm.provider = LlmProvider::Openrouter;
-        config.llm.openrouter_base_url = body.base_url.filter(|value| !value.trim().is_empty());
-        config
-            .save()
-            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    }
+    let settings_store = AppSettingsStore::open()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    let mut settings = settings_store
+        .load_llm_settings()
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    settings.provider = LlmProvider::Openrouter;
+    settings.openrouter_base_url = body.base_url.filter(|value| !value.trim().is_empty());
+    settings_store
+        .save_llm_settings(&settings)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
 
     let store = CredentialStore::open()
         .await
@@ -540,9 +564,7 @@ pub async fn save_openrouter_key(
             .await
             .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     }
-    shepherd_runtime::reset_all_scope_sessions()
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    schedule_scope_session_reset("save_openrouter_key");
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -565,9 +587,7 @@ pub async fn save_tavily_key(
         .store("tavily_api_key", api_key)
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    shepherd_runtime::reset_all_scope_sessions()
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    schedule_scope_session_reset("save_tavily_key");
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }
@@ -594,9 +614,7 @@ pub async fn save_github_token(
         std::env::set_var("GITHUB_TOKEN", token);
         std::env::set_var("GH_TOKEN", token);
     }
-    shepherd_runtime::reset_all_scope_sessions()
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    schedule_scope_session_reset("save_github_token");
 
     Ok(Json(serde_json::json!({ "ok": true })))
 }

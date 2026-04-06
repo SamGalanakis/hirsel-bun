@@ -180,6 +180,7 @@ impl LiveTurnAccumulator {
             WorkerStreamEvent::TextDelta { content } => {
                 self.push_text(content);
             }
+            WorkerStreamEvent::DurableSnapshot { .. } => {}
             WorkerStreamEvent::Tool {
                 id,
                 title,
@@ -343,6 +344,48 @@ async fn save_scope_state(scope: &ShepherdScope, state_json: &str) -> Result<(),
         .str_err()
 }
 
+async fn merge_scope_state(scope: &ShepherdScope, state_json: &str) -> Result<(), String> {
+    let mut incoming: lash::AgentStateEnvelope = serde_json::from_str(state_json)
+        .map_err(|error| format!("failed to deserialize shepherd scope state: {}", error))?;
+
+    if let Some(existing_json) = load_scope_state_local(scope).await? {
+        let existing: lash::AgentStateEnvelope =
+            serde_json::from_str(&existing_json).map_err(|error| {
+                format!(
+                    "failed to deserialize persisted shepherd scope state: {}",
+                    error
+                )
+            })?;
+
+        incoming.agent_id = existing.agent_id;
+        if incoming.policy == lash::SessionPolicy::default() {
+            incoming.policy = existing.policy;
+        }
+        if incoming.token_usage.total() == 0 {
+            incoming.token_usage = existing.token_usage;
+        }
+        if incoming.last_prompt_usage.is_none() {
+            incoming.last_prompt_usage = existing.last_prompt_usage;
+        }
+        if incoming.task_state.is_none() {
+            incoming.task_state = existing.task_state;
+        }
+        if incoming.replay_manifest.is_none() {
+            incoming.replay_manifest = existing.replay_manifest;
+        }
+        if incoming.plugin_snapshot.is_none() {
+            incoming.plugin_snapshot = existing.plugin_snapshot;
+        }
+        if incoming.repl_snapshot.is_none() {
+            incoming.repl_snapshot = existing.repl_snapshot;
+        }
+    }
+
+    let merged_json = serde_json::to_string(&incoming)
+        .map_err(|error| format!("failed to serialize shepherd scope state: {}", error))?;
+    save_scope_state(scope, &merged_json).await
+}
+
 async fn load_scope_state_local(scope: &ShepherdScope) -> Result<Option<String>, String> {
     let (Some(project_id), Some(scope_key)) = scope_storage_ids(scope) else {
         return Ok(None);
@@ -449,7 +492,12 @@ async fn run_scope_turn_task(
             match reply {
                 WorkerReply::Accepted => {}
                 WorkerReply::Event { event } => {
-                    accumulator.apply(event);
+                    match event {
+                        WorkerStreamEvent::DurableSnapshot { state_json } => {
+                            merge_scope_state(&scope, &state_json).await?;
+                        }
+                        other => accumulator.apply(other),
+                    }
                     if let Some(chunks_json) = accumulator.chunks_json()? {
                         set_live_turn(&scope, &chunks_json, "running", None).await?;
                     }
@@ -458,17 +506,34 @@ async fn run_scope_turn_task(
                     assistant_chunks,
                     state_json,
                     summary,
+                    interrupted,
                 } => {
-                    let assistant_chunks = accumulator.finalize(assistant_chunks);
+                    let mut assistant_chunks = accumulator.finalize(assistant_chunks);
+                    if interrupted
+                        && !assistant_chunks.iter().any(|chunk| {
+                            matches!(chunk, ShepherdMessageChunk::Notice { title, content, .. }
+                                if title.as_deref() == Some("Interrupted")
+                                && content == "Stopped manually. This response is partial.")
+                        })
+                    {
+                        assistant_chunks.push(interruption_notice_chunk());
+                    }
                     let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
                     save_message(&scope, "assistant", &assistant_chunks_json).await?;
-                    save_scope_state(&scope, &state_json).await?;
+                    merge_scope_state(&scope, &state_json).await?;
                     clear_live_turn(&scope).await?;
                     store
                         .set_status(&scope_key, "idle", None)
                         .await
                         .map_err(|error| format!("failed to mark session idle: {}", error))?;
-                    update_thread_after_turn(&scope, Some(&summary), None).await?;
+                    if interrupted {
+                        let interrupted_summary =
+                            interrupted_summary_from_chunks(&assistant_chunks);
+                        update_thread_after_turn(&scope, Some(&interrupted_summary), Some("idle"))
+                            .await?;
+                    } else {
+                        update_thread_after_turn(&scope, Some(&summary), None).await?;
+                    }
                     break Ok(());
                 }
                 WorkerReply::Error { message } => {
@@ -486,9 +551,15 @@ async fn run_scope_turn_task(
     if let Err(error) = &result {
         if is_interruption_error(error) {
             let mut assistant_chunks = accumulator.finalize(Vec::new());
-            assistant_chunks.push(interruption_notice_chunk());
-            if let Ok(assistant_chunks_json) = chunks_to_json(&assistant_chunks) {
-                let _ = save_message(&scope, "assistant", &assistant_chunks_json).await;
+            if !assistant_chunks.iter().any(|chunk| {
+                matches!(chunk, ShepherdMessageChunk::Notice { title, content, .. }
+                    if title.as_deref() == Some("Interrupted")
+                    && content == "Stopped manually. This response is partial.")
+            }) {
+                assistant_chunks.push(interruption_notice_chunk());
+                if let Ok(assistant_chunks_json) = chunks_to_json(&assistant_chunks) {
+                    let _ = save_message(&scope, "assistant", &assistant_chunks_json).await;
+                }
             }
             let _ = clear_live_turn(&scope).await;
             let _ = store.set_status(&scope_key, "idle", None).await;

@@ -2144,6 +2144,96 @@ class HirselNodeListElement extends HTMLElement {
 
 class HirselDocTargetElement extends HirselNodeRefElement {}
 
+class HirselDocLinkElement extends HTMLElement {
+  connectedCallback(): void {
+    void this.render();
+  }
+
+  async attributeChangedCallback(): Promise<void> {
+    void this.render();
+  }
+
+  static get observedAttributes(): string[] {
+    return ["node"];
+  }
+
+  private async render(): Promise<void> {
+    const projectId = currentCanvasProjectId(this);
+    if (!projectId) {
+      this.innerHTML = renderNodeError("Missing canvas project context for doc-link.");
+      return;
+    }
+    const parsed = parseNodeAttr(this.getAttribute("node"));
+    if (!parsed) {
+      this.innerHTML = renderNodeError("hirsel-doc-link requires a node attribute (e.g. document:architecture).");
+      return;
+    }
+    const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));
+    if (!node) {
+      this.innerHTML = renderNodeError(`Unknown node ${parsed.kind}:${parsed.nodeId}.`);
+      return;
+    }
+    const label = escapeHtml(node.label || parsed.nodeId);
+    const summary = node.summary ? escapeHtml(node.summary) : "";
+    const kind = escapeHtml(parsed.kind);
+    this.dataset.hirselReady = "true";
+    this.innerHTML = `<div class="hirsel-doc-link-card">
+      <div class="hirsel-doc-link-head">
+        <span class="hirsel-doc-link-kind">${kind}</span>
+        <span class="hirsel-doc-link-title">${label}</span>
+      </div>
+      ${summary ? `<div class="hirsel-doc-link-summary">${summary}</div>` : ""}
+    </div>`;
+  }
+}
+
+class HirselDocEmbedElement extends HTMLElement {
+  connectedCallback(): void {
+    void this.render();
+  }
+
+  async attributeChangedCallback(): Promise<void> {
+    void this.render();
+  }
+
+  static get observedAttributes(): string[] {
+    return ["node"];
+  }
+
+  private async render(): Promise<void> {
+    const projectId = currentCanvasProjectId(this);
+    if (!projectId) {
+      this.innerHTML = renderNodeError("Missing canvas project context for doc-embed.");
+      return;
+    }
+    const parsed = parseNodeAttr(this.getAttribute("node"));
+    if (!parsed) {
+      this.innerHTML = renderNodeError("hirsel-doc-embed requires a node attribute (e.g. document:architecture).");
+      return;
+    }
+    const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));
+    if (!node) {
+      this.innerHTML = renderNodeError(`Unknown node ${parsed.kind}:${parsed.nodeId}.`);
+      return;
+    }
+    const bodyHtml = (node as { body_html?: string }).body_html ?? "";
+    const label = escapeHtml(node.label || parsed.nodeId);
+    const kind = escapeHtml(parsed.kind);
+    this.dataset.hirselReady = "true";
+    if (!bodyHtml.trim()) {
+      this.innerHTML = `<div class="hirsel-doc-embed-shell">
+        <div class="hirsel-doc-embed-header"><span class="hirsel-doc-link-kind">${kind}</span> ${label}</div>
+        <div class="hirsel-code-empty">This document has no content yet.</div>
+      </div>`;
+      return;
+    }
+    this.innerHTML = `<div class="hirsel-doc-embed-shell">
+      <div class="hirsel-doc-embed-header"><span class="hirsel-doc-link-kind">${kind}</span> ${label}</div>
+      <div class="hirsel-doc-embed-body">${bodyHtml}</div>
+    </div>`;
+  }
+}
+
 function defineElement(name: string, ctor: CustomElementConstructor): void {
   if (!customElements.get(name)) {
     customElements.define(name, ctor);
@@ -2168,6 +2258,8 @@ export function registerCanvasComponents(): void {
   defineElement("hirsel-node-field", HirselNodeFieldElement);
   defineElement("hirsel-node-list", HirselNodeListElement);
   defineElement("hirsel-doc-target", HirselDocTargetElement);
+  defineElement("hirsel-doc-link", HirselDocLinkElement);
+  defineElement("hirsel-doc-embed", HirselDocEmbedElement);
   defineElement("hirsel-patchset", HirselPatchsetElement);
   defineElement("hirsel-progress", HirselProgressElement);
 }
