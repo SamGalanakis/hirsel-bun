@@ -5,11 +5,11 @@ use base64::Engine;
 use lash::tools::StandardShell;
 use lash::tools::UpdatePlanTool;
 use lash::{
-    default_context_strategy, default_execution_mode, AgentEvent, AgentStateEnvelope, EventSink,
-    ExecutionMode, HostProfile, InputItem, LashRuntime, PluginError, PluginFactory, PluginHost,
-    PluginRegistrar, PluginSessionContext, PluginSnapshotMeta, PromptContribution,
-    RuntimeHostConfig, RuntimeServices, SessionPlugin, SessionPolicy, SnapshotReader,
-    SnapshotWriter, ToolProvider, TurnInput,
+    default_context_strategy, default_execution_mode, EventSink, ExecutionMode, HostProfile,
+    InputItem, LashRuntime, PluginError, PluginFactory, PluginHost, PluginRegistrar,
+    PluginSessionContext, PluginSnapshotMeta, PromptContribution, RuntimeHostConfig,
+    RuntimeServices, SessionEvent, SessionPlugin, SessionPolicy, SessionStateEnvelope,
+    SnapshotReader, SnapshotWriter, ToolProvider, TurnInput,
 };
 use serde_json::Value;
 use tokio::io::BufReader;
@@ -19,8 +19,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::history::{build_runtime_messages, decode_png_images, RUNTIME_HISTORY_LIMIT};
 use super::rpc::{
-    read_json_line, send_server_control_request, write_json_line, ProxyHttpRequest,
-    ProxyHttpResponse, ServerControlRequest, WorkerReply, WorkerRequest, WorkerStreamEvent,
+    load_llm_settings_via_server_control, read_json_line, send_server_control_request,
+    write_json_line, ProxyHttpRequest, ProxyHttpResponse, ServerControlRequest, WorkerReply,
+    WorkerRequest, WorkerStreamEvent,
 };
 use super::runtime::{
     build_user_turn_text, resolve_scope_project_id, resolve_scope_workspace,
@@ -29,35 +30,12 @@ use super::runtime::{
 use super::shell::ShepherdShellToolProvider;
 use super::tools::{LibrarianToolProvider, ShepherdToolProvider};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
-use crate::backend::app::ResultExt;
 use crate::backend::lash_tools::{
     attach_embedded_mcp_servers, embedded_tool_plugin_factories, EmbeddedCustomToolPlugin,
     EmbeddedToolPreset,
 };
 use crate::backend::llm_provider;
-use crate::backend::{ShepherdChatMessage, ShepherdChatStore, ShepherdThreadStore};
-
-fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
-    match scope {
-        ShepherdScope::General => (None, None),
-        ShepherdScope::Shepherd { project_id, .. } => (
-            Some(*project_id),
-            Some(ShepherdChatStore::shepherd_scope_key(*project_id)),
-        ),
-        ShepherdScope::Thread {
-            project_id,
-            thread_id,
-            ..
-        } => (
-            Some(*project_id),
-            Some(ShepherdThreadStore::scope_key(thread_id)),
-        ),
-        ShepherdScope::Librarian { project_id, .. } => (
-            Some(*project_id),
-            Some(ShepherdChatStore::librarian_scope_key(*project_id)),
-        ),
-    }
-}
+use crate::backend::ShepherdChatMessage;
 
 fn tool_title_kind(name: &str) -> (String, Option<String>) {
     match name {
@@ -139,6 +117,8 @@ fn result_summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
 
 fn plan_tracker_prompt_contributions() -> Vec<PromptContribution> {
     vec![PromptContribution::guidance(
+        "plan_tracker",
+        "Plan tracker guidance",
         "### `update_plan`\nUse `update_plan` for substantial multi-step work. Keep the plan short and concrete, maintain exactly one `in_progress` step, and mark steps completed as soon as they are done.",
     )]
 }
@@ -281,39 +261,19 @@ async fn build_runtime_services(
     Ok(RuntimeServices::new(root_plugins))
 }
 
-async fn load_scope_state(scope: &ShepherdScope) -> Result<Option<AgentStateEnvelope>, String> {
-    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
-        let payload = send_server_control_request(&ServerControlRequest::LoadScopeState {
-            scope: scope.clone(),
+async fn load_scope_state(scope: &ShepherdScope) -> Result<Option<SessionStateEnvelope>, String> {
+    let payload = send_server_control_request(&ServerControlRequest::LoadScopeState {
+        scope: scope.clone(),
+    })
+    .await?;
+    let state_json: Option<String> = serde_json::from_value(payload.unwrap_or(Value::Null))
+        .map_err(|e| format!("failed to decode shepherd scope state payload: {}", e))?;
+    state_json
+        .map(|json| {
+            serde_json::from_str(&json)
+                .map_err(|e| format!("failed to deserialize shepherd scope state: {}", e))
         })
-        .await?;
-        let state_json: Option<String> = serde_json::from_value(payload.unwrap_or(Value::Null))
-            .map_err(|e| format!("failed to decode shepherd scope state payload: {}", e))?;
-        return state_json
-            .map(|json| {
-                serde_json::from_str(&json)
-                    .map_err(|e| format!("failed to deserialize shepherd scope state: {}", e))
-            })
-            .transpose();
-    }
-
-    let (Some(project_id), Some(scope_key)) = scope_storage_ids(scope) else {
-        return Ok(None);
-    };
-    let store = ShepherdChatStore::open()
-        .await
-        .map_err(|e| format!("failed to open shepherd chat store: {}", e))?;
-    let Some(state_json) = store
-        .get_scope_state(project_id, &scope_key)
-        .await
-        .map_err(|e| format!("failed to load shepherd scope state: {}", e))?
-    else {
-        return Ok(None);
-    };
-
-    serde_json::from_str(&state_json)
-        .map(Some)
-        .map_err(|e| format!("failed to deserialize shepherd scope state: {}", e))
+        .transpose()
 }
 
 async fn load_scope_messages(
@@ -321,49 +281,15 @@ async fn load_scope_messages(
     limit: usize,
     skip_message_id: Option<i64>,
 ) -> Result<Vec<ShepherdChatMessage>, String> {
-    if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
-        let payload = send_server_control_request(&ServerControlRequest::LoadScopeMessages {
-            scope: scope.clone(),
-            limit,
-            skip_message_id,
-        })
-        .await?;
-        return serde_json::from_value(payload.unwrap_or_else(|| Value::Array(Vec::new())))
-            .map_err(|e| format!("failed to decode shepherd scope messages payload: {}", e));
-    }
-
-    let store = ShepherdChatStore::open().await.str_err()?;
-    let mut messages = match scope {
-        ShepherdScope::General => store.get_messages(None).await.str_err()?,
-        ShepherdScope::Shepherd { project_id, .. } => store
-            .get_scope_messages(
-                Some(*project_id),
-                Some(&ShepherdChatStore::shepherd_scope_key(*project_id)),
-                limit,
-            )
-            .await
-            .str_err()?,
-        ShepherdScope::Thread {
-            project_id,
-            thread_id,
-            ..
-        } => store
-            .get_scope_messages(
-                Some(*project_id),
-                Some(&ShepherdChatStore::thread_scope_key(thread_id)),
-                limit,
-            )
-            .await
-            .str_err()?,
-        ShepherdScope::Librarian { project_id, .. } => store
-            .get_scope_messages(
-                Some(*project_id),
-                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
-                limit,
-            )
-            .await
-            .str_err()?,
-    };
+    let payload = send_server_control_request(&ServerControlRequest::LoadScopeMessages {
+        scope: scope.clone(),
+        limit,
+        skip_message_id,
+    })
+    .await?;
+    let mut messages: Vec<ShepherdChatMessage> =
+        serde_json::from_value(payload.unwrap_or_else(|| Value::Array(Vec::new())))
+            .map_err(|e| format!("failed to decode shepherd scope messages payload: {}", e))?;
     if let Some(skip_id) = skip_message_id {
         messages.retain(|message| message.id != skip_id);
     }
@@ -378,12 +304,7 @@ async fn create_runtime_from_history(
     cwd: &Path,
     history: &[ShepherdChatMessage],
 ) -> Result<LashRuntime, String> {
-    let settings = crate::backend::AppSettingsStore::open()
-        .await
-        .map_err(|e| format!("failed to open app settings store: {}", e))?
-        .load_llm_settings()
-        .await
-        .map_err(|e| format!("failed to load llm settings: {}", e))?;
+    let settings = load_llm_settings_via_server_control().await?;
     let provider = llm_provider::resolve_provider(&settings).await?;
     let role = match scope {
         ShepherdScope::Shepherd { .. } => llm_provider::RuntimeModelRole::Shepherd,
@@ -410,17 +331,17 @@ async fn create_runtime_from_history(
         prompt_overrides: shepherd_prompt_overrides(scope, focus, cwd).await,
         ..RuntimeHostConfig::default()
     };
-    let state = AgentStateEnvelope {
-        agent_id: format!("shepherd-{}", runtime_id),
+    let state = SessionStateEnvelope {
+        session_id: format!("shepherd-{}", runtime_id),
         policy: session_policy.clone(),
         messages: build_runtime_messages(history),
-        ..AgentStateEnvelope::default()
+        ..SessionStateEnvelope::default()
     };
     let services = build_runtime_services(
         scope,
         scope_project_id,
         Some(cwd.to_path_buf()),
-        &state.agent_id,
+        &state.session_id,
         session_policy.execution_mode,
     )
     .await?;
@@ -436,9 +357,9 @@ async fn create_runtime_from_state(
     focus: Option<&ShepherdTaskFocus>,
     scope_project_id: Option<i64>,
     cwd: &Path,
-    mut state: AgentStateEnvelope,
+    mut state: SessionStateEnvelope,
 ) -> Result<LashRuntime, String> {
-    state.agent_id = format!("shepherd-{}", runtime_id);
+    state.session_id = format!("shepherd-{}", runtime_id);
     state.policy.session_id = Some(runtime_id.to_string());
     let session_policy = state.policy.clone();
     let host_config = RuntimeHostConfig {
@@ -451,7 +372,7 @@ async fn create_runtime_from_state(
         scope,
         scope_project_id,
         Some(cwd.to_path_buf()),
-        &state.agent_id,
+        &state.session_id,
         session_policy.execution_mode,
     )
     .await?;
@@ -471,17 +392,17 @@ async fn emit_stream_event(
 
 struct StreamingRpcSink {
     writer: Arc<Mutex<tokio::net::unix::OwnedWriteHalf>>,
-    snapshot_template: AgentStateEnvelope,
+    snapshot_template: SessionStateEnvelope,
 }
 
 #[async_trait::async_trait]
 impl EventSink for StreamingRpcSink {
-    async fn emit(&self, event: AgentEvent) {
+    async fn emit(&self, event: SessionEvent) {
         match event {
-            AgentEvent::TextDelta { content } => {
+            SessionEvent::TextDelta { content } => {
                 emit_stream_event(&self.writer, WorkerStreamEvent::TextDelta { content }).await;
             }
-            AgentEvent::DurableSnapshot { snapshot } => {
+            SessionEvent::DurableSnapshot { snapshot } => {
                 let mut state = self.snapshot_template.clone();
                 state.messages = snapshot.messages;
                 state.tool_calls = snapshot.tool_calls;
@@ -505,7 +426,7 @@ impl EventSink for StreamingRpcSink {
                     }
                 }
             }
-            AgentEvent::ToolCall {
+            SessionEvent::ToolCall {
                 call_id,
                 name,
                 args,
@@ -531,10 +452,10 @@ impl EventSink for StreamingRpcSink {
                 )
                 .await;
             }
-            AgentEvent::Message { text, kind } => {
+            SessionEvent::Message { text, kind } => {
                 emit_stream_event(&self.writer, WorkerStreamEvent::Message { text, kind }).await;
             }
-            AgentEvent::Error { message, .. } => {
+            SessionEvent::Error { message, .. } => {
                 emit_stream_event(&self.writer, WorkerStreamEvent::Error { message }).await;
             }
             _ => {}

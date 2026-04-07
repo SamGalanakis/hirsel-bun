@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::backend::draft::create_workspace_provider;
 use crate::backend::git::{create_thread_checkout, create_workspace, get_current_branch};
-use crate::backend::project::{Project, ProjectStore};
+use crate::backend::project::{workspace_name_for_project, Project, ProjectStore};
 use crate::backend::shepherd_threads::ShepherdThreadStore;
 
 pub struct ProjectWorkspace {
@@ -27,14 +27,6 @@ fn slugify(value: &str) -> String {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-")
-}
-
-pub fn legacy_workspace_name_for_project_id(project_id: i64) -> String {
-    format!("project-{}", project_id)
-}
-
-pub fn workspace_name_for_project(project: &Project) -> String {
-    format!("project-{}-{}", project.id, project.workspace_key)
 }
 
 fn thread_checkout_name(title: &str) -> String {

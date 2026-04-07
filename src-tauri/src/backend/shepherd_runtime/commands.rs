@@ -16,12 +16,12 @@ use super::preview::{
 use super::queries::{get_thread_activity, scope_activity};
 use super::rpc::{
     connect_worker_socket, read_json_line, send_server_control_request, server_control_socket_path,
-    write_json_line, PreviewForwardInfo, ServerControlReply, ServerControlRequest,
-    ServerToolResultPayload, WorkerReply, WorkerRequest, WorkerStreamEvent,
+    write_json_line, PreviewForwardInfo, ProjectLoreEntry, ServerControlReply,
+    ServerControlRequest, ServerToolResultPayload, WorkerReply, WorkerRequest, WorkerStreamEvent,
 };
 use super::sandbox::{
-    current_server_control_socket_path, ensure_scope_session, scope_key, stop_scope_session,
-    validate_scope_runtime,
+    current_server_control_socket_path, enrich_scope_disconnect_error, ensure_scope_session,
+    scope_key, stop_scope_session, validate_scope_runtime,
 };
 use super::session::ShepherdSessionStore;
 use super::tools::{execute_librarian_server_tool_local, execute_shepherd_server_tool_local};
@@ -162,7 +162,7 @@ struct LiveTurnAccumulator {
 
 impl LiveTurnAccumulator {
     fn push_text(&mut self, content: String) {
-        if content.trim().is_empty() {
+        if content.is_empty() {
             return;
         }
         if !self.needs_text_break {
@@ -345,11 +345,11 @@ async fn save_scope_state(scope: &ShepherdScope, state_json: &str) -> Result<(),
 }
 
 async fn merge_scope_state(scope: &ShepherdScope, state_json: &str) -> Result<(), String> {
-    let mut incoming: lash::AgentStateEnvelope = serde_json::from_str(state_json)
+    let mut incoming: lash::SessionStateEnvelope = serde_json::from_str(state_json)
         .map_err(|error| format!("failed to deserialize shepherd scope state: {}", error))?;
 
     if let Some(existing_json) = load_scope_state_local(scope).await? {
-        let existing: lash::AgentStateEnvelope =
+        let existing: lash::SessionStateEnvelope =
             serde_json::from_str(&existing_json).map_err(|error| {
                 format!(
                     "failed to deserialize persisted shepherd scope state: {}",
@@ -357,7 +357,7 @@ async fn merge_scope_state(scope: &ShepherdScope, state_json: &str) -> Result<()
                 )
             })?;
 
-        incoming.agent_id = existing.agent_id;
+        incoming.session_id = existing.session_id;
         if incoming.policy == lash::SessionPolicy::default() {
             incoming.policy = existing.policy;
         }
@@ -548,6 +548,13 @@ async fn run_scope_turn_task(
     }
     .await;
 
+    let result = match result {
+        Err(error) if error.contains("rpc connection closed") => {
+            Err(enrich_scope_disconnect_error(&scope, &error).await)
+        }
+        other => other,
+    };
+
     if let Err(error) = &result {
         if is_interruption_error(error) {
             let mut assistant_chunks = accumulator.finalize(Vec::new());
@@ -584,11 +591,37 @@ fn spawn_scope_turn(
     let key = scope_key(&scope);
     mark_scope_active(&key)?;
     tokio::spawn(async move {
-        if let Err(error) =
-            run_scope_turn_task(scope.clone(), user_chunks, focus, user_message_id).await
+        let turn_ok = match run_scope_turn_task(scope.clone(), user_chunks, focus, user_message_id)
+            .await
         {
-            tracing::warn!(%error, scope = %scope_key(&scope), "shepherd scope turn failed");
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, scope = %scope_key(&scope), "shepherd scope turn failed");
+                false
+            }
+        };
+
+        // After a successful shepherd or thread turn, trigger the librarian
+        // to update the knowledge graph and refresh the canvas.
+        if turn_ok {
+            if let Some(project_id) = match &scope {
+                ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
+                ShepherdScope::Thread { project_id, .. } => Some(*project_id),
+                _ => None, // Don't trigger for librarian turns (avoid loop)
+            } {
+                let scope_label = scope_key(&scope);
+                if let Err(error) = crate::backend::librarian::trigger_librarian_after_turn(
+                    project_id,
+                    &scope_label,
+                    "turn completed",
+                )
+                .await
+                {
+                    tracing::debug!(%error, "failed to trigger librarian after turn");
+                }
+            }
         }
+
         clear_scope_active(&key);
         dispatch_queued_turn(&key);
     });
@@ -935,11 +968,19 @@ async fn thread_worker_tool_call_local(
         ));
     }
     let session = ensure_scope_session(&thread_scope(&thread)).await?;
-    let stream = connect_worker_socket(std::path::Path::new(&session.socket_path)).await?;
+    let thread_scope = thread_scope(&thread);
+    let stream = match connect_worker_socket(std::path::Path::new(&session.socket_path)).await {
+        Ok(stream) => stream,
+        Err(error) => return Err(enrich_scope_disconnect_error(&thread_scope, &error).await),
+    };
     let (read_half, mut write_half) = stream.into_split();
     write_json_line(&mut write_half, &request).await?;
     let mut reader = BufReader::new(read_half);
-    match read_json_line::<_, WorkerReply>(&mut reader).await? {
+    let reply = match read_json_line::<_, WorkerReply>(&mut reader).await {
+        Ok(reply) => reply,
+        Err(error) => return Err(enrich_scope_disconnect_error(&thread_scope, &error).await),
+    };
+    match reply {
         WorkerReply::ToolResult { success, result } => Ok(ToolResult {
             success,
             result,
@@ -1226,6 +1267,21 @@ async fn handle_server_control_request(
             serde_json::to_value(load_scope_state_local(&scope).await?)
                 .map_err(|error| format!("failed to encode scope state: {}", error))?,
         )),
+        ServerControlRequest::LoadLlmSettings => Ok(Some(
+            serde_json::to_value(
+                crate::backend::AppSettingsStore::open()
+                    .await
+                    .map_err(|error| format!("failed to open app settings store: {}", error))?
+                    .load_llm_settings()
+                    .await
+                    .map_err(|error| format!("failed to load llm settings: {}", error))?,
+            )
+            .map_err(|error| format!("failed to encode llm settings: {}", error))?,
+        )),
+        ServerControlRequest::LoadProjectLore { project_id } => Ok(Some(
+            serde_json::to_value(load_project_lore_local(project_id).await?)
+                .map_err(|error| format!("failed to encode project lore: {}", error))?,
+        )),
         ServerControlRequest::ExecuteShepherdTool {
             project_id,
             name,
@@ -1255,6 +1311,39 @@ async fn handle_server_control_request(
             ))
         }
     }
+}
+
+async fn load_project_lore_local(project_id: i64) -> Result<Vec<ProjectLoreEntry>, String> {
+    use surrealdb::types::SurrealValue;
+
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct LoreRow {
+        node_id: String,
+        content: Option<String>,
+        label: Option<String>,
+    }
+
+    let db = crate::backend::db::global_db().await;
+    let result: Result<Vec<LoreRow>, _> = db
+        .query("SELECT node_id, label, content FROM kg_node WHERE project_id = $project_id AND kind = 'lore' ORDER BY updated_at DESC LIMIT 40")
+        .bind(("project_id", project_id))
+        .await
+        .and_then(|mut r| r.take(0));
+    let rows = result.map_err(|error| format!("failed to load project lore: {}", error))?;
+
+    Ok(rows
+        .into_iter()
+        .filter_map(|row| {
+            let text = row
+                .content
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| row.label.filter(|s| !s.trim().is_empty()))?;
+            Some(ProjectLoreEntry {
+                node_id: row.node_id,
+                text,
+            })
+        })
+        .collect())
 }
 
 pub async fn start_server_control_listener() -> Result<(), String> {

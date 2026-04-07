@@ -8,7 +8,7 @@ use lash::{ProgressSender, ToolDefinition, ToolParam, ToolProvider, ToolResult};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
-use super::commands::{exec_thread_shell, write_thread_shell};
+use super::rpc::{send_server_control_request, ServerControlRequest, ServerToolResultPayload};
 
 #[derive(Clone, Debug)]
 enum RoutedShellSession {
@@ -71,6 +71,33 @@ impl ShepherdShellToolProvider {
         result.get("exit_code").is_some()
     }
 
+    fn decode_remote_shell_result(payload: Result<Option<Value>, String>) -> ToolResult {
+        let payload = match payload {
+            Ok(Some(payload)) => payload,
+            Ok(None) => {
+                return ToolResult::err(json!({
+                    "error": "server control reply did not include a tool result payload"
+                }));
+            }
+            Err(error) => return ToolResult::err(json!({ "error": error })),
+        };
+
+        let payload: ServerToolResultPayload = match serde_json::from_value(payload) {
+            Ok(payload) => payload,
+            Err(error) => {
+                return ToolResult::err(json!({
+                    "error": format!("failed to decode tool result payload: {}", error)
+                }));
+            }
+        };
+
+        ToolResult {
+            success: payload.success,
+            result: payload.result,
+            images: vec![],
+        }
+    }
+
     fn annotate_result(mut result: ToolResult, target: &RoutedShellSession) -> ToolResult {
         if let Some(object) = result.result.as_object_mut() {
             match target {
@@ -129,20 +156,28 @@ impl ShepherdShellToolProvider {
     }
 
     async fn exec_remote(&self, project_id: i64, thread_id: &str, args: &Value) -> ToolResult {
-        match exec_thread_shell(project_id, thread_id, args.clone()).await {
-            Ok(result) => {
-                self.broker_result(
-                    result,
-                    RoutedShellSession::Thread {
-                        project_id,
-                        thread_id: thread_id.to_string(),
-                        inner_session_id: 0,
-                    },
-                )
-                .await
-            }
-            Err(error) => ToolResult::err(json!(error)),
+        if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_err() {
+            return ToolResult::err(json!({
+                "error": "thread-targeted shell commands require the host runtime control socket"
+            }));
         }
+        let result = Self::decode_remote_shell_result(
+            send_server_control_request(&ServerControlRequest::ExecThreadShell {
+                project_id,
+                thread_id: thread_id.to_string(),
+                args: args.clone(),
+            })
+            .await,
+        );
+        self.broker_result(
+            result,
+            RoutedShellSession::Thread {
+                project_id,
+                thread_id: thread_id.to_string(),
+                inner_session_id: 0,
+            },
+        )
+        .await
     }
 
     async fn exec_local(&self, args: &Value, progress: Option<&ProgressSender>) -> ToolResult {
@@ -204,17 +239,24 @@ impl ShepherdShellToolProvider {
         inner_session_id: i64,
         args: &Value,
     ) -> ToolResult {
+        if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_err() {
+            self.sessions.lock().await.remove(&broker_session_id);
+            return ToolResult::err(json!({
+                "error": "thread-targeted shell commands require the host runtime control socket"
+            }));
+        }
         let mut forwarded_args = args.clone();
         if let Some(object) = forwarded_args.as_object_mut() {
             object.insert("session_id".to_string(), json!(inner_session_id));
         }
-        let result = match write_thread_shell(project_id, thread_id, forwarded_args).await {
-            Ok(result) => result,
-            Err(error) => {
-                self.sessions.lock().await.remove(&broker_session_id);
-                return ToolResult::err(json!(error));
-            }
-        };
+        let result = Self::decode_remote_shell_result(
+            send_server_control_request(&ServerControlRequest::WriteThreadShell {
+                project_id,
+                thread_id: thread_id.to_string(),
+                args: forwarded_args,
+            })
+            .await,
+        );
         if !result.success || Self::has_exit_code(&result.result) {
             self.sessions.lock().await.remove(&broker_session_id);
         }

@@ -153,6 +153,7 @@ pub enum HirselError {
     // =========================================================================
     // State/Database variants
     // =========================================================================
+    #[cfg(feature = "host")]
     #[error("Database error: {0}")]
     Database(#[from] surrealdb::Error),
 
@@ -171,6 +172,7 @@ pub enum HirselError {
     // =========================================================================
     // Git variants
     // =========================================================================
+    #[cfg(feature = "host")]
     #[error("Git error: {0}")]
     Git(#[from] git2::Error),
 
@@ -254,13 +256,19 @@ impl HirselError {
             HirselError::InvalidInput(_) | HirselError::MissingField(_) => ErrorKind::InvalidInput,
 
             // State
+            #[cfg(feature = "host")]
             HirselError::Database(_) | HirselError::State(_) => ErrorKind::State,
+            #[cfg(not(feature = "host"))]
+            HirselError::State(_) => ErrorKind::State,
 
             // IO
             HirselError::Io(_) => ErrorKind::Io,
 
             // Git
+            #[cfg(feature = "host")]
             HirselError::Git(_) | HirselError::GitOp(_) => ErrorKind::Git,
+            #[cfg(not(feature = "host"))]
+            HirselError::GitOp(_) => ErrorKind::Git,
 
             // Network
             HirselError::Http(_) | HirselError::Request(_) | HirselError::Connection(_) => {
@@ -322,6 +330,7 @@ impl From<crate::backend::config::ConfigError> for HirselError {
     }
 }
 
+#[cfg(feature = "host")]
 impl From<crate::backend::git::GitError> for HirselError {
     fn from(err: crate::backend::git::GitError) -> Self {
         match err {

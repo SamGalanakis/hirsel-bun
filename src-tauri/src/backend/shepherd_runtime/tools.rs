@@ -1,20 +1,28 @@
 use std::path::{Path, PathBuf};
 
+#[cfg(feature = "host")]
 use crate::backend::project::ProjectStore;
 use crate::backend::text_patch::TEXT_PATCH_INSTRUCTIONS;
+#[cfg(feature = "host")]
 use crate::backend::tool_results::edit_result_with;
+#[cfg(feature = "host")]
 use crate::backend::{ShepherdChatMessage, ShepherdThread, ShepherdThreadStore};
 use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
-use serde_json::{json, Map, Value};
+#[cfg(feature = "host")]
+use serde_json::Map;
+use serde_json::{json, Value};
 use walkdir::WalkDir;
 
+#[cfg(feature = "host")]
 use super::commands::{
     archive_thread, close_thread_port_forward, create_thread, delete_thread, forward_thread_port,
     list_thread_port_forwards, promote_thread, send_scope_message,
 };
+#[cfg(feature = "host")]
 use super::queries::{get_thread_activity, get_thread_conversation};
 use super::rpc::{send_server_control_request, ServerControlRequest, ServerToolResultPayload};
-use super::types::{ShepherdMessageChunk, ShepherdScope};
+#[cfg(feature = "host")]
+use super::types::ShepherdScope;
 
 const NODE_READ_DEFAULT_LIMIT: usize = 2000;
 const NODE_READ_MAX_LINE_LEN: usize = 2000;
@@ -34,6 +42,7 @@ fn emit_app_event(app: &DesktopAppHandle, event: &str, payload: Value) {
 #[cfg(not(feature = "gui"))]
 fn emit_app_event(_app: &DesktopAppHandle, _event: &str, _payload: Value) {}
 
+#[cfg(feature = "host")]
 fn truncate_copy(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
     if trimmed.chars().count() <= max_chars {
@@ -374,6 +383,7 @@ impl ToolContext {
         }))
     }
 
+    #[cfg(feature = "host")]
     fn normalize_thread_status(status: &str) -> Option<&'static str> {
         match status.trim().to_ascii_lowercase().as_str() {
             "running" | "active" => Some("running"),
@@ -386,41 +396,20 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     fn latest_thread_plan(messages: &[ShepherdChatMessage]) -> Option<Value> {
-        for message in messages.iter().rev() {
-            let Ok(chunks) =
-                serde_json::from_str::<Vec<ShepherdMessageChunk>>(&message.chunks_json)
-            else {
-                continue;
-            };
-            for chunk in chunks.into_iter().rev() {
-                let ShepherdMessageChunk::Tool { input, .. } = chunk else {
-                    continue;
-                };
-                let Some(input) = input else {
-                    continue;
-                };
-                let Ok(parsed) = serde_json::from_str::<Value>(&input) else {
-                    continue;
-                };
-                if parsed
-                    .get("plan")
-                    .and_then(|value| value.as_array())
-                    .is_some()
-                {
-                    return Some(parsed);
-                }
-            }
-        }
-        None
+        crate::backend::plans::extract_latest_plan(messages)
+            .and_then(|plan| serde_json::to_value(plan).ok())
     }
 
+    #[cfg(feature = "host")]
     async fn thread_store(&self) -> Result<ShepherdThreadStore, ToolResult> {
         ShepherdThreadStore::open()
             .await
             .map_err(|error| ToolResult::err(json!({ "error": error.to_string() })))
     }
 
+    #[cfg(feature = "host")]
     async fn resolve_thread(
         &self,
         project_id: i64,
@@ -451,6 +440,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn list_threads_tool(&self, project_id: i64) -> ToolResult {
         let store = match self.thread_store().await {
             Ok(store) => store,
@@ -462,6 +452,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn create_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let title = match Self::trimmed_string(args, "title") {
             Some(title) => title,
@@ -494,6 +485,7 @@ impl ToolContext {
         }))
     }
 
+    #[cfg(feature = "host")]
     async fn rename_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -519,6 +511,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn set_thread_status_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -546,6 +539,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn archive_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -557,6 +551,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn promote_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -576,6 +571,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn delete_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -587,6 +583,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn send_thread_message_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -631,6 +628,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn read_thread_updates_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -654,6 +652,7 @@ impl ToolContext {
         }))
     }
 
+    #[cfg(feature = "host")]
     async fn forward_port_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
@@ -680,6 +679,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn list_port_forwards_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread_id = if args.get("thread_id").is_some() || args.get("title").is_some() {
             match self.resolve_thread(project_id, args).await {
@@ -695,6 +695,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn close_port_forward_tool(&self, _project_id: i64, args: &Value) -> ToolResult {
         let Some(forward_id) = Self::trimmed_string(args, "forward_id") else {
             return ToolResult::err_fmt("Missing required parameter: forward_id");
@@ -712,6 +713,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn read_project_retained_context(&self, project_id: i64) -> ToolResult {
         let store = match ProjectStore::open().await {
             Ok(store) => store,
@@ -729,6 +731,7 @@ impl ToolContext {
         }
     }
 
+    #[cfg(feature = "host")]
     async fn update_project_retained_context(&self, project_id: i64, args: &Value) -> ToolResult {
         let markdown = match Self::string_arg(args, "markdown") {
             Ok(value) => value,
@@ -770,43 +773,6 @@ impl ToolContext {
             Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
         }
     }
-    async fn emit_knowledge_event(&self, project_id: i64, args: &Value) -> ToolResult {
-        let kind = match Self::trimmed_string(args, "kind") {
-            Some(kind) => kind,
-            None => return ToolResult::err(json!({ "error": "kind is required" })),
-        };
-        let summary = match Self::trimmed_string(args, "summary") {
-            Some(summary) => summary,
-            None => return ToolResult::err(json!({ "error": "summary is required" })),
-        };
-        let files: Vec<String> = args
-            .get("files")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let event = json!({
-            "project_id": project_id,
-            "kind": kind,
-            "summary": summary,
-            "files": files,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "processed": false,
-        });
-
-        match crate::backend::librarian::enqueue_event(project_id, event).await {
-            Ok(_) => ToolResult::ok(json!({
-                "status": "queued",
-                "kind": kind,
-                "summary": summary,
-            })),
-            Err(error) => ToolResult::err(json!({ "error": error })),
-        }
-    }
 }
 
 fn should_proxy_server_managed_tools() -> bool {
@@ -815,6 +781,16 @@ fn should_proxy_server_managed_tools() -> bool {
 
 fn encode_tool_result_error(error: String) -> ToolResult {
     ToolResult::err(json!({ "error": error }))
+}
+
+#[cfg(not(feature = "host"))]
+fn server_managed_tool_unavailable(name: &str) -> ToolResult {
+    ToolResult::err(json!({
+        "error": format!(
+            "{} requires the host runtime control socket",
+            name
+        )
+    }))
 }
 
 fn decode_server_tool_result(payload: Result<Option<Value>, String>) -> ToolResult {
@@ -851,6 +827,19 @@ async fn execute_librarian_tool(
     name: &str,
     args: &Value,
 ) -> ToolResult {
+    #[cfg(not(feature = "host"))]
+    {
+        let _ = (common, project_id, args);
+        return match name {
+            "ls" => common.list_workspace(args).await,
+            "read_file" => common.read_workspace_file(args).await,
+            "grep" => common.grep_workspace(args).await,
+            "graph_surql" | "edit_graph_node_text" => server_managed_tool_unavailable(name),
+            _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
+        };
+    }
+
+    #[cfg(feature = "host")]
     match name {
         "ls" => common.list_workspace(args).await,
         "read_file" => common.read_workspace_file(args).await,
@@ -863,6 +852,7 @@ async fn execute_librarian_tool(
     }
 }
 
+#[cfg(feature = "host")]
 async fn execute_shepherd_tool(
     common: &ToolContext,
     project_id: i64,
@@ -891,11 +881,40 @@ async fn execute_shepherd_tool(
         "ls" => common.list_workspace(args).await,
         "read_file" => common.read_workspace_file(args).await,
         "grep" => common.grep_workspace(args).await,
-        "emit_knowledge_event" => common.emit_knowledge_event(project_id, args).await,
         _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
     }
 }
 
+#[cfg(not(feature = "host"))]
+async fn execute_shepherd_tool(
+    common: &ToolContext,
+    _project_id: i64,
+    name: &str,
+    args: &Value,
+) -> ToolResult {
+    match name {
+        "list_threads"
+        | "create_thread"
+        | "rename_thread"
+        | "set_thread_status"
+        | "archive_thread"
+        | "promote_thread"
+        | "delete_thread"
+        | "send_thread_message"
+        | "read_thread_updates"
+        | "forward_port"
+        | "list_port_forwards"
+        | "close_port_forward"
+        | "read_project_retained_context"
+        | "update_project_retained_context" => server_managed_tool_unavailable(name),
+        "ls" => common.list_workspace(args).await,
+        "read_file" => common.read_workspace_file(args).await,
+        "grep" => common.grep_workspace(args).await,
+        _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
+    }
+}
+
+#[cfg(feature = "host")]
 pub(crate) async fn execute_librarian_server_tool_local(
     project_id: i64,
     name: &str,
@@ -905,6 +924,7 @@ pub(crate) async fn execute_librarian_server_tool_local(
     execute_librarian_tool(&common, project_id, name, args).await
 }
 
+#[cfg(feature = "host")]
 pub(crate) async fn execute_shepherd_server_tool_local(
     project_id: i64,
     name: &str,
@@ -1270,20 +1290,6 @@ impl ToolProvider for ShepherdToolProvider {
                     ToolParam::optional("project_id", "int"),
                 ],
                 returns: "EditResult".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "emit_knowledge_event".to_string(),
-                description: "Signal the Librarian to update the project knowledge graph or canvas document asynchronously. The Librarian already has the surrounding chat history; only send the concise event summary and any relevant file paths. Use this for durable facts, decisions, issues, and requests to illustrate the canvas.".to_string(),
-                params: vec![
-                    ToolParam::typed("kind", "str"),
-                    ToolParam::typed("summary", "str"),
-                    ToolParam::optional("files", "list[str]"),
-                    ToolParam::optional("project_id", "int"),
-                ],
-                returns: "dict".to_string(),
                 examples: vec![],
                 enabled: true,
                 injected: true,

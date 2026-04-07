@@ -549,7 +549,8 @@ type CachedGraphNode = {
   kind: string;
   node_id: string;
   label: string;
-  summary: string;
+  content?: string;
+  summary?: string;
   [key: string]: unknown;
 };
 
@@ -562,13 +563,13 @@ function nodeKey(kind: string, nodeId: string): string {
 async function loadGraphNodeMap(projectId: number): Promise<Map<string, CachedGraphNode>> {
   const cached = knowledgeGraphCache.get(projectId);
   if (cached) return cached;
-  const pending = getKnowledgeGraph(projectId).then((graph) => {
-    const map = new Map<string, CachedGraphNode>();
-    for (const node of graph.nodes) {
-      map.set(nodeKey(node.kind, node.node_id), node as CachedGraphNode);
-    }
-    return map;
-  });
+    const pending = getKnowledgeGraph(projectId).then((graph) => {
+      const map = new Map<string, CachedGraphNode>();
+      for (const node of graph.nodes) {
+        map.set(nodeKey(node.kind, node.node_id), node as unknown as CachedGraphNode);
+      }
+      return map;
+    });
   knowledgeGraphCache.set(projectId, pending);
   return pending;
 }
@@ -2045,7 +2046,26 @@ class HirselNodeRefElement extends HTMLElement {
       return;
     }
     this.dataset.hirselReady = "true";
-    this.innerHTML = `<span class="hirsel-fileref-shell"><span class="hirsel-fileref-pill" data-status="default"><span class="hirsel-fileref-label">${escapeHtml(node.label || parsed.nodeId)}</span><span class="hirsel-fileref-path">${escapeHtml(parsed.kind)}</span></span></span>`;
+    if (parsed.kind === "document") {
+      // Document nodes render as clickable cards
+      const label = escapeHtml(node.label || parsed.nodeId);
+      const summary = node.summary ? escapeHtml(typeof node.summary === "string" ? node.summary : "") : "";
+      this.innerHTML = `<div class="hirsel-doc-link-card" data-node="${escapeHtml(this.getAttribute("node") ?? "")}">
+        <div class="hirsel-doc-link-head">
+          <span class="hirsel-doc-link-kind">document</span>
+          <span class="hirsel-doc-link-title">${label}</span>
+        </div>
+        ${summary ? `<div class="hirsel-doc-link-summary">${summary}</div>` : ""}
+      </div>`;
+      this.querySelector(".hirsel-doc-link-card")?.addEventListener("click", () => {
+        this.dispatchEvent(new CustomEvent("hirsel-navigate-node", {
+          bubbles: true,
+          detail: { kind: parsed.kind, nodeId: parsed.nodeId },
+        }));
+      });
+    } else {
+      this.innerHTML = `<span class="hirsel-fileref-shell"><span class="hirsel-fileref-pill" data-status="default"><span class="hirsel-fileref-label">${escapeHtml(node.label || parsed.nodeId)}</span><span class="hirsel-fileref-path">${escapeHtml(parsed.kind)}</span></span></span>`;
+    }
   }
 }
 
@@ -2085,7 +2105,16 @@ class HirselNodeFieldElement extends HTMLElement {
       return;
     }
     this.dataset.hirselReady = "true";
-    this.innerHTML = `<span>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value))}</span>`;
+    const text = typeof value === "string" ? value : JSON.stringify(value);
+    // If the field contains HTML (like document content), render it directly
+    if (field === "content" && parsed.kind === "document" && text.trimStart().startsWith("<")) {
+      this.innerHTML = `<div class="hirsel-doc-embed-shell">
+        <div class="hirsel-doc-embed-header"><span class="hirsel-doc-link-kind">${escapeHtml(parsed.kind)}</span> ${escapeHtml(node.label || parsed.nodeId)}</div>
+        <div class="hirsel-doc-embed-body">${text}</div>
+      </div>`;
+    } else {
+      this.innerHTML = `<span>${escapeHtml(text)}</span>`;
+    }
   }
 }
 
@@ -2115,7 +2144,7 @@ class HirselNodeListElement extends HTMLElement {
       return;
     }
     const graph = await getKnowledgeGraph(projectId);
-    const nodes = new Map(graph.nodes.map((node) => [nodeKey(node.kind, node.node_id), node as CachedGraphNode]));
+    const nodes = new Map(graph.nodes.map((node) => [nodeKey(node.kind, node.node_id), node as unknown as CachedGraphNode]));
     const selfKey = nodeKey(parsed.kind, parsed.nodeId);
     const related = graph.edges
       .filter((edge) => edge.relation === relation)
@@ -2184,6 +2213,12 @@ class HirselDocLinkElement extends HTMLElement {
       </div>
       ${summary ? `<div class="hirsel-doc-link-summary">${summary}</div>` : ""}
     </div>`;
+    this.querySelector(".hirsel-doc-link-card")?.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent("hirsel-navigate-node", {
+        bubbles: true,
+        detail: { kind: parsed.kind, nodeId: parsed.nodeId },
+      }));
+    });
   }
 }
 
@@ -2216,7 +2251,7 @@ class HirselDocEmbedElement extends HTMLElement {
       this.innerHTML = renderNodeError(`Unknown node ${parsed.kind}:${parsed.nodeId}.`);
       return;
     }
-    const bodyHtml = (node as { body_html?: string }).body_html ?? "";
+    const bodyHtml = (node as { content?: string }).content ?? "";
     const label = escapeHtml(node.label || parsed.nodeId);
     const kind = escapeHtml(parsed.kind);
     this.dataset.hirselReady = "true";
@@ -2228,9 +2263,15 @@ class HirselDocEmbedElement extends HTMLElement {
       return;
     }
     this.innerHTML = `<div class="hirsel-doc-embed-shell">
-      <div class="hirsel-doc-embed-header"><span class="hirsel-doc-link-kind">${kind}</span> ${label}</div>
+      <div class="hirsel-doc-embed-header" style="cursor:pointer"><span class="hirsel-doc-link-kind">${kind}</span> ${label}</div>
       <div class="hirsel-doc-embed-body">${bodyHtml}</div>
     </div>`;
+    this.querySelector(".hirsel-doc-embed-header")?.addEventListener("click", () => {
+      this.dispatchEvent(new CustomEvent("hirsel-navigate-node", {
+        bubbles: true,
+        detail: { kind: parsed.kind, nodeId: parsed.nodeId },
+      }));
+    });
   }
 }
 

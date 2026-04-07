@@ -1,8 +1,10 @@
+# syntax=docker/dockerfile:1.7
 FROM rust:1-bookworm AS builder
 
 ARG HIRSEL_WORKER_CARGO_PROFILE=release
 
 WORKDIR /build
+ENV CARGO_TARGET_DIR=/build/target
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
@@ -15,12 +17,16 @@ COPY src-tauri/src ./src-tauri/src
 
 WORKDIR /build/src-tauri
 
-RUN if [ "$HIRSEL_WORKER_CARGO_PROFILE" = "release" ]; then \
-        cargo build --release --locked --bin hirsel-worker && \
-        cp /build/src-tauri/target/release/hirsel-worker /tmp/hirsel-worker; \
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git/db \
+    --mount=type=cache,target=/usr/local/cargo/git/checkouts \
+    --mount=type=cache,target=/build/target \
+    if [ "$HIRSEL_WORKER_CARGO_PROFILE" = "release" ]; then \
+        cargo build --release --locked --no-default-features --bin hirsel-worker && \
+        cp /build/target/release/hirsel-worker /tmp/hirsel-worker; \
     else \
-        cargo build --locked --bin hirsel-worker && \
-        cp /build/src-tauri/target/debug/hirsel-worker /tmp/hirsel-worker; \
+        cargo build --locked --no-default-features --bin hirsel-worker && \
+        cp /build/target/debug/hirsel-worker /tmp/hirsel-worker; \
     fi
 
 FROM ubuntu:24.04

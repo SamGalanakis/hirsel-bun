@@ -3,6 +3,16 @@ import * as THREE from "three";
 import { getKnowledgeGraph, type KnowledgeGraphNode, type KnowledgeGraphEdge } from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 
+let canvasComponentsLoaded: Promise<void> | null = null;
+function ensureCanvasComponents(): Promise<void> {
+  if (!canvasComponentsLoaded) {
+    canvasComponentsLoaded = import("@/lib/canvas-components").then(
+      ({ registerCanvasComponents }) => { registerCanvasComponents(); },
+    );
+  }
+  return canvasComponentsLoaded;
+}
+
 // ── Color system ──
 
 const KIND_COLORS: Record<string, number> = {
@@ -66,8 +76,7 @@ interface SimNode {
   key: string;
   kind: string;
   label: string;
-  summary: string;
-  confidence: string;
+  content: string;
   source: string;
   nodeId: string;
   metadata: Record<string, unknown>;
@@ -245,6 +254,15 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
   const [allKinds, setAllKinds] = createSignal<string[]>([]);
   const [connectedKeys, setConnectedKeys] = createSignal<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = createSignal<{ x: number; y: number; node: SimNode } | null>(null);
+  const [viewingDocument, setViewingDocument] = createSignal<SimNode | null>(null);
+
+  // When the document viewer opens, ensure canvas web components are registered
+  // so <hirsel-doc-link>, <hirsel-doc-embed>, <hirsel-node-ref> etc. render.
+  createEffect(() => {
+    if (viewingDocument()) {
+      void ensureCanvasComponents();
+    }
+  });
 
   let panOffset = { x: 0, y: 0 };
   let zoom = 1;
@@ -375,7 +393,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
     if (node) {
       setConnectedKeys(getConnectedKeys(node.key));
     } else {
-      setConnectedKeys(new Set());
+      setConnectedKeys(new Set<string>());
     }
   };
 
@@ -535,8 +553,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
         key,
         kind: node.kind,
         label,
-        summary: node.summary || "",
-        confidence: node.confidence || "",
+        content: node.content || node.summary || "",
         source: node.source || "",
         nodeId: node.node_id || "",
         metadata: node.metadata || {},
@@ -579,7 +596,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
       ? simNodes.find((node) => node.key === previousSelectedKey) ?? null
       : null;
     setSelected(nextSelected);
-    setConnectedKeys(nextSelected ? getConnectedKeys(nextSelected.key) : new Set());
+    setConnectedKeys(nextSelected ? getConnectedKeys(nextSelected.key) : new Set<string>());
 
     alpha = previousNodes.size === 0 ? 1.0 : Math.max(alpha, 0.12);
   };
@@ -612,7 +629,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
       const isSelected = sel && sel.key === n.key;
       const isHovered = hov && hov.key === n.key;
       const isConnected = sel && conn.has(n.key);
-      const isDimmed = (sel && !isSelected && !isConnected) || isSearchFiltered;
+      const isDimmed = Boolean((sel && !isSelected && !isConnected) || isSearchFiltered);
 
       // Ring
       const ringMat = n.ring.material as THREE.LineBasicMaterial;
@@ -991,8 +1008,8 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
             {hovered()!.kind}
           </div>
           <div class="kg-tooltip-label">{hovered()!.label}</div>
-          <Show when={hovered()!.summary}>
-            <div class="kg-tooltip-summary">{hovered()!.summary.slice(0, 140)}{hovered()!.summary.length > 140 ? "\u2026" : ""}</div>
+          <Show when={hovered()!.content}>
+            <div class="kg-tooltip-summary">{hovered()!.content.slice(0, 140)}{hovered()!.content.length > 140 ? "\u2026" : ""}</div>
           </Show>
           <div class="kg-tooltip-hint">Click to select \u00b7 Double-click to zoom \u00b7 Drag to move</div>
         </div>
@@ -1023,8 +1040,8 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
             </svg>
             Copy node ID
           </button>
-          <Show when={contextMenu()!.node.summary}>
-            <button type="button" class="kg-ctx-item" onClick={() => copyToClipboard(contextMenu()!.node.summary)}>
+          <Show when={contextMenu()!.node.content}>
+            <button type="button" class="kg-ctx-item" onClick={() => copyToClipboard(contextMenu()!.node.content)}>
               <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" />
               </svg>
@@ -1040,7 +1057,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
 
       {/* ── Detail panel ── */}
       <Show when={selected()}>
-        <div class="kg-detail">
+        <div class="kg-detail" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
           <div class="kg-detail-header">
             <div class="kg-detail-kind-badge" style={{ "--badge-color": KIND_CSS[selected()!.kind] ?? DEFAULT_CSS }}>
               {selected()!.kind}
@@ -1054,44 +1071,30 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
 
           <h3 class="kg-detail-title">{selected()!.label}</h3>
 
-          <Show when={selected()!.summary}>
-            <p class="kg-detail-summary">{selected()!.summary}</p>
+          <Show when={selected()!.raw.content?.trim()}>
+            <Show
+              when={selected()!.kind === "document"}
+              fallback={
+                <div class="kg-detail-richfield">
+                  <div class="kg-detail-richfield-body markdown-body" innerHTML={renderMarkdown(selected()!.raw.content!)} />
+                </div>
+              }
+            >
+              <button
+                type="button"
+                class="kg-detail-view-doc"
+                onClick={(e) => { e.stopPropagation(); setViewingDocument(selected()); }}
+              >
+                <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M2 3h12v10H2z" />
+                  <path d="M5 6h6M5 8.5h4" />
+                </svg>
+                View Document
+              </button>
+            </Show>
           </Show>
-
-          {/* ── Document body (rendered HTML) ── */}
-          <Show when={selected()!.raw.body_html}>
-            <div class="kg-detail-document">
-              <div class="kg-detail-section-label">Document</div>
-              <div class="kg-detail-doc-content canvas-scope" innerHTML={selected()!.raw.body_html!} />
-            </div>
-          </Show>
-
-          {/* ── Rich text fields ── */}
-          <For each={
-            (["description", "detail", "notes", "rationale", "markdown"] as const)
-              .filter((f) => {
-                const v = selected()!.raw[f];
-                return typeof v === "string" && v.trim().length > 0;
-              })
-          }>
-            {(field) => (
-              <div class="kg-detail-richfield">
-                <div class="kg-detail-section-label">{field.charAt(0).toUpperCase() + field.slice(1)}</div>
-                <div
-                  class="kg-detail-richfield-body markdown-body"
-                  innerHTML={renderMarkdown(selected()!.raw[field] as string)}
-                />
-              </div>
-            )}
-          </For>
 
           <div class="kg-detail-meta">
-            <Show when={selected()!.confidence}>
-              <div class="kg-detail-field">
-                <span class="kg-detail-field-label">Confidence</span>
-                <span class="kg-detail-field-value">{selected()!.confidence}</span>
-              </div>
-            </Show>
             <Show when={selected()!.source}>
               <div class="kg-detail-field">
                 <span class="kg-detail-field-label">Source</span>
@@ -1149,6 +1152,49 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
             Run a workspace scan or let the Librarian explore the codebase to seed the graph.
           </p>
         </div>
+      </Show>
+
+      {/* ── Document viewer (takes over the panel) ── */}
+      <Show when={viewingDocument()}>
+        {(doc) => (
+          <div class="kg-doc-viewer">
+            <div class="kg-doc-viewer-header">
+              <button
+                type="button"
+                class="kg-doc-viewer-back"
+                onClick={() => setViewingDocument(null)}
+              >
+                <svg viewBox="0 0 16 16" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M10 3L5 8l5 5" />
+                </svg>
+                Graph
+              </button>
+              <div class="kg-doc-viewer-title-group">
+                <span class="kg-doc-viewer-kind" style={{ color: KIND_CSS.document }}>document</span>
+                <span class="kg-doc-viewer-title">{doc().label}</span>
+              </div>
+              <span class="kg-doc-viewer-id">{doc().nodeId}</span>
+            </div>
+            <div
+              class="kg-doc-viewer-body"
+              on:hirsel-navigate-node={(e: CustomEvent) => {
+                const { kind, nodeId } = e.detail ?? {};
+                if (!kind || !nodeId) return;
+                const target = simNodes.find((n) => n.kind === kind && n.nodeId === nodeId);
+                if (target) {
+                  setViewingDocument(target);
+                }
+              }}
+            >
+              <Show
+                when={doc().raw.content?.trim()}
+                fallback={<div class="kg-doc-viewer-empty">This document has no content yet.</div>}
+              >
+                <div class="kg-doc-viewer-content canvas-scope" data-canvas-project-id={props.projectId} innerHTML={doc().raw.content!} />
+              </Show>
+            </div>
+          </div>
+        )}
       </Show>
     </div>
   );

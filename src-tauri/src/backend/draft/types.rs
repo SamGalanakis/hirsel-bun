@@ -4,10 +4,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+#[cfg(feature = "host")]
 use surrealdb::types::SurrealValue;
 
 /// Starting point for a draft workspace - defines how the workspace is initialized
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "host", derive(SurrealValue))]
 #[serde(tag = "type", rename_all = "camelCase")]
 #[derive(Default)]
 pub enum StartingPoint {
@@ -48,6 +50,7 @@ impl StartingPoint {
 }
 
 /// Information about an initialized workspace
+#[cfg(feature = "host")]
 #[derive(Debug, Clone)]
 pub struct WorkspaceInfo {
     /// Workspace root path (local path or virtual path for remote)
@@ -59,6 +62,7 @@ pub struct WorkspaceInfo {
 }
 
 /// Entry in a workspace directory listing
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {

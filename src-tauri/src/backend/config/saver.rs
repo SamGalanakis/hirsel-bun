@@ -138,6 +138,7 @@ mod tests {
                     medium: None,
                     high: Some("gpt-5".to_string()),
                 }),
+                ..Default::default()
             },
             sandbox: SandboxConfig {
                 image: "custom/worker:latest".to_string(),

@@ -167,6 +167,15 @@ async fn prepare_scope_runtime(scope: &ShepherdScope) -> Result<(PathBuf, Sandbo
     Ok((work_dir, sandbox))
 }
 
+fn session_project_id(scope: &ShepherdScope) -> Option<i64> {
+    match scope {
+        ShepherdScope::General => None,
+        ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
+        ShepherdScope::Thread { project_id, .. } => Some(*project_id),
+        ShepherdScope::Librarian { project_id, .. } => Some(*project_id),
+    }
+}
+
 pub(super) async fn validate_scope_runtime(scope: &ShepherdScope) -> Result<(), String> {
     prepare_scope_runtime(scope).await.map(|_| ())
 }
@@ -191,6 +200,10 @@ fn docker_logs(container_name: &str) -> String {
         }
         Err(error) => error,
     }
+}
+
+pub(super) fn scope_container_logs(container_name: &str) -> String {
+    docker_logs(container_name)
 }
 
 fn container_is_running(container_name: &str) -> Result<bool, String> {
@@ -247,7 +260,36 @@ fn write_scope_file(scope: &ShepherdScope) -> Result<(), String> {
 }
 
 async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSession, String> {
-    let (work_dir, sandbox) = prepare_scope_runtime(scope).await?;
+    let scope_key = scope_key(scope);
+    let store = ShepherdSessionStore::open()
+        .await
+        .map_err(|error| format!("failed to open session store: {}", error))?;
+    let (work_dir, sandbox) = match prepare_scope_runtime(scope).await {
+        Ok(value) => value,
+        Err(error) => {
+            let _ = store
+                .upsert_session(
+                    session_project_id(scope),
+                    &scope_key,
+                    &serde_json::to_string(scope).map_err(|serialize_error| {
+                        format!("failed to serialize scope json: {}", serialize_error)
+                    })?,
+                    None,
+                    None,
+                    None,
+                    &worker_socket_path(scope).display().to_string(),
+                    None,
+                    if error.contains("Worker image") {
+                        "missing_artifact"
+                    } else {
+                        "failed"
+                    },
+                    Some(&error),
+                )
+                .await;
+            return Err(error);
+        }
+    };
     let forwarded = crate::backend::credentials::load_forwarded_credentials().await;
     let env_fingerprint = current_env_fingerprint(&work_dir).await?;
     let runtime_fingerprint = current_worker_runtime_fingerprint(&sandbox.image)?;
@@ -322,21 +364,11 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
     if !output.status.success() {
         return Err(humanize_docker_error(&best_output(&output)));
     }
-
-    let store = ShepherdSessionStore::open()
-        .await
-        .map_err(|error| format!("failed to open session store: {}", error))?;
-    let scope_key = scope_key(scope);
     let scope_json = serde_json::to_string(scope)
         .map_err(|error| format!("failed to serialize scope json: {}", error))?;
     store
         .upsert_session(
-            match scope {
-                ShepherdScope::General => None,
-                ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
-                ShepherdScope::Thread { project_id, .. } => Some(*project_id),
-                ShepherdScope::Librarian { project_id, .. } => Some(*project_id),
-            },
+            session_project_id(scope),
             &scope_key,
             &scope_json,
             Some(&work_dir.display().to_string()),
@@ -344,11 +376,15 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
             runtime_fingerprint.as_deref(),
             &socket_path.display().to_string(),
             Some(&container_name),
-            "starting",
+            "starting_container",
             None,
         )
         .await
         .map_err(|error| format!("failed to persist session record: {}", error))?;
+
+    let _ = store
+        .set_status(&scope_key, "waiting_for_socket", None)
+        .await;
 
     let startup_deadline = std::time::Instant::now() + Duration::from_secs(30);
     let startup_result = loop {
@@ -387,9 +423,9 @@ async fn start_scope_container(scope: &ShepherdScope) -> Result<ShepherdScopeSes
     }
 
     store
-        .set_status(&scope_key, "idle", None)
+        .set_status(&scope_key, "ready", None)
         .await
-        .map_err(|error| format!("failed to mark session idle: {}", error))?;
+        .map_err(|error| format!("failed to mark session ready: {}", error))?;
     store
         .get_session(&scope_key)
         .await
@@ -452,6 +488,41 @@ pub(super) async fn stop_scope_session(scope: &ShepherdScope) -> Result<(), Stri
             .map_err(|error| format!("failed to delete session record: {}", error))?;
     }
     Ok(())
+}
+
+pub(super) async fn enrich_scope_disconnect_error(scope: &ShepherdScope, error: &str) -> String {
+    if !error.contains("rpc connection closed") {
+        return error.to_string();
+    }
+
+    let scope_key = scope_key(scope);
+    let store = match ShepherdSessionStore::open().await {
+        Ok(store) => store,
+        Err(_) => return error.to_string(),
+    };
+    let Some(session) = store.get_session(&scope_key).await.ok().flatten() else {
+        return error.to_string();
+    };
+
+    if let Some(last_error) = session.last_error.as_deref().map(str::trim) {
+        if !last_error.is_empty() && last_error != error {
+            return last_error.to_string();
+        }
+    }
+
+    if let Some(container_name) = session.container_name.as_deref() {
+        let logs = scope_container_logs(container_name).trim().to_string();
+        if !logs.is_empty() {
+            let message = format!(
+                "worker session disconnected unexpectedly\n\n[hirsel] worker container logs ->\n{}",
+                logs
+            );
+            let _ = store.set_status(&scope_key, "failed", Some(&message)).await;
+            return message;
+        }
+    }
+
+    error.to_string()
 }
 
 pub(super) fn current_server_control_socket_path() -> PathBuf {

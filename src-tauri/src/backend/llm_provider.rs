@@ -4,9 +4,9 @@ use lash::provider::Provider;
 
 use crate::backend::app_settings::LlmSettings;
 use crate::backend::config::{Config, LlmProvider, RoleModelConfig};
-use crate::backend::credentials::{
-    resolve_codex_oauth_credentials, CodexOAuthCredentials, CredentialStore,
-};
+use crate::backend::credentials::CodexOAuthCredentials;
+#[cfg(feature = "host")]
+use crate::backend::credentials::{resolve_codex_oauth_credentials, CredentialStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeModelRole {
@@ -15,6 +15,7 @@ pub enum RuntimeModelRole {
     Thread,
 }
 
+#[cfg(feature = "host")]
 async fn load_codex_oauth(
     _store: &CredentialStore,
 ) -> Result<crate::backend::credentials::CodexOAuthCredentials, String> {
@@ -60,6 +61,7 @@ fn load_openrouter_key_from_env() -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[cfg(feature = "host")]
 async fn load_openrouter_key(store: &CredentialStore) -> Result<String, String> {
     if let Some(key) = load_openrouter_key_from_env() {
         return Ok(key);
@@ -166,6 +168,34 @@ pub fn resolve_model_for_tier(
 }
 
 pub async fn resolve_provider(settings: &LlmSettings) -> Result<Provider, String> {
+    #[cfg(not(feature = "host"))]
+    {
+        return match settings.provider {
+            LlmProvider::Codex => {
+                let codex = load_codex_oauth_from_env()?;
+                Ok(Provider::Codex {
+                    access_token: codex.access_token,
+                    refresh_token: codex.refresh_token,
+                    expires_at: codex.expires_at,
+                    account_id: codex.account_id,
+                    options: lash::provider::ProviderOptions::default(),
+                })
+            }
+            LlmProvider::Openrouter => {
+                let api_key = load_openrouter_key_from_env().ok_or_else(|| {
+                    "OpenRouter API key not configured. Set it in Settings or OPENROUTER_API_KEY"
+                        .to_string()
+                })?;
+                Ok(Provider::OpenAiGeneric {
+                    api_key,
+                    base_url: settings.normalized_openrouter_base_url(),
+                    options: lash::provider::ProviderOptions::default(),
+                })
+            }
+        };
+    }
+
+    #[cfg(feature = "host")]
     if std::env::var("HIRSEL_SERVER_RPC_SOCKET").is_ok() {
         return match settings.provider {
             LlmProvider::Codex => {
@@ -192,10 +222,12 @@ pub async fn resolve_provider(settings: &LlmSettings) -> Result<Provider, String
         };
     }
 
+    #[cfg(feature = "host")]
     let store = CredentialStore::open()
         .await
         .map_err(|e| format!("failed to open credential store: {}", e))?;
 
+    #[cfg(feature = "host")]
     match settings.provider {
         LlmProvider::Codex => {
             let codex = load_codex_oauth(&store).await?;

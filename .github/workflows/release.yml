@@ -131,9 +131,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - feature: server
+          - name: server
+            bin: hirsel-server
+            feature: server
             asset: hirsel-server-linux-amd64.tar.gz
-          - feature: worker
+          - name: worker
+            bin: hirsel-worker
+            feature: ''
             asset: hirsel-worker-linux-amd64.tar.gz
     steps:
       - name: Checkout
@@ -146,21 +150,26 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './src-tauri -> target'
-          key: release-${{ matrix.feature }}
+          key: release-${{ matrix.name }}
 
-      - name: Build ${{ matrix.feature }} binary
+      - name: Build ${{ matrix.name }} binary
         working-directory: src-tauri
-        run: cargo build --release --no-default-features --features ${{ matrix.feature }}
+        run: |
+          if [[ -n "${{ matrix.feature }}" ]]; then
+            cargo build --release --locked --no-default-features --features "${{ matrix.feature }}" --bin "${{ matrix.bin }}"
+          else
+            cargo build --release --locked --no-default-features --bin "${{ matrix.bin }}"
+          fi
 
       - name: Package release asset
         run: |
           mkdir -p dist
-          tar -czf "dist/${{ matrix.asset }}" -C src-tauri/target/release hirsel
+          tar -czf "dist/${{ matrix.asset }}" -C src-tauri/target/release "${{ matrix.bin }}"
 
       - name: Upload headless assets
         uses: actions/upload-artifact@v4
         with:
-          name: headless-${{ matrix.feature }}
+          name: headless-${{ matrix.name }}
           path: dist/*
 
   publish-release:

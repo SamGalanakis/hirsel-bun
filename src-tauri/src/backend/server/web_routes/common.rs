@@ -1,10 +1,10 @@
 use serde::Serialize;
-use serde_json::Value;
 
+use crate::backend::plans::{self, PlanSnapshot};
 use crate::backend::project::{
     Project, ProjectPreparationStatus, ProjectPreparationStep, ProjectRuntimePreparation,
 };
-use crate::backend::shepherd_runtime::{self, ShepherdMessageChunk};
+use crate::backend::shepherd_runtime;
 use crate::backend::{ShepherdChatMessage, ShepherdThread};
 
 #[derive(Serialize)]
@@ -97,7 +97,7 @@ pub struct ApiThreadSummary {
 pub struct ApiThreadDetail {
     pub thread: ApiThread,
     pub activity: ApiScopeActivity,
-    pub plan: Option<Value>,
+    pub plan: Option<PlanSnapshot>,
 }
 
 #[derive(Serialize)]
@@ -194,41 +194,17 @@ pub fn to_api_thread(thread: &ShepherdThread) -> ApiThread {
     }
 }
 
-pub fn extract_latest_plan(messages: &[ShepherdChatMessage]) -> Option<Value> {
-    for message in messages.iter().rev() {
-        let Ok(chunks) = serde_json::from_str::<Vec<ShepherdMessageChunk>>(&message.chunks_json)
-        else {
-            continue;
-        };
-        for chunk in chunks.into_iter().rev() {
-            let ShepherdMessageChunk::Tool { input, .. } = chunk else {
-                continue;
-            };
-            let Some(input) = input else {
-                continue;
-            };
-            let Ok(parsed) = serde_json::from_str::<Value>(&input) else {
-                continue;
-            };
-            if parsed
-                .get("plan")
-                .and_then(|value| value.as_array())
-                .is_some()
-            {
-                return Some(parsed);
-            }
-        }
-    }
-    None
+pub fn extract_latest_plan(messages: &[ShepherdChatMessage]) -> Option<PlanSnapshot> {
+    plans::extract_latest_plan(messages)
 }
 
 pub fn plan_progress_from_messages(messages: &[ShepherdChatMessage]) -> Option<ApiPlanProgress> {
     let plan = extract_latest_plan(messages)?;
-    let steps = plan.get("plan")?.as_array()?;
-    let total = steps.len();
-    let completed = steps
+    let total = plan.plan.len();
+    let completed = plan
+        .plan
         .iter()
-        .filter(|step| step.get("status").and_then(|value| value.as_str()) == Some("completed"))
+        .filter(|step| step.status == "completed")
         .count();
     Some(ApiPlanProgress { completed, total })
 }

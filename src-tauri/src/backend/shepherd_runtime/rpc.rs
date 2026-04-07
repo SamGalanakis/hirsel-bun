@@ -1,6 +1,10 @@
-use std::path::{Path, PathBuf};
+#[cfg(feature = "host")]
+use std::path::Path;
+use std::path::PathBuf;
+#[cfg(feature = "host")]
 use std::time::Duration;
 
+#[cfg(feature = "host")]
 use base64::Engine;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -9,6 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
+use crate::backend::app_settings::LlmSettings;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
@@ -81,6 +86,7 @@ pub struct ProxyHttpResponse {
     pub body_base64: String,
 }
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewForwardInfo {
@@ -101,6 +107,13 @@ pub struct PreviewForwardInfo {
 pub struct ServerToolResultPayload {
     pub success: bool,
     pub result: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectLoreEntry {
+    pub node_id: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -199,6 +212,10 @@ pub enum ServerControlRequest {
     LoadScopeState {
         scope: ShepherdScope,
     },
+    LoadLlmSettings,
+    LoadProjectLore {
+        project_id: i64,
+    },
     ExecuteShepherdTool {
         project_id: i64,
         name: String,
@@ -264,12 +281,14 @@ where
         .map_err(|error| format!("failed to decode rpc payload: {}", error))
 }
 
+#[cfg(feature = "host")]
 pub async fn connect_worker_socket(socket_path: &Path) -> Result<UnixStream, String> {
     UnixStream::connect(socket_path)
         .await
         .map_err(|error| format!("failed to connect worker socket: {}", error))
 }
 
+#[cfg(feature = "host")]
 pub async fn wait_for_worker_socket(socket_path: &Path, timeout: Duration) -> Result<(), String> {
     let started = std::time::Instant::now();
     loop {
@@ -304,10 +323,27 @@ pub async fn send_server_control_request(
     }
 }
 
+pub async fn load_llm_settings_via_server_control() -> Result<LlmSettings, String> {
+    let payload = send_server_control_request(&ServerControlRequest::LoadLlmSettings).await?;
+    serde_json::from_value(payload.unwrap_or(Value::Null))
+        .map_err(|error| format!("failed to decode llm settings payload: {}", error))
+}
+
+pub async fn load_project_lore_via_server_control(
+    project_id: i64,
+) -> Result<Vec<ProjectLoreEntry>, String> {
+    let payload =
+        send_server_control_request(&ServerControlRequest::LoadProjectLore { project_id }).await?;
+    serde_json::from_value(payload.unwrap_or_else(|| Value::Array(Vec::new())))
+        .map_err(|error| format!("failed to decode project lore payload: {}", error))
+}
+
+#[cfg(feature = "host")]
 pub fn encode_http_body(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
+#[cfg(feature = "host")]
 pub fn decode_http_body(value: &str) -> Result<Vec<u8>, String> {
     base64::engine::general_purpose::STANDARD
         .decode(value)

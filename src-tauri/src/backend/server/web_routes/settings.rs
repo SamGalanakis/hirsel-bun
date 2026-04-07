@@ -297,7 +297,7 @@ fn schedule_scope_session_reset(reason: &'static str) {
 }
 
 pub async fn get_settings(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let settings_store = AppSettingsStore::open()
         .await
@@ -351,7 +351,7 @@ pub async fn get_settings(
 }
 
 pub async fn save_llm_provider(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Json(body): Json<SaveLlmProviderBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let provider = match body.provider.as_str() {
@@ -377,7 +377,7 @@ pub async fn save_llm_provider(
 }
 
 pub async fn save_role_models(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Json(body): Json<SaveRoleModelsBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let settings_store = AppSettingsStore::open()
@@ -456,7 +456,7 @@ pub async fn save_role_models(
 }
 
 pub async fn start_codex_device_flow(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let settings_store = AppSettingsStore::open()
         .await
@@ -538,7 +538,7 @@ pub async fn poll_codex_device_flow(
 }
 
 pub async fn save_openrouter_key(
-    State(state): State<Arc<AppState>>,
+    State(_state): State<Arc<AppState>>,
     Json(body): Json<SaveOpenrouterKeyBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let settings_store = AppSettingsStore::open()

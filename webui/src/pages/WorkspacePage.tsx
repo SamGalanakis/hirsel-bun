@@ -1,5 +1,4 @@
 import {
-  type ChatMessage as ApiChatMessage,
   type Component,
   For,
   Show,
@@ -19,6 +18,8 @@ import ChatMessage from "@/components/ChatMessage";
 import SettingsForm from "@/components/SettingsForm";
 import { matchesAction } from "@/lib/keybindings";
 import {
+  type ChatMessage as ApiChatMessage,
+  ApiError,
   type Project,
   type ProjectSurface,
   type ScopeActivity,
@@ -60,6 +61,7 @@ const INSPECTOR_MIN = 300;
 const SIDEBAR_WIDTH_KEY = "hirsel_workspace_sidebar_width";
 const SIDEBAR_MIN = 180;
 const SIDEBAR_MAX = 480;
+const MAIN_MIN = 360;
 const SIDEBAR_DEFAULT = 260;
 
 type WorkspaceBannerError = {
@@ -71,9 +73,11 @@ type WorkspaceBannerError = {
 function statusDotClass(status: string): string {
   switch (status) {
     case "starting":
+    case "starting_container":
+    case "waiting_for_socket":
     case "running":
     case "active":
-      return "bg-signal-green";
+      return status === "running" || status === "active" ? "bg-signal-green" : "bg-signal-amber";
     case "interrupting":
     case "queued":
     case "waiting":
@@ -93,6 +97,12 @@ function statusLabel(status: string): string {
   switch (status) {
     case "starting":
       return "starting";
+    case "starting_container":
+      return "starting runtime";
+    case "waiting_for_socket":
+      return "waiting for runtime";
+    case "missing_artifact":
+      return "worker image missing";
     case "running":
     case "active":
       return "running";
@@ -268,6 +278,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [inspectorWidth, setInspectorWidth] = createSignal(
     Math.min(
       Math.floor(window.innerWidth * 0.46),
+      window.innerWidth - SIDEBAR_DEFAULT - MAIN_MIN,
       Math.max(INSPECTOR_MIN, Number(localStorage.getItem(INSPECTOR_WIDTH_KEY)) || 520),
     ),
   );
@@ -339,6 +350,21 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     scheduledRefreshes.set(key, timer);
   };
 
+  const redirectAfterMissingProject = async () => {
+    try {
+      const updated = await listProjects();
+      setProjects(updated);
+      if (updated.length === 0) {
+        window.location.hash = "#new";
+        return;
+      }
+      window.location.hash = `#project/${updated[0].id}`;
+    } catch (redirectError) {
+      console.error("Failed to redirect after missing project", redirectError);
+      window.location.hash = "#new";
+    }
+  };
+
   const loadWorkspaceSnapshotResource = async (): Promise<boolean> => {
     try {
       const [projectList, snapshot] = await Promise.all([
@@ -361,6 +387,10 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       setConnectionOk(true);
       return true;
     } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        void redirectAfterMissingProject();
+        return false;
+      }
       setConnectionOk(false);
       setError(err instanceof Error ? err.message : "Failed to load workspace");
       return false;
@@ -628,15 +658,10 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   };
 
   const activeStatus = () => {
-    if (props.librarianView) {
-      return isRunning() ? "running" : "ready";
-    }
-    if (!props.threadId) {
-      return isRunning() ? "running" : "ready";
-    }
-    if (optimisticLiveTurn()) {
-      return "running";
-    }
+    const sessionStatus = activeSessionStatus();
+    if (sessionStatus) return sessionStatus;
+    if (activeExecutionStatus()) return "running";
+    if (!props.threadId && !props.librarianView) return "ready";
     return threadDetail()?.thread.status || activeThreadPanel()?.thread.status || "active";
   };
 
@@ -666,6 +691,20 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     return backendLiveTurn ?? optimisticLiveTurn();
   };
 
+  const activeExecutionStatus = () => {
+    const optimistic = optimisticLiveTurn();
+    if (optimistic && ["starting", "queued", "running", "interrupting"].includes(optimistic.status)) {
+      return optimistic.status;
+    }
+    return activeLiveTurn()?.status ?? null;
+  };
+
+  const activeSessionStatus = () => {
+    if (props.librarianView) return librarianActivity()?.session?.status ?? null;
+    if (props.threadId) return threadDetail()?.activity.session?.status ?? activeThreadPanel()?.activity.session?.status ?? null;
+    return projectActivity()?.session?.status ?? null;
+  };
+
   const activeRuntimeError = () =>
     classifyWorkspaceError(
       props.librarianView
@@ -684,14 +723,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const pageError = () => classifyWorkspaceError(error());
 
   const isRunning = () => {
-    const optimistic = optimisticLiveTurn();
-    if (optimistic && ["starting", "running"].includes(optimistic.status)) {
-      return true;
-    }
-    if (props.librarianView) return librarianActivity()?.has_active_turn ?? false;
-    return props.threadId
-      ? threadDetail()?.activity.has_active_turn ?? false
-      : projectActivity()?.has_active_turn ?? false;
+    return ["queued", "starting", "running", "interrupting"].includes(activeExecutionStatus() ?? "");
   };
 
   const sortedThreads = createMemo(() => {
@@ -706,7 +738,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const runningThreads = () =>
     sortedThreads().filter((thread) => {
       const status = thread.activity.session?.status ?? thread.thread.status;
-      return status === "running" || status === "active";
+      return status === "running" || status === "active" || status === "starting_container" || status === "waiting_for_socket";
     }).length;
 
   /* ── Multi-project sidebar helpers ── */
@@ -912,11 +944,14 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
         <Show when={pageError()}>
           <div class="relative z-10 flex items-center justify-between border-b border-border bg-signal-red/10 px-4 py-2 text-xs text-signal-red">
-            {(banner) => (
+            {(() => {
+              const banner = pageError();
+              if (!banner) return null;
+              return (
               <>
-                <span>{banner().message}</span>
+                <span>{banner.message}</span>
                 <div class="ml-3 flex items-center gap-3">
-                  <Show when={banner().action === "open-settings"}>
+                  <Show when={banner.action === "open-settings"}>
                     <button
                       type="button"
                       class="text-[11px] font-medium text-signal-red transition-colors hover:text-signal-red/80"
@@ -937,7 +972,8 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   </button>
                 </div>
               </>
-            )}
+              );
+            })()}
           </div>
         </Show>
 
@@ -1176,8 +1212,10 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   if (next < SIDEBAR_MIN * 0.6) {
                     setSidebarCollapsed(true);
                   } else {
+                    const inspW = inspectorOpen() ? inspectorWidth() : 0;
+                    const maxSidebar = Math.min(SIDEBAR_MAX, window.innerWidth - inspW - MAIN_MIN);
                     setSidebarCollapsed(false);
-                    setSidebarWidth(Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, next)));
+                    setSidebarWidth(Math.max(SIDEBAR_MIN, Math.min(maxSidebar, next)));
                   }
                 };
                 const onUp = () => {
@@ -1196,7 +1234,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
           </Show>
 
           <div class="relative flex min-w-0 flex-1 overflow-hidden">
-            <main class="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+            <main class="relative flex flex-1 flex-col overflow-hidden" style={{ "min-width": `${MAIN_MIN}px` }}>
               <div class="relative flex h-10 shrink-0 items-center gap-2 border-b border-border bg-card px-4">
                 <span class="truncate text-sm font-medium text-foreground">
                   {activeTitle()}
@@ -1646,7 +1684,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
               </Show>
             </main>
 
-            <Show when={inspectorOpen() && !settingsOpen() && !projectSettingsOpen()}>
+            <Show when={inspectorOpen()}>
               <Show when={!inspectorFullscreen() && !compactViewport()}>
                 <div
                   class="inspector-resize-handle"
@@ -1658,7 +1696,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     const startW = inspectorWidth();
                     const onMove = (moveEvent: PointerEvent) => {
                       const delta = startX - moveEvent.clientX;
-                      const maxW = Math.floor(window.innerWidth * 0.58);
+                      const sideW = sidebarCollapsed() ? 0 : sidebarWidth();
+                      const maxW = Math.min(
+                        Math.floor(window.innerWidth * 0.58),
+                        window.innerWidth - sideW - MAIN_MIN,
+                      );
                       const next = Math.max(INSPECTOR_MIN, Math.min(maxW, startW + delta));
                       setInspectorWidth(next);
                     };

@@ -1,3 +1,4 @@
+#[cfg(feature = "host")]
 pub mod projects;
 
 pub trait ResultExt<T, E: ToString> {
@@ -14,6 +15,7 @@ impl<T, E: ToString> ResultExt<T, E> for Result<T, E> {
         self.map_err(|e| format!("{}: {}", msg, e.to_string()))
     }
 }
+#[cfg(feature = "host")]
 pub use projects::{
     create_project, get_project_surface, list_projects, update_project_settings,
     ProjectLifecycleService,

@@ -1,7 +1,8 @@
 //! Project types and data structures
 
+use std::{fmt, str::FromStr};
+
 use serde::{Deserialize, Serialize};
-use surrealdb::types::SurrealValue;
 
 use crate::backend::draft::StartingPoint;
 
@@ -32,6 +33,7 @@ pub struct Project {
     pub y: Option<f64>,
 }
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRetainedContext {
@@ -42,13 +44,14 @@ pub struct ProjectRetainedContext {
     pub source: Option<String>,
 }
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSurfaceSnapshot {
     pub canvas: Option<crate::backend::documents::ProjectCanvasDocument>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SurrealValue)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectPreparationStatus {
     Pending,
@@ -57,7 +60,38 @@ pub enum ProjectPreparationStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+impl ProjectPreparationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Working => "working",
+            Self::Done => "done",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl fmt::Display for ProjectPreparationStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ProjectPreparationStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "working" => Ok(Self::Working),
+            "done" => Ok(Self::Done),
+            "failed" => Ok(Self::Failed),
+            other => Err(format!("invalid project preparation status: {}", other)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectPreparationStep {
     pub id: String,

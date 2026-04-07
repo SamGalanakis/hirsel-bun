@@ -1,9 +1,8 @@
 use std::sync::OnceLock;
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
-
-use crate::backend::db::utc_now;
 
 static LIVE_UPDATES: OnceLock<broadcast::Sender<LiveUpdateEvent>> = OnceLock::new();
 
@@ -43,7 +42,7 @@ pub fn publish_project(project_id: i64, kind: LiveUpdateKind) {
         project_id,
         thread_id: None,
         kind,
-        timestamp: utc_now(),
+        timestamp: Utc::now().to_rfc3339(),
     });
 }
 
@@ -52,7 +51,7 @@ pub fn publish_thread(project_id: i64, thread_id: impl Into<String>, kind: LiveU
         project_id,
         thread_id: Some(thread_id.into()),
         kind,
-        timestamp: utc_now(),
+        timestamp: Utc::now().to_rfc3339(),
     });
 }
 

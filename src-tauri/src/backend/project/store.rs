@@ -25,10 +25,22 @@ struct ProjectRecord {
     updated_at: String,
     description: Option<String>,
     icon: Option<String>,
-    starting_point: crate::backend::draft::StartingPoint,
+    starting_point: StoredStartingPoint,
     sandbox_image: Option<String>,
     x: Option<f64>,
     y: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct StoredStartingPoint {
+    #[serde(rename = "type")]
+    starting_point_type: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -42,14 +54,23 @@ struct ProjectRetainedContextRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct ProjectRuntimePreparationRecord {
     project_id: i64,
-    status: ProjectPreparationStatus,
+    status: String,
     headline: String,
     detail: Option<String>,
     progress: f64,
-    steps: Vec<ProjectPreparationStep>,
+    steps: Vec<ProjectPreparationStepRecord>,
     current_step_id: Option<String>,
     started_at: String,
     updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct ProjectPreparationStepRecord {
+    id: String,
+    label: String,
+    status: String,
+    detail: Option<String>,
+    progress: Option<f64>,
 }
 
 /// Error type for project operations.
@@ -104,7 +125,7 @@ impl ProjectStore {
             updated_at: now,
             description: req.description.clone(),
             icon: None,
-            starting_point: req.starting_point.clone(),
+            starting_point: StoredStartingPoint::from(req.starting_point.clone()),
             sandbox_image: req.sandbox_image.clone(),
             x: req.x,
             y: req.y,
@@ -114,6 +135,23 @@ impl ProjectStore {
             .create((PROJECT_TABLE, id))
             .content(record.clone())
             .await?;
+        // Seed the canvas document node — the project's live whiteboard.
+        let _ = db
+            .query(
+                "UPSERT type::record('kg_node', [$pid, 'document', 'canvas']) MERGE {
+                    project_id: $pid,
+                    kind: 'document',
+                    node_id: 'canvas',
+                    label: 'Canvas',
+                    content: '<hirsel-callout title=\"New Project\" tone=\"info\">Use the shepherd to explore your codebase. The Librarian will keep this canvas updated as you work.</hirsel-callout>',
+                    source: 'system',
+                    metadata: {},
+                    updated_at: time::now()
+                }",
+            )
+            .bind(("pid", id))
+            .await;
+
         live_updates::publish_project(id, LiveUpdateKind::ProjectChanged);
         Ok(record.into_project())
     }
@@ -229,7 +267,7 @@ impl ProjectStore {
 
         // Clean up knowledge graph data
         let _ = db
-            .query("DELETE FROM kg_edge WHERE project_id = $pid; DELETE FROM kg_node WHERE project_id = $pid; DELETE FROM librarian_event WHERE project_id = $pid;")
+            .query("DELETE FROM kg_edge WHERE project_id = $pid; DELETE FROM kg_node WHERE project_id = $pid; DELETE FROM kg_doc_edge_queue WHERE project_id = $pid;")
             .bind(("pid", id))
             .await;
 
@@ -332,11 +370,16 @@ impl ProjectStore {
         let _ = self.get_project(state.project_id).await?;
         let record = ProjectRuntimePreparationRecord {
             project_id: state.project_id,
-            status: state.status,
+            status: state.status.to_string(),
             headline: state.headline.clone(),
             detail: state.detail.clone(),
             progress: state.progress,
-            steps: state.steps.clone(),
+            steps: state
+                .steps
+                .iter()
+                .cloned()
+                .map(ProjectPreparationStepRecord::from)
+                .collect(),
             current_step_id: state.current_step_id.clone(),
             started_at: state.started_at.clone(),
             updated_at: state.updated_at.clone(),
@@ -405,10 +448,50 @@ impl ProjectRecord {
             updated_at: self.updated_at,
             description: self.description,
             icon: self.icon,
-            starting_point: self.starting_point,
+            starting_point: self.starting_point.into_starting_point(),
             sandbox_image: self.sandbox_image,
             x: self.x,
             y: self.y,
+        }
+    }
+}
+
+impl From<crate::backend::draft::StartingPoint> for StoredStartingPoint {
+    fn from(value: crate::backend::draft::StartingPoint) -> Self {
+        match value {
+            crate::backend::draft::StartingPoint::Greenfield => Self {
+                starting_point_type: "greenfield".to_string(),
+                path: None,
+                url: None,
+                branch: None,
+            },
+            crate::backend::draft::StartingPoint::LocalFolder { path } => Self {
+                starting_point_type: "localFolder".to_string(),
+                path: Some(path),
+                url: None,
+                branch: None,
+            },
+            crate::backend::draft::StartingPoint::GitRepo { url, branch } => Self {
+                starting_point_type: "gitRepo".to_string(),
+                path: None,
+                url: Some(url),
+                branch,
+            },
+        }
+    }
+}
+
+impl StoredStartingPoint {
+    fn into_starting_point(self) -> crate::backend::draft::StartingPoint {
+        match self.starting_point_type.as_str() {
+            "localFolder" | "local_folder" => crate::backend::draft::StartingPoint::LocalFolder {
+                path: self.path.unwrap_or_default(),
+            },
+            "gitRepo" | "git_repo" => crate::backend::draft::StartingPoint::GitRepo {
+                url: self.url.unwrap_or_default(),
+                branch: self.branch,
+            },
+            _ => crate::backend::draft::StartingPoint::Greenfield,
         }
     }
 }
@@ -428,16 +511,48 @@ impl ProjectRuntimePreparationRecord {
     fn into_runtime_preparation(self) -> ProjectRuntimePreparation {
         ProjectRuntimePreparation {
             project_id: self.project_id,
-            status: self.status,
+            status: parse_project_preparation_status(&self.status),
             headline: self.headline,
             detail: self.detail,
             progress: self.progress,
             current_step_id: self.current_step_id,
-            steps: self.steps,
+            steps: self
+                .steps
+                .into_iter()
+                .map(ProjectPreparationStepRecord::into_preparation_step)
+                .collect(),
             started_at: self.started_at,
             updated_at: self.updated_at,
         }
     }
+}
+
+impl From<ProjectPreparationStep> for ProjectPreparationStepRecord {
+    fn from(step: ProjectPreparationStep) -> Self {
+        Self {
+            id: step.id,
+            label: step.label,
+            status: step.status.to_string(),
+            detail: step.detail,
+            progress: step.progress,
+        }
+    }
+}
+
+impl ProjectPreparationStepRecord {
+    fn into_preparation_step(self) -> ProjectPreparationStep {
+        ProjectPreparationStep {
+            id: self.id,
+            label: self.label,
+            status: parse_project_preparation_status(&self.status),
+            detail: self.detail,
+            progress: self.progress,
+        }
+    }
+}
+
+fn parse_project_preparation_status(value: &str) -> ProjectPreparationStatus {
+    value.parse().unwrap_or(ProjectPreparationStatus::Failed)
 }
 
 fn normalize_text(value: &str) -> String {
@@ -458,5 +573,76 @@ fn default_project_retained_context_markdown(project_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    // Tests need to be updated for async - skipping for now.
+    use super::*;
+    use crate::backend::config::testing::TestEnv;
+    use crate::backend::draft::StartingPoint;
+
+    #[test]
+    fn runtime_preparation_record_converts_statuses_as_strings() {
+        let record = ProjectRuntimePreparationRecord {
+            project_id: 7,
+            status: "working".to_string(),
+            headline: "headline".to_string(),
+            detail: Some("detail".to_string()),
+            progress: 0.5,
+            steps: vec![ProjectPreparationStepRecord {
+                id: "clone".to_string(),
+                label: "Clone".to_string(),
+                status: "done".to_string(),
+                detail: None,
+                progress: Some(1.0),
+            }],
+            current_step_id: Some("clone".to_string()),
+            started_at: "start".to_string(),
+            updated_at: "update".to_string(),
+        };
+
+        let runtime = record.into_runtime_preparation();
+
+        assert_eq!(runtime.status, ProjectPreparationStatus::Working);
+        assert_eq!(runtime.steps.len(), 1);
+        assert_eq!(runtime.steps[0].status, ProjectPreparationStatus::Done);
+    }
+
+    #[test]
+    fn runtime_preparation_step_record_stores_snake_case_status() {
+        let record = ProjectPreparationStepRecord::from(ProjectPreparationStep {
+            id: "clone".to_string(),
+            label: "Clone".to_string(),
+            status: ProjectPreparationStatus::Working,
+            detail: None,
+            progress: Some(0.4),
+        });
+
+        assert_eq!(record.status, "working");
+    }
+
+    #[tokio::test]
+    async fn create_project_record_persists_git_starting_point() {
+        let _env = TestEnv::builder().build();
+        let store = ProjectStore::open().await.expect("open project store");
+
+        let project = store
+            .create_project_record(&CreateProjectRequest {
+                name: "store-test".to_string(),
+                starting_point: StartingPoint::GitRepo {
+                    url: "https://github.com/example/repo".to_string(),
+                    branch: Some("main".to_string()),
+                },
+                description: None,
+                sandbox_image: None,
+                x: None,
+                y: None,
+            })
+            .await
+            .expect("create project record");
+
+        match project.starting_point {
+            StartingPoint::GitRepo { url, branch } => {
+                assert_eq!(url, "https://github.com/example/repo");
+                assert_eq!(branch.as_deref(), Some("main"));
+            }
+            other => panic!("expected git repo starting point, got {:?}", other),
+        }
+    }
 }

@@ -1,15 +1,22 @@
 //! Shepherd chat, live-turn, and scope-state storage.
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "host")]
 use surrealdb::types::SurrealValue;
 
+#[cfg(feature = "host")]
 use super::db::{global_db, next_sequence, utc_now, DbClient};
+#[cfg(feature = "host")]
 use crate::backend::live_updates::{self, LiveUpdateKind};
 
+#[cfg(feature = "host")]
 const SHEPHERD_CHAT_MESSAGE_TABLE: &str = "shepherd_chat_message";
+#[cfg(feature = "host")]
 const SHEPHERD_LIVE_TURN_TABLE: &str = "shepherd_live_turn";
+#[cfg(feature = "host")]
 const SHEPHERD_SCOPE_STATE_TABLE: &str = "shepherd_scope_state";
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct ShepherdChatMessageRecord {
     message_id: i64,
@@ -21,6 +28,7 @@ struct ShepherdChatMessageRecord {
     chunks_json: String,
 }
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct ShepherdLiveTurnRecord {
     lookup_key: String,
@@ -34,6 +42,7 @@ struct ShepherdLiveTurnRecord {
     updated_at: String,
 }
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct ShepherdScopeStateRecord {
     lookup_key: String,
@@ -67,6 +76,7 @@ pub struct ShepherdLiveTurn {
     pub updated_at: String,
 }
 
+#[cfg(feature = "host")]
 #[derive(Debug, thiserror::Error)]
 pub enum ShepherdChatError {
     #[error("Database error: {0}")]
@@ -75,6 +85,7 @@ pub enum ShepherdChatError {
     Io(#[from] std::io::Error),
 }
 
+#[cfg(feature = "host")]
 pub type ShepherdChatResult<T> = Result<T, ShepherdChatError>;
 
 pub struct ShepherdChatStore;
@@ -91,7 +102,10 @@ impl ShepherdChatStore {
     pub fn thread_scope_key(thread_id: &str) -> String {
         format!("__thread__:{thread_id}")
     }
+}
 
+#[cfg(feature = "host")]
+impl ShepherdChatStore {
     pub async fn open() -> ShepherdChatResult<Self> {
         let _ = global_db().await;
         Ok(Self)
@@ -380,6 +394,7 @@ impl ShepherdChatStore {
     }
 }
 
+#[cfg(feature = "host")]
 impl ShepherdChatMessageRecord {
     fn into_message(self) -> ShepherdChatMessage {
         ShepherdChatMessage {
@@ -393,6 +408,7 @@ impl ShepherdChatMessageRecord {
     }
 }
 
+#[cfg(feature = "host")]
 impl ShepherdLiveTurnRecord {
     fn into_live_turn(self) -> ShepherdLiveTurn {
         ShepherdLiveTurn {
@@ -408,6 +424,7 @@ impl ShepherdLiveTurnRecord {
     }
 }
 
+#[cfg(feature = "host")]
 fn chat_lookup_key(project_id: Option<i64>, scope_key: Option<&str>) -> String {
     format!(
         "project:{}|scope:{}",
@@ -418,10 +435,12 @@ fn chat_lookup_key(project_id: Option<i64>, scope_key: Option<&str>) -> String {
     )
 }
 
+#[cfg(feature = "host")]
 fn required_scope_lookup_key(project_id: i64, scope_key: &str) -> String {
     format!("project:{project_id}|scope:{scope_key}")
 }
 
+#[cfg(feature = "host")]
 fn live_turn_lookup_key(project_id: Option<i64>, scope_key: &str) -> String {
     format!(
         "project:{}|scope:{scope_key}",
@@ -431,6 +450,7 @@ fn live_turn_lookup_key(project_id: Option<i64>, scope_key: &str) -> String {
     )
 }
 
+#[cfg(feature = "host")]
 fn publish_history_event(project_id: Option<i64>, scope_key: Option<&str>) {
     let Some(project_id) = live_updates::scope_project_id(project_id) else {
         return;
@@ -448,6 +468,7 @@ fn publish_history_event(project_id: Option<i64>, scope_key: Option<&str>) {
     }
 }
 
+#[cfg(feature = "host")]
 fn publish_activity_event(project_id: Option<i64>, scope_key: Option<&str>) {
     let Some(project_id) = live_updates::scope_project_id(project_id) else {
         return;
@@ -465,5 +486,5 @@ fn publish_activity_event(project_id: Option<i64>, scope_key: Option<&str>) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host"))]
 mod tests {}

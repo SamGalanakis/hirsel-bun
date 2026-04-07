@@ -345,7 +345,7 @@ function sanitizeAttributes(element: Element): void {
 
 function sanitizeNode(node: Node): void {
   if (node.nodeType === Node.COMMENT_NODE) {
-    node.remove();
+    node.parentNode?.removeChild(node);
     return;
   }
 

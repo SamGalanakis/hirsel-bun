@@ -875,6 +875,12 @@ const LiveStatusRow: Component<{ status?: string }> = (props) => {
         return "Stopping…";
       case "starting":
         return "Starting";
+      case "starting_container":
+        return "Starting runtime";
+      case "waiting_for_socket":
+        return "Waiting for runtime";
+      case "missing_artifact":
+        return "Worker image missing";
       default:
         return "Thinking";
     }
@@ -901,9 +907,12 @@ const ChatMessage: Component<{ role: string; chunksJson: string; timestamp: stri
   const showLiveStatus = () =>
     !isUser()
     && !!props.liveStatus
-    && (blocks().length === 0
+      && (blocks().length === 0
       || props.liveStatus === "queued"
       || props.liveStatus === "starting"
+      || props.liveStatus === "starting_container"
+      || props.liveStatus === "waiting_for_socket"
+      || props.liveStatus === "missing_artifact"
       || props.liveStatus === "interrupting");
 
   return (

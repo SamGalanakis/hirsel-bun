@@ -1,9 +1,12 @@
+#[cfg(feature = "host")]
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg(feature = "host")]
 use lash::{collect_skill_mentions, SkillCatalog};
 use serde::Serialize;
 
+#[cfg(feature = "host")]
 use crate::backend::ensure_project_workspace;
 use crate::backend::shepherd_runtime::types::{ShepherdMessageChunk, ShepherdScope};
 
@@ -18,6 +21,7 @@ pub struct ApiSkillSummary {
     pub description: String,
 }
 
+#[cfg(any(feature = "host", test))]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FileMention {
     path: String,
@@ -25,6 +29,7 @@ struct FileMention {
     line_end: Option<usize>,
 }
 
+#[cfg(feature = "host")]
 pub async fn list_project_skills(project_id: i64) -> Result<Vec<ApiSkillSummary>, String> {
     let catalog = load_project_skill_catalog(project_id).await?;
     Ok(catalog
@@ -36,6 +41,7 @@ pub async fn list_project_skills(project_id: i64) -> Result<Vec<ApiSkillSummary>
         .collect())
 }
 
+#[cfg(feature = "host")]
 pub async fn enrich_chat_message_chunks(
     project_id: i64,
     raw_content: String,
@@ -141,6 +147,7 @@ pub async fn build_user_turn_text(
     Ok(sections.join("\n\n"))
 }
 
+#[cfg(feature = "host")]
 fn hirsel_skill_dirs(project_root: &Path) -> Vec<PathBuf> {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     vec![
@@ -153,11 +160,34 @@ fn hirsel_skill_dirs(project_root: &Path) -> Vec<PathBuf> {
     ]
 }
 
+#[cfg(feature = "host")]
 async fn load_project_skill_catalog(project_id: i64) -> Result<SkillCatalog, String> {
     let workspace = ensure_project_workspace(project_id).await?;
     Ok(SkillCatalog::from_dirs(&hirsel_skill_dirs(
         workspace.central_dir.as_path(),
     )))
+}
+
+fn scope_workspace_root(scope: &ShepherdScope) -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os("HIRSEL_SCOPE_WORKDIR")
+        .map(PathBuf::from)
+        .filter(|path| path.exists() && path.is_dir())
+    {
+        return Some(path);
+    }
+
+    let path = match scope {
+        ShepherdScope::General => None,
+        ShepherdScope::Shepherd { workspace_path, .. }
+        | ShepherdScope::Thread { workspace_path, .. }
+        | ShepherdScope::Librarian { workspace_path, .. } => workspace_path.as_deref(),
+    }?;
+    let path = PathBuf::from(path);
+    if path.exists() && path.is_dir() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn resolve_relative_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -231,17 +261,12 @@ async fn render_file_ref_block(
     line_start: Option<usize>,
     line_end: Option<usize>,
 ) -> Result<String, String> {
-    let Some(project_id) = (match scope {
-        ShepherdScope::Shepherd { project_id, .. }
-        | ShepherdScope::Thread { project_id, .. }
-        | ShepherdScope::Librarian { project_id, .. } => Some(*project_id),
-        ShepherdScope::General => None,
-    }) else {
+    if matches!(scope, ShepherdScope::General) {
         return Ok(format!(
             "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<status>unavailable</status>\n</workspace-file>",
             root_id, relative_path
         ));
-    };
+    }
 
     if root_id != "main" {
         return Ok(format!(
@@ -250,7 +275,12 @@ async fn render_file_ref_block(
         ));
     }
 
-    let root = ensure_project_workspace(project_id).await?.central_dir;
+    let Some(root) = scope_workspace_root(scope) else {
+        return Ok(format!(
+            "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<status>unavailable</status>\n</workspace-file>",
+            root_id, relative_path
+        ));
+    };
     let target = resolve_relative_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
         return Ok(format!(
@@ -314,6 +344,7 @@ async fn render_file_ref_block(
     ))
 }
 
+#[cfg(any(feature = "host", test))]
 fn parse_line_suffix(raw: &str) -> (String, Option<usize>, Option<usize>) {
     let Some((path, suffix)) = raw.rsplit_once(':') else {
         return (raw.to_string(), None, None);
@@ -337,6 +368,7 @@ fn parse_line_suffix(raw: &str) -> (String, Option<usize>, Option<usize>) {
     (path.to_string(), Some(line), Some(line))
 }
 
+#[cfg(any(feature = "host", test))]
 fn is_valid_file_mention_start(bytes: &[u8], idx: usize) -> bool {
     if idx == 0 {
         return true;
@@ -347,6 +379,7 @@ fn is_valid_file_mention_start(bytes: &[u8], idx: usize) -> bool {
     )
 }
 
+#[cfg(any(feature = "host", test))]
 fn collect_file_mentions(text: &str) -> Vec<FileMention> {
     let bytes = text.as_bytes();
     let mut mentions = Vec::new();

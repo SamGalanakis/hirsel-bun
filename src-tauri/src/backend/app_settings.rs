@@ -1,13 +1,18 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "host")]
 use surrealdb::types::SurrealValue;
 
 use crate::backend::config::{LlmProvider, RoleModelConfig, RoleModelOverrides};
+#[cfg(feature = "host")]
 use crate::backend::db::{global_db, utc_now, DbClient};
 
+#[cfg(feature = "host")]
 const APP_SETTING_TABLE: &str = "app_setting";
+#[cfg(feature = "host")]
 const LLM_SETTINGS_KEY: &str = "llm";
 const DEFAULT_OPENROUTER_BASE_URL: &str = "https://openrouter.ai/api/v1";
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct LlmSettingsRecord {
     provider: String,
@@ -21,7 +26,7 @@ struct LlmSettingsRecord {
     updated_at: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmSettings {
     pub provider: LlmProvider,
     pub openrouter_base_url: Option<String>,
@@ -38,8 +43,10 @@ impl Default for LlmSettings {
     }
 }
 
+#[cfg(feature = "host")]
 pub struct AppSettingsStore;
 
+#[cfg(feature = "host")]
 impl AppSettingsStore {
     pub async fn open() -> Result<Self, surrealdb::Error> {
         let _ = global_db().await;
@@ -92,6 +99,7 @@ impl LlmSettings {
     }
 }
 
+#[cfg(feature = "host")]
 impl LlmSettingsRecord {
     fn into_settings(self) -> LlmSettings {
         LlmSettings {
@@ -135,6 +143,7 @@ impl LlmSettingsRecord {
     }
 }
 
+#[cfg(feature = "host")]
 fn assemble_role_models(
     shepherd_model: Option<String>,
     shepherd_model_variant: Option<String>,
@@ -157,6 +166,7 @@ fn assemble_role_models(
     }
 }
 
+#[cfg(feature = "host")]
 fn normalize_role_config(
     model: Option<String>,
     model_variant: Option<String>,
@@ -172,6 +182,7 @@ fn normalize_role_config(
     }
 }
 
+#[cfg(feature = "host")]
 fn trim_optional(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -181,6 +192,7 @@ fn trim_optional(value: String) -> Option<String> {
     }
 }
 
+#[cfg(feature = "host")]
 fn encode_provider(provider: LlmProvider) -> &'static str {
     match provider {
         LlmProvider::Codex => "codex",
@@ -188,6 +200,7 @@ fn encode_provider(provider: LlmProvider) -> &'static str {
     }
 }
 
+#[cfg(feature = "host")]
 fn decode_provider(value: &str) -> LlmProvider {
     match value.trim().to_ascii_lowercase().as_str() {
         "openrouter" => LlmProvider::Openrouter,

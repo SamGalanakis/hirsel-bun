@@ -1,11 +1,16 @@
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "host")]
 use surrealdb::types::SurrealValue;
 
+#[cfg(feature = "host")]
 use crate::backend::db::{global_db, utc_now, DbClient};
+#[cfg(feature = "host")]
 use crate::backend::live_updates::{self, LiveUpdateKind};
 
+#[cfg(feature = "host")]
 const SHEPHERD_THREAD_TABLE: &str = "shepherd_thread";
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct ShepherdThreadRecord {
     thread_id: String,
@@ -40,6 +45,7 @@ pub struct ShepherdThread {
     pub archived_at: Option<String>,
 }
 
+#[cfg(feature = "host")]
 #[derive(Debug, thiserror::Error)]
 pub enum ShepherdThreadError {
     #[error("Database error: {0}")]
@@ -48,6 +54,7 @@ pub enum ShepherdThreadError {
     NotFound(String),
 }
 
+#[cfg(feature = "host")]
 pub type ShepherdThreadResult<T> = Result<T, ShepherdThreadError>;
 
 pub struct ShepherdThreadStore;
@@ -56,7 +63,10 @@ impl ShepherdThreadStore {
     pub fn scope_key(thread_id: &str) -> String {
         format!("__thread__:{thread_id}")
     }
+}
 
+#[cfg(feature = "host")]
+impl ShepherdThreadStore {
     pub async fn open() -> ShepherdThreadResult<Self> {
         let _ = global_db().await;
         Ok(Self)
@@ -286,6 +296,7 @@ impl ShepherdThreadStore {
     }
 }
 
+#[cfg(feature = "host")]
 impl ShepherdThreadRecord {
     fn into_thread(self) -> ShepherdThread {
         ShepherdThread {
@@ -305,10 +316,12 @@ impl ShepherdThreadRecord {
     }
 }
 
+#[cfg(feature = "host")]
 fn normalize_text(value: &str) -> String {
     value.to_lowercase()
 }
 
+#[cfg(feature = "host")]
 fn thread_status_rank(status: &str) -> u8 {
     match status {
         "running" => 0,

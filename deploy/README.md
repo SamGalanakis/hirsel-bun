@@ -38,7 +38,7 @@ When `hirsel-server` is running from this repo, it can build that image automati
 You can also build it yourself:
 
 ```bash
-docker build -f deploy/worker.Dockerfile -t hirsel-worker:local .
+DOCKER_BUILDKIT=1 docker build -f deploy/worker.Dockerfile -t hirsel-worker:local .
 ```
 
 If you want a different worker image, set it in `~/.hirsel/config.toml`:

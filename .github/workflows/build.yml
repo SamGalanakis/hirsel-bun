@@ -26,8 +26,10 @@ jobs:
       matrix:
         include:
           - name: worker
-            features: worker
+            bin: hirsel-worker
+            features: ''
           - name: server
+            bin: hirsel-server
             features: server
 
     steps:
@@ -66,13 +68,18 @@ jobs:
 
       - name: Build ${{ matrix.name }} binary
         working-directory: src-tauri
-        run: cargo build --release --no-default-features --features ${{ matrix.features }}
+        run: |
+          if [[ -n "${{ matrix.features }}" ]]; then
+            cargo build --release --locked --no-default-features --features "${{ matrix.features }}" --bin "${{ matrix.bin }}"
+          else
+            cargo build --release --locked --no-default-features --bin "${{ matrix.bin }}"
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: hirsel-${{ matrix.name }}-${{ steps.info.outputs.suffix }}-linux-amd64
-          path: src-tauri/target/release/hirsel
+          path: src-tauri/target/release/${{ matrix.bin }}
 
   # Build Tauri GUI (optional, heavier build)
   build-ui:
@@ -176,8 +183,8 @@ jobs:
         run: |
           SUFFIX=${{ steps.info.outputs.suffix }}
           mkdir -p combined
-          cp artifacts/hirsel-worker-${SUFFIX}-linux-amd64/hirsel combined/hirsel-worker-${SUFFIX}-linux-amd64
-          cp artifacts/hirsel-server-${SUFFIX}-linux-amd64/hirsel combined/hirsel-server-${SUFFIX}-linux-amd64
+          cp artifacts/hirsel-worker-${SUFFIX}-linux-amd64/hirsel-worker combined/hirsel-worker-${SUFFIX}-linux-amd64
+          cp artifacts/hirsel-server-${SUFFIX}-linux-amd64/hirsel-server combined/hirsel-server-${SUFFIX}-linux-amd64
           chmod +x combined/*
 
       - name: Upload combined binaries

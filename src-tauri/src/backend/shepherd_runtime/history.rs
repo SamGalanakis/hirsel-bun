@@ -1,15 +1,23 @@
 use base64::Engine;
 use lash::{Message, MessageRole, Part, PartKind, PruneState};
 
-use super::types::{ShepherdMessageChunk, ShepherdScope};
+use super::types::ShepherdMessageChunk;
+#[cfg(feature = "host")]
+use super::types::ShepherdScope;
+#[cfg(feature = "host")]
 use crate::backend::app::ResultExt;
-use crate::backend::{ShepherdChatMessage, ShepherdChatStore, ShepherdLiveTurn};
+use crate::backend::ShepherdChatMessage;
+#[cfg(feature = "host")]
+use crate::backend::{ShepherdChatStore, ShepherdLiveTurn};
 
+#[cfg(feature = "host")]
 pub(super) const MAX_IMAGE_COUNT: usize = 8;
+#[cfg(feature = "host")]
 pub(super) const MAX_IMAGE_BASE64_CHARS: usize = 12 * 1024 * 1024;
 pub(super) const RUNTIME_HISTORY_LIMIT: usize = 48;
 const RUNTIME_PREVIEW_MAX_CHARS: usize = 1200;
 
+#[cfg(feature = "host")]
 pub(super) fn validate_chunks(chunks: &[ShepherdMessageChunk]) -> Result<(), String> {
     if chunks.is_empty() {
         return Err("message must contain at least one chunk".to_string());
@@ -74,11 +82,13 @@ pub(super) fn validate_chunks(chunks: &[ShepherdMessageChunk]) -> Result<(), Str
     Ok(())
 }
 
+#[cfg(feature = "host")]
 pub(super) fn chunks_to_json(chunks: &[ShepherdMessageChunk]) -> Result<String, String> {
     validate_chunks(chunks)?;
     serde_json::to_string(chunks).map_err(|e| format!("failed to serialize chunks: {}", e))
 }
 
+#[cfg(feature = "host")]
 pub(super) fn build_user_chunks(
     content: Option<String>,
     chunks: Option<Vec<ShepherdMessageChunk>>,
@@ -270,6 +280,7 @@ pub(super) fn build_runtime_messages(history: &[ShepherdChatMessage]) -> Vec<Mes
     messages
 }
 
+#[cfg(feature = "host")]
 pub(super) async fn load_scope_messages(
     scope: &ShepherdScope,
     limit: usize,
@@ -322,6 +333,7 @@ pub(super) async fn load_scope_messages(
     Ok(messages)
 }
 
+#[cfg(feature = "host")]
 pub(super) async fn save_message(
     scope: &ShepherdScope,
     role: &str,
@@ -364,6 +376,7 @@ pub(super) async fn save_message(
     }
 }
 
+#[cfg(feature = "host")]
 pub(super) async fn load_scope_live_turn(
     scope: &ShepherdScope,
 ) -> Result<Option<ShepherdLiveTurn>, String> {

@@ -65,7 +65,7 @@ fn resolve_webui_dist() -> PathBuf {
 pub async fn start_server(port: u16) -> anyhow::Result<()> {
     let api_key = resolve_http_api_key();
 
-    let (config, warnings) =
+    let (_config, warnings) =
         Config::load().map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
     for warning in warnings {
         tracing::warn!("{}", warning);
@@ -82,6 +82,8 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     crate::backend::shepherd_runtime::start_server_control_listener()
         .await
         .map_err(|error| anyhow::anyhow!("Failed to start server control socket: {}", error))?;
+
+    crate::backend::documents::spawn_doc_edge_worker();
 
     // Resolve SPA directory
     let webui_dir = resolve_webui_dist();

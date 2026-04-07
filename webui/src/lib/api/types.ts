@@ -34,6 +34,7 @@ export interface ProjectCreateProbe {
   suggested_name: string;
   selected_branch: string;
   branch_source: "explicit" | "url" | "detected";
+  branches: string[];
   worker_image: string;
 }
 
@@ -253,14 +254,9 @@ export interface KnowledgeGraphNode {
   kind: string;
   node_id: string;
   label: string;
-  summary: string;
-  description?: string;
-  detail?: string;
-  notes?: string;
-  rationale?: string;
-  markdown?: string;
-  body_html?: string;
-  confidence: string;
+  summary?: string;
+  content?: string;
+  confidence?: string;
   source: string;
   metadata: Record<string, unknown>;
   updated_at: string;

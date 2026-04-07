@@ -3,9 +3,12 @@
 //! Hirsel uses a single global embedded database for shared project state,
 //! credentials, chat history, and thread metadata.
 
+use std::collections::HashMap;
+
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use surrealdb::engine::local::{Db, SurrealKv};
+use surrealdb::opt::auth::Record;
 use surrealdb::types::SurrealValue;
 use surrealdb::Surreal;
 use tokio::sync::{Mutex, OnceCell};
@@ -42,7 +45,7 @@ DEFINE FIELD IF NOT EXISTS updated_at ON TABLE project TYPE string;
 DEFINE FIELD IF NOT EXISTS description ON TABLE project TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS icon ON TABLE project TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS starting_point ON TABLE project TYPE object;
-DEFINE FIELD IF NOT EXISTS starting_point.type ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS starting_point.starting_point_type ON TABLE project TYPE string;
 DEFINE FIELD IF NOT EXISTS starting_point.path ON TABLE project TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS starting_point.url ON TABLE project TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS starting_point.branch ON TABLE project TYPE option<string>;
@@ -139,37 +142,42 @@ DEFINE FIELD IF NOT EXISTS encrypted_value_b64 ON TABLE credential TYPE string;
 DEFINE FIELD IF NOT EXISTS nonce_b64 ON TABLE credential TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON TABLE credential TYPE string;
 
-DEFINE TABLE IF NOT EXISTS librarian_event SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS project_id ON TABLE librarian_event TYPE int;
-DEFINE FIELD IF NOT EXISTS kind ON TABLE librarian_event TYPE string;
-DEFINE FIELD IF NOT EXISTS summary ON TABLE librarian_event TYPE string;
-DEFINE FIELD IF NOT EXISTS files ON TABLE librarian_event TYPE array<any>;
-DEFINE FIELD IF NOT EXISTS timestamp ON TABLE librarian_event TYPE string;
-DEFINE FIELD IF NOT EXISTS processed ON TABLE librarian_event TYPE bool;
-DEFINE FIELD IF NOT EXISTS created_at ON TABLE librarian_event TYPE datetime;
+-- Librarian agent identity table (record users for project-scoped access)
+DEFINE TABLE IF NOT EXISTS agent SCHEMALESS;
 
-DEFINE TABLE IF NOT EXISTS kg_node SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS project_id ON TABLE kg_node TYPE int;
-DEFINE FIELD IF NOT EXISTS kind ON TABLE kg_node TYPE string;
-DEFINE FIELD IF NOT EXISTS node_id ON TABLE kg_node TYPE string;
-DEFINE FIELD IF NOT EXISTS label ON TABLE kg_node TYPE string;
-DEFINE FIELD IF NOT EXISTS summary ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS description ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS detail ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS notes ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS rationale ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS markdown ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS body_html ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS confidence ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS source ON TABLE kg_node TYPE option<string>;
-DEFINE FIELD IF NOT EXISTS metadata ON TABLE kg_node TYPE option<object> FLEXIBLE;
-DEFINE FIELD IF NOT EXISTS updated_at ON TABLE kg_node TYPE string;
+-- Access method for librarian record users
+DEFINE ACCESS IF NOT EXISTS librarian ON DATABASE TYPE RECORD
+  SIGNUP (CREATE agent SET name = $name, project_id = $project_id)
+  SIGNIN (SELECT * FROM agent WHERE name = $name AND project_id = $project_id)
+  DURATION FOR TOKEN 24h, FOR SESSION 24h;
 
-DEFINE TABLE IF NOT EXISTS kg_edge TYPE RELATION SCHEMAFULL;
-DEFINE FIELD IF NOT EXISTS project_id ON TABLE kg_edge TYPE int;
-DEFINE FIELD IF NOT EXISTS relation ON TABLE kg_edge TYPE string;
-DEFINE FIELD IF NOT EXISTS metadata ON TABLE kg_edge TYPE option<object> FLEXIBLE;
-DEFINE FIELD IF NOT EXISTS created_at ON TABLE kg_edge TYPE datetime;
+-- Knowledge graph node table with librarian permissions
+DEFINE TABLE IF NOT EXISTS kg_node SCHEMALESS
+  PERMISSIONS
+    FOR select WHERE project_id = $auth.project_id
+    FOR create WHERE project_id = $auth.project_id
+    FOR update WHERE project_id = $auth.project_id
+    FOR delete WHERE project_id = $auth.project_id AND NOT (kind = 'document' AND node_id = 'canvas');
+
+-- Knowledge graph edge table with librarian permissions
+DEFINE TABLE IF NOT EXISTS kg_edge TYPE RELATION SCHEMALESS
+  PERMISSIONS
+    FOR select WHERE project_id = $auth.project_id
+    FOR create WHERE project_id = $auth.project_id
+    FOR update WHERE project_id = $auth.project_id
+    FOR delete WHERE project_id = $auth.project_id;
+
+DEFINE TABLE IF NOT EXISTS kg_doc_edge_queue SCHEMALESS;
+
+DEFINE EVENT IF NOT EXISTS doc_content_changed ON TABLE kg_node
+    WHEN $after.kind = 'document'
+      AND ($event = "CREATE" OR $before.content != $after.content)
+    THEN (
+        UPSERT type::record('kg_doc_edge_queue', [$after.project_id, $after.node_id])
+            SET project_id = $after.project_id,
+                node_id = $after.node_id,
+                queued_at = time::now()
+    );
 "#;
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -203,6 +211,74 @@ pub async fn global_db() -> &'static DbClient {
             db
         })
         .await
+}
+
+/// Cached librarian DB connections keyed by project_id.
+static LIBRARIAN_CONNECTIONS: OnceCell<Mutex<HashMap<i64, DbClient>>> = OnceCell::const_new();
+
+/// Parameters for the librarian record-user signin/signup.
+#[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
+struct LibrarianAuthParams {
+    name: String,
+    project_id: i64,
+}
+
+/// Get a DB client authenticated as the librarian record-user for a project.
+///
+/// The client is scoped via SurrealDB table permissions so it can only access
+/// `kg_node` and `kg_edge` rows belonging to the given project. Connections
+/// are cached per project_id for the lifetime of the process.
+pub async fn librarian_db(project_id: i64) -> Result<DbClient, String> {
+    let cache = LIBRARIAN_CONNECTIONS
+        .get_or_init(|| async { Mutex::new(HashMap::new()) })
+        .await;
+
+    let mut map = cache.lock().await;
+    if let Some(client) = map.get(&project_id) {
+        return Ok(client.clone());
+    }
+
+    // Clone the global DB to get a new session sharing the same engine
+    let client = global_db().await.clone();
+
+    let credentials = Record {
+        namespace: "hirsel".to_string(),
+        database: "app".to_string(),
+        access: "librarian".to_string(),
+        params: LibrarianAuthParams {
+            name: format!("librarian-{project_id}"),
+            project_id,
+        },
+    };
+
+    // Try signin first; if the agent record doesn't exist yet, signup
+    let token = match client.signin(credentials).await {
+        Ok(token) => token,
+        Err(_) => {
+            let signup_credentials = Record {
+                namespace: "hirsel".to_string(),
+                database: "app".to_string(),
+                access: "librarian".to_string(),
+                params: LibrarianAuthParams {
+                    name: format!("librarian-{project_id}"),
+                    project_id,
+                },
+            };
+            client
+                .signup(signup_credentials)
+                .await
+                .map_err(|e| format!("librarian signup failed: {e}"))?
+        }
+    };
+
+    // Authenticate the session with the obtained token
+    client
+        .authenticate(token)
+        .await
+        .map_err(|e| format!("librarian authenticate failed: {e}"))?;
+
+    map.insert(project_id, client.clone());
+    Ok(client)
 }
 
 /// Allocate the next persistent sequence value for a logical counter.

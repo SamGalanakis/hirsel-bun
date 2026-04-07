@@ -29,7 +29,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
-const MonacoDiffEditor = lazy(() => import("@/components/MonacoDiffEditor"));
+const PierreDiffViewer = lazy(() => import("@/components/PierreDiffViewer"));
 const MonacoTextEditor = lazy(() => import("@/components/MonacoTextEditor"));
 
 interface WorkspaceBrowserProps {
@@ -1109,85 +1109,53 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
                                   fallback={<div class="flex h-full items-center justify-center px-6 text-xs text-signal-red">{diffFileError()}</div>}
                                 >
                                   <Show
-                                    when={
-                                      diffAccessor().isText
-                                      && !(diffAccessor().left?.truncated ?? false)
-                                      && !(diffAccessor().right?.truncated ?? false)
-                                    }
+                                    when={diffAccessor().isText}
                                     fallback={
-                                      <div class="flex h-full flex-col">
-                                        <Show
-                                          when={isImageMime(diffAccessor().left?.mime) || isImageMime(diffAccessor().right?.mime)}
-                                          fallback={
-                                            <div class="flex h-full items-center justify-center p-6">
-                                              <div class="max-w-md space-y-3 text-center">
-                                                <p class="text-sm text-muted-foreground">
-                                                  {diffAccessor().isText
-                                                    ? "This text file is too large to render in the diff editor."
-                                                    : "Binary diff preview is not available."}
-                                                </p>
-                                                <div class="flex items-center justify-center gap-3 text-xs">
-                                                  <Show when={diffAccessor().left}>
-                                                    <a
-                                                      href={diffSideUrl(diffAccessor().left)}
-                                                      class="text-foreground/60 underline underline-offset-4 transition-colors hover:text-foreground"
-                                                    >
-                                                      Download left
-                                                    </a>
-                                                  </Show>
-                                                  <Show when={diffAccessor().right}>
-                                                    <a
-                                                      href={diffSideUrl(diffAccessor().right)}
-                                                      class="text-foreground/60 underline underline-offset-4 transition-colors hover:text-foreground"
-                                                    >
-                                                      Download right
-                                                    </a>
-                                                  </Show>
-                                                </div>
+                                      <Show
+                                        when={isImageMime(diffAccessor().left?.mime) || isImageMime(diffAccessor().right?.mime)}
+                                        fallback={
+                                          <div class="flex h-full items-center justify-center p-6">
+                                            <div class="max-w-md space-y-3 text-center">
+                                              <p class="text-sm text-muted-foreground">Binary diff preview is not available.</p>
+                                              <div class="flex items-center justify-center gap-3 text-xs">
+                                                <Show when={diffAccessor().left}>
+                                                  <a href={diffSideUrl(diffAccessor().left)} class="text-foreground/60 underline underline-offset-4 transition-colors hover:text-foreground">Download left</a>
+                                                </Show>
+                                                <Show when={diffAccessor().right}>
+                                                  <a href={diffSideUrl(diffAccessor().right)} class="text-foreground/60 underline underline-offset-4 transition-colors hover:text-foreground">Download right</a>
+                                                </Show>
                                               </div>
                                             </div>
-                                          }
-                                        >
-                                          <div class="grid h-full min-h-0 grid-cols-2 gap-px bg-border/60">
-                                            <For each={[diffAccessor().left, diffAccessor().right]}>
-                                              {(side, index) => {
-                                                const label = () => index() === 0 ? leftRoot()?.label ?? pairAccessor().leftRootId : rightRoot()?.label ?? pairAccessor().rightRootId;
-                                                return (
-                                                  <div class="flex min-h-0 flex-col bg-background">
-                                                    <div class="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
-                                                      <span class="text-[11px] font-medium text-foreground/80">{label()}</span>
-                                                      <Show when={side}>
-                                                        <a
-                                                          href={diffSideUrl(side)}
-                                                          class="text-[10px] text-muted-foreground/70 underline underline-offset-4 transition-colors hover:text-foreground"
-                                                        >
-                                                          Download
-                                                        </a>
-                                                      </Show>
-                                                    </div>
-                                                    <div class="flex min-h-0 flex-1 items-center justify-center p-4">
-                                                      <Show
-                                                        when={side}
-                                                        fallback={<div class="text-xs text-muted-foreground/60">Missing</div>}
-                                                      >
-                                                        <img
-                                                          src={diffSideUrl(side)}
-                                                          alt={side?.name ?? "Image"}
-                                                          class="max-h-full max-w-full"
-                                                        />
-                                                      </Show>
-                                                    </div>
-                                                  </div>
-                                                );
-                                              }}
-                                            </For>
                                           </div>
-                                        </Show>
-                                      </div>
+                                        }
+                                      >
+                                        <div class="grid h-full min-h-0 grid-cols-2 gap-px bg-border/60">
+                                          <For each={[diffAccessor().left, diffAccessor().right]}>
+                                            {(side, index) => {
+                                              const label = () => index() === 0 ? leftRoot()?.label ?? pairAccessor().leftRootId : rightRoot()?.label ?? pairAccessor().rightRootId;
+                                              return (
+                                                <div class="flex min-h-0 flex-col bg-background">
+                                                  <div class="flex items-center justify-between border-b border-border/60 px-3 py-1.5">
+                                                    <span class="text-[11px] font-medium text-foreground/80">{label()}</span>
+                                                    <Show when={side}>
+                                                      <a href={diffSideUrl(side)} class="text-[10px] text-muted-foreground/70 underline underline-offset-4 transition-colors hover:text-foreground">Download</a>
+                                                    </Show>
+                                                  </div>
+                                                  <div class="flex min-h-0 flex-1 items-center justify-center p-4">
+                                                    <Show when={side} fallback={<div class="text-xs text-muted-foreground/60">Missing</div>}>
+                                                      <img src={diffSideUrl(side)} alt={side?.name ?? "Image"} class="max-h-full max-w-full" />
+                                                    </Show>
+                                                  </div>
+                                                </div>
+                                              );
+                                            }}
+                                          </For>
+                                        </div>
+                                      </Show>
                                     }
                                   >
                                     <Suspense fallback={<div class="flex h-full items-center justify-center text-xs text-muted-foreground/60">Loading diff…</div>}>
-                                      <MonacoDiffEditor
+                                      <PierreDiffViewer
                                         path={diffAccessor().path}
                                         originalValue={diffAccessor().left?.content ?? ""}
                                         modifiedValue={diffAccessor().right?.content ?? ""}

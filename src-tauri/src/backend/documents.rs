@@ -3,9 +3,13 @@ use std::collections::BTreeSet;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use surrealdb::types::Datetime;
 use surrealdb::types::SurrealValue;
 
 use crate::backend::db::{global_db, utc_now, DbClient};
+use crate::backend::knowledge_graph::{
+    DocumentEdgeQueueRow, KnowledgeGraphNodeRow, KnowledgeGraphTextRow,
+};
 use crate::backend::live_updates::{self, LiveUpdateKind};
 
 const DOCUMENT_KIND: &str = "document";
@@ -27,7 +31,6 @@ const DOCUMENT_REFERENCE_TAGS: &[&str] = &[
 pub struct ProjectCanvasDocument {
     pub node_id: String,
     pub label: String,
-    pub summary: Option<String>,
     pub html: String,
     pub source: Option<String>,
     pub updated_at: String,
@@ -64,12 +67,10 @@ struct GraphDocumentNodeRecord {
     node_id: String,
     label: String,
     #[serde(default)]
-    summary: Option<String>,
-    #[serde(default)]
-    body_html: Option<String>,
+    content: Option<String>,
     #[serde(default)]
     source: Option<String>,
-    updated_at: String,
+    updated_at: Datetime,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
@@ -135,17 +136,16 @@ pub async fn get_canvas_document(project_id: i64) -> Result<Option<ProjectCanvas
         .bind(("node_key", node_key))
         .await
         .map_err(|error| format!("failed to load canvas document: {error}"))?;
-    let record: Option<GraphDocumentNodeRecord> = response
+    let record: Option<KnowledgeGraphNodeRow> = response
         .take(1)
         .map_err(|error| format!("failed to decode canvas document: {error}"))?;
 
     Ok(record.map(|record| ProjectCanvasDocument {
         node_id: record.node_id,
         label: record.label,
-        summary: record.summary,
-        html: record.body_html.unwrap_or_default(),
+        html: record.content.unwrap_or_default(),
         source: record.source,
-        updated_at: record.updated_at,
+        updated_at: record.updated_at.to_string(),
     }))
 }
 
@@ -244,10 +244,19 @@ pub async fn upsert_canvas_document(
         kind: DOCUMENT_KIND.to_string(),
         node_id: CANVAS_NODE_ID.to_string(),
         label: "Canvas".to_string(),
-        summary: None,
-        body_html: Some(html.to_string()),
+        content: Some(html.to_string()),
         source: source.map(ToOwned::to_owned),
-        updated_at: now.clone(),
+        updated_at: Datetime::from(now.parse::<chrono::DateTime<chrono::Utc>>().map_err(
+            |error| {
+                vec![DocumentValidationError {
+                    code: "save_failed".to_string(),
+                    message: format!("failed to parse canvas timestamp: {error}"),
+                    tag: None,
+                    attribute: None,
+                    value: None,
+                }]
+            },
+        )?),
     };
 
     if let Err(error) = db
@@ -289,7 +298,6 @@ pub async fn upsert_canvas_document(
     Ok(ProjectCanvasDocument {
         node_id: CANVAS_NODE_ID.to_string(),
         label: "Canvas".to_string(),
-        summary: None,
         html: html.to_string(),
         source: source.map(ToOwned::to_owned),
         updated_at: now,
@@ -326,6 +334,101 @@ async fn replace_document_reference_edges(
     }
 
     Ok(())
+}
+
+/// Process the kg_doc_edge_queue: for each queued document node, re-derive
+/// reference edges from its HTML content, then delete the queue entry.
+pub async fn process_doc_edge_queue() -> Result<usize, String> {
+    let db = db().await;
+    let mut result = db
+        .query("SELECT * FROM kg_doc_edge_queue LIMIT 50")
+        .await
+        .map_err(|e| format!("failed to read doc edge queue: {e}"))?;
+    let rows: Vec<DocumentEdgeQueueRow> = result.take(0).unwrap_or_default();
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    let mut processed = 0;
+    for row in rows {
+        if row.project_id == 0 || row.node_id.is_empty() {
+            continue;
+        }
+
+        // Fetch the document's content
+        let mut content_result = db
+            .query("SELECT content FROM kg_node WHERE project_id = $pid AND kind = 'document' AND node_id = $nid LIMIT 1")
+            .bind(("pid", row.project_id))
+            .bind(("nid", row.node_id.clone()))
+            .await
+            .map_err(|e| format!("failed to fetch doc content: {e}"))?;
+        let content_rows: Vec<KnowledgeGraphTextRow> = content_result.take(0).unwrap_or_default();
+        let content = content_rows
+            .first()
+            .and_then(|row| row.content.as_deref())
+            .unwrap_or("");
+
+        // Parse references from HTML (synchronous — scraper is !Send)
+        let refs = extract_document_references(content);
+        let _ = replace_document_reference_edges(row.project_id, &row.node_id, &refs).await;
+
+        // Delete the queue entry
+        let _ = db.query("DELETE $id").bind(("id", row.id)).await;
+        processed += 1;
+    }
+    Ok(processed)
+}
+
+fn extract_document_references(html: &str) -> Vec<DocumentReference> {
+    if html.is_empty() {
+        return Vec::new();
+    }
+    let fragment = Html::parse_fragment(html);
+    let mut refs = Vec::new();
+    for tag_name in DOCUMENT_REFERENCE_TAGS {
+        let Ok(selector) = Selector::parse(tag_name) else {
+            continue;
+        };
+        for node in fragment.select(&selector) {
+            let relation = if *tag_name == "hirsel-doc-target" {
+                DOCUMENTS_EDGE
+            } else {
+                REFERENCES_EDGE
+            };
+            let raw = node.value().attr("node").map(str::trim).unwrap_or("");
+            if let Some((kind, ref_id)) = parse_node_reference(raw) {
+                refs.push(DocumentReference {
+                    kind,
+                    node_id: ref_id,
+                    relation: relation.to_string(),
+                });
+            }
+        }
+    }
+    refs
+}
+
+/// Start a background task that polls the doc edge queue and processes entries.
+pub fn spawn_doc_edge_worker() {
+    tokio::spawn(async {
+        loop {
+            match process_doc_edge_queue().await {
+                Ok(n) if n > 0 => {
+                    tracing::debug!(processed = n, "processed doc edge queue entries");
+                    // If we processed items, check again soon in case more arrived
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+                Ok(_) => {
+                    // Queue empty — sleep longer
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "doc edge queue processing failed");
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]

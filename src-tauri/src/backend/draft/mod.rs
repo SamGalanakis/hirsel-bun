@@ -23,27 +23,36 @@
 //! }).await?;
 //! ```
 
+#[cfg(feature = "host")]
 mod local_workspace;
 mod types;
+#[cfg(feature = "host")]
 mod workspace;
 
+#[cfg(feature = "host")]
 pub use local_workspace::LocalWorkspaceProvider;
-pub use types::{FileEntry, StartingPoint, WorkspaceInfo};
+pub use types::StartingPoint;
+#[cfg(feature = "host")]
+pub use types::{FileEntry, WorkspaceInfo};
+#[cfg(feature = "host")]
 pub use workspace::WorkspaceProvider;
 
+#[cfg(feature = "host")]
 use std::sync::Arc;
 
 /// Create a workspace provider based on the current configuration
+#[cfg(feature = "host")]
 pub fn create_workspace_provider() -> Arc<dyn WorkspaceProvider> {
     Arc::new(LocalWorkspaceProvider::new())
 }
 
 /// Create a local workspace provider (convenience function)
+#[cfg(feature = "host")]
 pub fn create_local_workspace_provider() -> Arc<LocalWorkspaceProvider> {
     Arc::new(LocalWorkspaceProvider::new())
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host"))]
 mod tests {
     use super::*;
 

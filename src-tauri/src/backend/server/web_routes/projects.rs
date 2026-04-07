@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::backend::draft::StartingPoint;
 use crate::backend::git::{inspect_remote_branches, parse_github_url};
+use crate::backend::knowledge_graph::{
+    ApiKnowledgeGraph, ApiKnowledgeGraphEdge, ApiKnowledgeGraphNode, KnowledgeGraphEdgeRow,
+    KnowledgeGraphNodeRow,
+};
 use crate::backend::live_updates;
 use crate::backend::{app, shepherd_runtime, ProjectStore};
 
@@ -25,6 +29,7 @@ pub struct ApiProjectCreateProbe {
     suggested_name: String,
     selected_branch: String,
     branch_source: String,
+    branches: Vec<String>,
     worker_image: String,
 }
 
@@ -47,7 +52,25 @@ struct ProjectCreateProbe {
     suggested_name: String,
     selected_branch: String,
     branch_source: String,
+    branches: Vec<String>,
     worker_image: String,
+}
+
+#[derive(Debug)]
+enum ProjectCreateValidationError {
+    Message(String),
+    MissingBranch { repo_url: String, branch: String },
+}
+
+impl ProjectCreateValidationError {
+    fn message(self) -> String {
+        match self {
+            Self::Message(message) => message,
+            Self::MissingBranch { repo_url, branch } => {
+                format!("Remote branch '{}' was not found for {}.", branch, repo_url)
+            }
+        }
+    }
 }
 
 fn current_default_sandbox_image() -> String {
@@ -95,17 +118,19 @@ fn derive_project_name_from_repo_url(repo_url: &str) -> String {
 fn probe_project_create(
     repo_url: &str,
     branch: Option<&str>,
-) -> Result<ProjectCreateProbe, String> {
+) -> Result<ProjectCreateProbe, ProjectCreateValidationError> {
     let parsed = parse_github_url(repo_url);
     let normalized_repo_url = parsed.repo_url.trim().to_string();
     if normalized_repo_url.is_empty() {
-        return Err("Repository URL is required.".to_string());
+        return Err(ProjectCreateValidationError::Message(
+            "Repository URL is required.".to_string(),
+        ));
     }
 
     let explicit_branch = branch.map(str::trim).filter(|value| !value.is_empty());
     let url_branch = parsed.branch.as_deref().filter(|value| !value.is_empty());
-    let inspection =
-        inspect_remote_branches(&normalized_repo_url).map_err(|error| error.to_string())?;
+    let inspection = inspect_remote_branches(&normalized_repo_url)
+        .map_err(|error| ProjectCreateValidationError::Message(error.to_string()))?;
     let (selected_branch, branch_source) = if let Some(value) = explicit_branch {
         (value.to_string(), "explicit".to_string())
     } else if let Some(value) = url_branch {
@@ -130,7 +155,9 @@ fn probe_project_create(
                         .or_else(|| inspection.branches.first().cloned())
                 })
                 .ok_or_else(|| {
-                    "No visible remote branches were found for this repository.".to_string()
+                    ProjectCreateValidationError::Message(
+                        "No visible remote branches were found for this repository.".to_string(),
+                    )
                 })?,
             "detected".to_string(),
         )
@@ -141,10 +168,10 @@ fn probe_project_create(
         .iter()
         .any(|branch| branch == &selected_branch)
     {
-        return Err(format!(
-            "Remote branch '{}' was not found for {}.",
-            selected_branch, normalized_repo_url
-        ));
+        return Err(ProjectCreateValidationError::MissingBranch {
+            repo_url: normalized_repo_url,
+            branch: selected_branch,
+        });
     }
 
     Ok(ProjectCreateProbe {
@@ -152,6 +179,7 @@ fn probe_project_create(
         normalized_repo_url,
         selected_branch,
         branch_source,
+        branches: inspection.branches,
         worker_image: current_default_sandbox_image(),
     })
 }
@@ -162,11 +190,20 @@ async fn persist_project_and_start_runtime_preparation(
     branch: Option<String>,
     sandbox_image: Option<String>,
 ) -> Result<crate::backend::Project, (StatusCode, String)> {
+    let probe =
+        probe_project_create(&repo_url, branch.as_deref()).map_err(|error| match error {
+            ProjectCreateValidationError::MissingBranch { repo_url, branch } => (
+                StatusCode::CONFLICT,
+                format!("Remote branch '{}' was not found for {}.", branch, repo_url),
+            ),
+            ProjectCreateValidationError::Message(message) => (StatusCode::BAD_REQUEST, message),
+        })?;
+
     let project = app::create_project(
         name,
         StartingPoint::GitRepo {
-            url: repo_url,
-            branch,
+            url: probe.normalized_repo_url,
+            branch: Some(probe.selected_branch),
         },
         sandbox_image,
         None,
@@ -188,6 +225,7 @@ fn to_api_project_create_probe(probe: ProjectCreateProbe) -> ApiProjectCreatePro
         suggested_name: probe.suggested_name,
         selected_branch: probe.selected_branch,
         branch_source: probe.branch_source,
+        branches: probe.branches,
         worker_image: probe.worker_image,
     }
 }
@@ -288,8 +326,14 @@ pub async fn project_events(
 pub async fn probe_project_create_api(
     Query(query): Query<ProjectCreateProbeQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let probe = probe_project_create(&query.repo_url, query.branch.as_deref())
-        .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    let probe = probe_project_create(&query.repo_url, query.branch.as_deref()).map_err(
+        |error| match error {
+            ProjectCreateValidationError::MissingBranch { .. } => {
+                (StatusCode::CONFLICT, error.message())
+            }
+            ProjectCreateValidationError::Message(message) => (StatusCode::BAD_REQUEST, message),
+        },
+    )?;
     Ok(Json(to_api_project_create_probe(probe)))
 }
 
@@ -592,7 +636,7 @@ pub async fn get_knowledge_graph(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("graph query failed: {}", e)))?;
 
-    let nodes: Vec<serde_json::Value> = result.take(0).map_err(|e| {
+    let nodes: Vec<KnowledgeGraphNodeRow> = result.take(0).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to read nodes: {}", e),
@@ -610,17 +654,17 @@ pub async fn get_knowledge_graph(
             )
         })?;
 
-    let edges: Vec<serde_json::Value> = result.take(0).map_err(|e| {
+    let edges: Vec<KnowledgeGraphEdgeRow> = result.take(0).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("failed to read edges: {}", e),
         )
     })?;
 
-    Ok(Json(serde_json::json!({
-        "nodes": nodes,
-        "edges": edges,
-    })))
+    Ok(Json(ApiKnowledgeGraph {
+        nodes: nodes.into_iter().map(ApiKnowledgeGraphNode::from).collect(),
+        edges: edges.into_iter().map(ApiKnowledgeGraphEdge::from).collect(),
+    }))
 }
 
 pub async fn send_project_chat_message(

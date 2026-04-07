@@ -8,21 +8,29 @@
 //! - `CredentialStore`: Encrypted credential storage backed by SurrealDB
 //! - `ForwardedCredentials`: Credentials to pass to agent processes
 
+#[cfg(feature = "host")]
 use aes_gcm::{
     aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
+#[cfg(feature = "host")]
 use base64::Engine;
+#[cfg(feature = "host")]
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "host")]
 use std::path::Path;
+#[cfg(feature = "host")]
 use surrealdb::types::SurrealValue;
 use thiserror::Error;
 
+#[cfg(feature = "host")]
 use super::db::{global_db, DbClient};
 
+#[cfg(feature = "host")]
 const CREDENTIAL_TABLE: &str = "credential";
 
+#[cfg(feature = "host")]
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct CredentialRecord {
     key_type: String,
@@ -34,6 +42,7 @@ struct CredentialRecord {
 /// Errors that can occur during credential operations.
 #[derive(Debug, Error)]
 pub enum CredentialError {
+    #[cfg(feature = "host")]
     #[error("Database error: {0}")]
     Database(#[from] surrealdb::Error),
 
@@ -176,6 +185,7 @@ impl ForwardedCredentials {
 /// Best-effort load of credentials that should be forwarded to coding sessions.
 ///
 /// Ambient environment values win over stored fallbacks.
+#[cfg(feature = "host")]
 pub async fn load_forwarded_credentials() -> ForwardedCredentials {
     let env = ForwardedCredentials::from_env();
     match CredentialStore::open().await {
@@ -184,6 +194,12 @@ pub async fn load_forwarded_credentials() -> ForwardedCredentials {
     }
 }
 
+#[cfg(not(feature = "host"))]
+pub async fn load_forwarded_credentials() -> ForwardedCredentials {
+    ForwardedCredentials::from_env()
+}
+
+#[cfg(feature = "host")]
 pub async fn resolve_tavily_api_key() -> Option<ResolvedTavilyApiKey> {
     if let Some(api_key) = read_env_credential("TAVILY_API_KEY") {
         return Some(ResolvedTavilyApiKey {
@@ -205,6 +221,15 @@ pub async fn resolve_tavily_api_key() -> Option<ResolvedTavilyApiKey> {
     })
 }
 
+#[cfg(not(feature = "host"))]
+pub async fn resolve_tavily_api_key() -> Option<ResolvedTavilyApiKey> {
+    read_env_credential("TAVILY_API_KEY").map(|api_key| ResolvedTavilyApiKey {
+        api_key,
+        source: CredentialSource::Env,
+    })
+}
+
+#[cfg(feature = "host")]
 pub async fn resolve_github_token() -> Option<ResolvedGithubToken> {
     if let Some(token) =
         read_env_credential("GITHUB_TOKEN").or_else(|| read_env_credential("GH_TOKEN"))
@@ -228,6 +253,16 @@ pub async fn resolve_github_token() -> Option<ResolvedGithubToken> {
     })
 }
 
+#[cfg(not(feature = "host"))]
+pub async fn resolve_github_token() -> Option<ResolvedGithubToken> {
+    read_env_credential("GITHUB_TOKEN")
+        .or_else(|| read_env_credential("GH_TOKEN"))
+        .map(|token| ResolvedGithubToken {
+            token,
+            source: CredentialSource::Env,
+        })
+}
+
 pub async fn require_tavily_api_key() -> Result<ResolvedTavilyApiKey, String> {
     resolve_tavily_api_key().await.ok_or_else(|| {
         "Tavily is required for Hirsel. Set TAVILY_API_KEY in the environment or save a Tavily key in Settings."
@@ -235,6 +270,7 @@ pub async fn require_tavily_api_key() -> Result<ResolvedTavilyApiKey, String> {
     })
 }
 
+#[cfg(feature = "host")]
 pub async fn resolve_codex_oauth_credentials() -> Option<ResolvedCodexOAuthCredentials> {
     let access_token = read_env_credential("CODEX_ACCESS_TOKEN")
         .or_else(|| read_env_credential("OPENAI_ACCESS_TOKEN"));
@@ -267,7 +303,37 @@ pub async fn resolve_codex_oauth_credentials() -> Option<ResolvedCodexOAuthCrede
     })
 }
 
+#[cfg(not(feature = "host"))]
+pub async fn resolve_codex_oauth_credentials() -> Option<ResolvedCodexOAuthCredentials> {
+    let access_token = read_env_credential("CODEX_ACCESS_TOKEN")
+        .or_else(|| read_env_credential("OPENAI_ACCESS_TOKEN"));
+    let refresh_token = read_env_credential("CODEX_REFRESH_TOKEN")
+        .or_else(|| read_env_credential("OPENAI_REFRESH_TOKEN"));
+
+    let (Some(access_token), Some(refresh_token)) = (access_token, refresh_token) else {
+        return None;
+    };
+
+    let expires_at = read_env_credential("CODEX_EXPIRES_AT")
+        .or_else(|| read_env_credential("OPENAI_EXPIRES_AT"))
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(u64::MAX);
+    let account_id = read_env_credential("CODEX_ACCOUNT_ID")
+        .or_else(|| read_env_credential("OPENAI_ACCOUNT_ID"));
+
+    Some(ResolvedCodexOAuthCredentials {
+        credentials: CodexOAuthCredentials {
+            access_token,
+            refresh_token,
+            expires_at,
+            account_id,
+        },
+        source: CredentialSource::Env,
+    })
+}
+
 /// Load encryption key from file, or generate a new one if it doesn't exist.
+#[cfg(feature = "host")]
 fn load_or_generate_key(key_path: &Path) -> CredentialResult<[u8; 32]> {
     if key_path.exists() {
         let key_hex = std::fs::read_to_string(key_path)?;
@@ -313,10 +379,12 @@ fn load_or_generate_key(key_path: &Path) -> CredentialResult<[u8; 32]> {
 ///
 /// Credentials are stored encrypted using AES-256-GCM. The encryption key is
 /// stored in `~/.hirsel/key` and auto-generated on first use.
+#[cfg(feature = "host")]
 pub struct CredentialStore {
     cipher: Aes256Gcm,
 }
 
+#[cfg(feature = "host")]
 impl CredentialStore {
     /// Open the global credential store.
     pub async fn open() -> CredentialResult<Self> {
@@ -509,7 +577,7 @@ impl CredentialStore {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "host"))]
 mod tests {
     // Tests need to be updated for async - skipping for now.
 }

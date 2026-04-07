@@ -27,12 +27,12 @@ pub(super) async fn scope_activity(scope: &ShepherdScope) -> Result<ShepherdScop
     let has_active_turn = session.as_ref().is_some_and(|session| {
         matches!(
             session.status.as_str(),
-            "starting" | "running" | "interrupting"
+            "starting_container" | "waiting_for_socket" | "running" | "interrupting"
         )
     }) || live_turn.as_ref().is_some_and(|turn| {
         matches!(
             turn.status.as_str(),
-            "starting" | "running" | "interrupting"
+            "starting" | "starting_container" | "waiting_for_socket" | "running" | "interrupting"
         )
     });
     Ok(ShepherdScopeActivity {
