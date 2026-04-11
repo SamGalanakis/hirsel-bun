@@ -1,39 +1,16 @@
-import {
-  type Component,
-  For,
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  on,
-  onCleanup,
-  onMount,
-} from "solid-js";
+import { type Component, Show, createMemo, createSignal, onMount } from "solid-js";
 import Button from "@/components/ui/button";
 import Input from "@/components/ui/input";
 import Label from "@/components/ui/label";
-import {
-  createProject,
-  listProjects,
-  probeProjectCreate,
-  type ProjectCreateProbe,
-} from "@/lib/api";
+import { createProject, listProjects } from "@/lib/api";
 import { ApiError } from "@/lib/api/core";
-import { cn } from "@/lib/cn";
 
 const NewProjectPage: Component = () => {
-  const [repoUrl, setRepoUrl] = createSignal("");
-  const [nameOverride, setNameOverride] = createSignal("");
-  const [branch, setBranch] = createSignal("");
-  const [sandboxImage, setSandboxImage] = createSignal("");
+  const [name, setName] = createSignal("");
+  const [description, setDescription] = createSignal("");
   const [error, setError] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [hasProjects, setHasProjects] = createSignal(false);
-  const [probe, setProbe] = createSignal<ProjectCreateProbe | null>(null);
-  const [probeError, setProbeError] = createSignal("");
-  const [probing, setProbing] = createSignal(false);
-  const [showAdvanced, setShowAdvanced] = createSignal(false);
-  let probeRequest = 0;
 
   onMount(() => {
     void listProjects()
@@ -41,71 +18,18 @@ const NewProjectPage: Component = () => {
       .catch(() => {});
   });
 
-  const runProbe = async (url: string, branchOverride?: string) => {
-    const requestId = ++probeRequest;
-    setProbing(true);
-    setProbeError("");
-    try {
-      const result = await probeProjectCreate({ repo_url: url, branch: branchOverride });
-      if (requestId !== probeRequest) return;
-      setProbe(result);
-      if (!branch()) setBranch(result.selected_branch);
-      setError("");
-    } catch (err) {
-      if (requestId !== probeRequest) return;
-      setProbe(null);
-      setProbeError(err instanceof Error ? err.message : "Failed to inspect repository");
-    } finally {
-      if (requestId === probeRequest) setProbing(false);
-    }
-  };
-
-  createEffect(
-    on(
-      () => repoUrl().trim(),
-      (nextRepoUrl) => {
-        if (!nextRepoUrl) {
-          probeRequest += 1;
-          setProbe(null); setProbeError(""); setProbing(false);
-          return;
-        }
-        const looksRemote = nextRepoUrl.includes("://") || nextRepoUrl.startsWith("git@") || nextRepoUrl.startsWith("ssh://");
-        if (!looksRemote) {
-          probeRequest += 1;
-          setProbe(null); setProbeError(""); setProbing(false);
-          return;
-        }
-        setProbe(null); setProbeError("");
-        const timer = window.setTimeout(() => {
-          void runProbe(nextRepoUrl);
-        }, 450);
-        onCleanup(() => window.clearTimeout(timer));
-      },
-    ),
-  );
-
-  const effectiveName = createMemo(() => nameOverride().trim() || probe()?.suggested_name || "");
-  const effectiveBranch = createMemo(() => branch().trim() || probe()?.selected_branch || "");
-  const effectiveImage = createMemo(() => sandboxImage().trim() || probe()?.worker_image || "");
-  const canSubmit = createMemo(() => !!repoUrl().trim() && !!probe() && !probing() && !saving());
-  const branches = createMemo(() => probe()?.branches ?? []);
+  const canSubmit = createMemo(() => !!name().trim() && !saving());
 
   const handleSubmit = async (e: Event) => {
     e.preventDefault();
-    const url = repoUrl().trim();
-    if (!url) return;
-    if (!probe()) {
-      await runProbe(url, branch().trim() || undefined);
-      if (!probe()) return;
-    }
-    setError(""); setSaving(true);
+    const trimmedName = name().trim();
+    if (!trimmedName) return;
+    setError("");
+    setSaving(true);
     try {
       const project = await createProject({
-        name: effectiveName(),
-        repo_url: probe()!.normalized_repo_url,
-        branch: effectiveBranch() || undefined,
-        sandbox_image: sandboxImage().trim() && sandboxImage().trim() !== probe()!.worker_image
-          ? sandboxImage().trim() : undefined,
+        name: trimmedName,
+        description: description().trim() || undefined,
       });
       window.location.hash = `#project/${project.id}`;
     } catch (err) {
@@ -120,160 +44,111 @@ const NewProjectPage: Component = () => {
   };
 
   return (
-    <div class="min-h-screen bg-background text-foreground">
-      <header class="flex h-[54px] shrink-0 items-center justify-between border-b border-border bg-card/95 px-4 backdrop-blur">
-        <div class="flex items-center gap-2">
-          <a href="#" class="font-display text-base font-semibold tracking-tight text-foreground">HIRSEL</a>
-          <span class="text-xs text-muted-foreground">/</span>
-          <span class="text-sm font-medium">New project</span>
-        </div>
+    <div class="workspace-shell relative flex min-h-screen flex-col bg-background text-foreground">
+      <header class="relative z-20 flex h-12 shrink-0 items-center gap-4 border-b border-border/40 bg-background px-4">
+        <a href="#" class="group/brand flex items-center gap-2 select-none">
+          <span class="font-display text-[15px] font-medium tracking-[0.04em] text-foreground transition-colors group-hover/brand:text-brand">
+            HIRSEL
+          </span>
+          <span class="font-mono text-[9px] tabular-nums text-muted-foreground/30">v0.4</span>
+        </a>
+        <span class="h-5 w-px bg-border/50" aria-hidden="true" />
+        <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/40">
+          New project
+        </span>
         <Show when={hasProjects()}>
           <a
             href="#"
-            class="text-xs text-muted-foreground transition-colors hover:text-foreground"
+            class="ml-auto inline-flex h-7 items-center gap-1.5 px-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
             onClick={(e) => { e.preventDefault(); history.back(); }}
           >
+            <svg viewBox="0 0 16 16" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 12L6 8l4-4" />
+            </svg>
             Back
           </a>
         </Show>
       </header>
 
-      <main class="mx-auto max-w-lg px-6 py-10">
-        <Show
-          when={hasProjects()}
-          fallback={
-            <div class="mb-8">
-              <h1 class="font-display text-2xl tracking-tight text-foreground">Create your first project</h1>
-              <p class="mt-1 text-sm text-muted-foreground">Add a repository URL and Hirsel will prepare the rest.</p>
-            </div>
-          }
-        >
-          <div class="mb-8">
-            <h1 class="font-display text-2xl tracking-tight text-foreground">Add a project</h1>
+      <main class="relative z-10 flex flex-1 items-start overflow-auto px-6 py-12 lg:px-12 lg:py-20">
+        <div class="mx-auto w-full max-w-xl">
+          {/* Engraved slug */}
+          <div class="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40">
+            <span class="inline-block h-px w-6 bg-muted-foreground/30" />
+            <span>{hasProjects() ? "New project" : "Getting started"}</span>
           </div>
-        </Show>
 
-        <form onSubmit={handleSubmit} class="space-y-5">
-          {/* Repository URL */}
-          <div class="space-y-1.5">
-            <Label for="repo-url">Repository URL</Label>
-            <Input
-              id="repo-url"
-              type="text"
-              placeholder="https://github.com/org/repo"
-              value={repoUrl()}
-              onInput={(e) => setRepoUrl(e.currentTarget.value)}
-              autofocus
-            />
-            <Show when={probing()}>
-              <div class="flex items-center gap-2 text-[11px] text-muted-foreground">
-                <span class="h-1.5 w-1.5 rounded-full bg-signal-amber animate-pulse-dot" />
-                Inspecting remote...
+          <Show
+            when={hasProjects()}
+            fallback={
+              <>
+                <h1 class="font-display text-4xl font-normal tracking-tight text-foreground">
+                  Your first project
+                </h1>
+                <p class="mt-3 max-w-md text-[13px] leading-[1.7] text-muted-foreground">
+                  A project is a place to think — it holds your conversations, context, and the workspaces you attach. Start with a name; everything else comes after.
+                </p>
+              </>
+            }
+          >
+            <h1 class="font-display text-4xl font-normal tracking-tight text-foreground">
+              New project
+            </h1>
+            <p class="mt-3 max-w-md text-[13px] leading-[1.7] text-muted-foreground">
+              Name it now. Attach workspaces and context once you're inside.
+            </p>
+          </Show>
+
+          {/* Separator — thin rule with brand tick */}
+          <div class="mt-10 mb-8 flex items-center gap-3">
+            <span class="h-px flex-1 bg-border/40" />
+            <span class="h-1 w-1 bg-brand" />
+            <span class="h-px flex-1 bg-border/40" />
+          </div>
+
+          <form onSubmit={handleSubmit} class="space-y-6">
+            <div class="space-y-2">
+              <Label for="name" class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60">
+                Name
+              </Label>
+              <Input
+                id="name"
+                type="text"
+                placeholder="e.g. studio-renderer"
+                value={name()}
+                onInput={(e) => setName(e.currentTarget.value)}
+                autofocus
+              />
+            </div>
+
+            <div class="space-y-2">
+              <Label for="description" class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60">
+                Description
+                <span class="ml-2 normal-case tracking-normal text-muted-foreground/30">optional</span>
+              </Label>
+              <textarea
+                id="description"
+                class="z-input w-full resize-y text-sm leading-relaxed"
+                style="min-height: 72px; max-height: 180px;"
+                placeholder="A few sentences about what you're building or exploring."
+                value={description()}
+                onInput={(e) => setDescription(e.currentTarget.value)}
+              />
+            </div>
+
+            <Show when={error()}>
+              <div class="border border-signal-red/20 bg-signal-red/[0.05] px-4 py-3 text-sm text-signal-red">
+                {error()}
               </div>
             </Show>
-          </div>
 
-          {/* Fields that appear after probe succeeds */}
-          <Show when={probe()}>
-            <div class="space-y-4 border-t border-border pt-5">
-              {/* Project name */}
-              <div class="space-y-1.5">
-                <Label for="name">Project name</Label>
-                <Input
-                  id="name"
-                  type="text"
-                  placeholder={probe()?.suggested_name || "project-name"}
-                  value={nameOverride()}
-                  onInput={(e) => setNameOverride(e.currentTarget.value)}
-                />
-              </div>
-
-              {/* Branch dropdown */}
-              <div class="space-y-1.5">
-                <Label for="branch">Branch</Label>
-                <Show
-                  when={branches().length > 0}
-                  fallback={
-                    <Input
-                      id="branch"
-                      type="text"
-                      placeholder="main"
-                      value={branch()}
-                      onInput={(e) => setBranch(e.currentTarget.value)}
-                    />
-                  }
-                >
-                  <div class="relative">
-                    <select
-                      id="branch"
-                      class="z-input w-full appearance-none pr-8"
-                      value={branch()}
-                      onChange={(e) => setBranch(e.currentTarget.value)}
-                    >
-                      <For each={branches()}>
-                        {(b) => (
-                          <option
-                            value={b}
-                            selected={b === effectiveBranch()}
-                          >
-                            {b}{b === probe()?.selected_branch ? " (default)" : ""}
-                          </option>
-                        )}
-                      </For>
-                    </select>
-                    <svg class="pointer-events-none absolute right-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-muted-foreground" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
-                      <path d="M4 6l4 4 4-4" />
-                    </svg>
-                  </div>
-                </Show>
-              </div>
-
-              {/* Advanced toggle */}
-              <button
-                type="button"
-                class="flex items-center gap-1.5 text-[11px] text-muted-foreground/60 transition-colors hover:text-muted-foreground"
-                onClick={() => setShowAdvanced((v) => !v)}
-              >
-                <svg
-                  viewBox="0 0 16 16"
-                  class={cn("h-2.5 w-2.5 transition-transform", showAdvanced() && "rotate-90")}
-                  fill="none" stroke="currentColor" stroke-width="2"
-                >
-                  <path d="M6 4l4 4-4 4" />
-                </svg>
-                Advanced
-              </button>
-
-              <Show when={showAdvanced()}>
-                <div class="space-y-1.5 pl-4 border-l border-border/50">
-                  <Label for="image">Worker image</Label>
-                  <Input
-                    id="image"
-                    type="text"
-                    placeholder={probe()?.worker_image || "auto-detect"}
-                    value={sandboxImage()}
-                    onInput={(e) => setSandboxImage(e.currentTarget.value)}
-                  />
-                  <p class="text-[11px] text-muted-foreground/50">Docker image for the project sandbox. Leave blank for the default.</p>
-                </div>
-              </Show>
+            <div class="pt-2">
+              <Button variant="primary" type="submit" loading={saving()} disabled={!canSubmit()}>
+                Create project
+              </Button>
             </div>
-          </Show>
-
-          {/* Error */}
-          <Show when={probeError() || error()}>
-            <div class="border border-signal-red/30 bg-signal-red/10 px-4 py-3 text-sm text-signal-red">
-              {probeError() || error()}
-            </div>
-          </Show>
-
-          {/* Submit */}
-          <Show when={probe()}>
-            <Button variant="primary" type="submit" loading={saving()} disabled={!canSubmit()}>
-              Create project
-            </Button>
-          </Show>
-        </form>
+          </form>
+        </div>
       </main>
     </div>
   );

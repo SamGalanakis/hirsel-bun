@@ -4,7 +4,6 @@ import ConnectPage from "@/pages/ConnectPage";
 import { listProjects } from "@/lib/api";
 
 const WorkspacePage = lazy(() => import("@/pages/WorkspacePage"));
-const ProjectPreparationPage = lazy(() => import("@/pages/ProjectPreparationPage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const NewProjectPage = lazy(() => import("@/pages/NewProjectPage"));
 
@@ -44,14 +43,12 @@ function parseHash(hash: string): ScreenState | null {
 
 const App: Component = () => {
   const [screen, setScreen] = createSignal<ScreenState>({ page: "loading" });
-  const [readyProjects, setReadyProjects] = createSignal<Set<number>>(new Set());
 
   const navigate = () => {
     const parsed = parseHash(window.location.hash);
     if (parsed) {
       setScreen(parsed);
     } else {
-      // Default: try to redirect to first project
       listProjects()
         .then((projects) => {
           if (projects.length > 0) {
@@ -77,17 +74,6 @@ const App: Component = () => {
     onCleanup(() => window.removeEventListener("hashchange", navigate));
   });
 
-  const markProjectReady = (projectId: number) => {
-    setReadyProjects((prev) => {
-      if (prev.has(projectId)) return prev;
-      const next = new Set(prev);
-      next.add(projectId);
-      return next;
-    });
-  };
-
-  const requiresPreparation = (projectId: number) => !readyProjects().has(projectId);
-
   return (
     <div class="fixed inset-0 flex min-h-0 flex-col overflow-hidden">
       <Suspense
@@ -102,51 +88,21 @@ const App: Component = () => {
         </Show>
 
         <Show when={screen().page === "project"}>
-          <Show
-            when={!requiresPreparation((screen() as { projectId: number }).projectId)}
-            fallback={
-              <ProjectPreparationPage
-                projectId={(screen() as { projectId: number }).projectId}
-                onReady={() => markProjectReady((screen() as { projectId: number }).projectId)}
-              />
-            }
-          >
-            <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
-          </Show>
+          <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
         </Show>
 
         <Show when={screen().page === "thread"}>
-          <Show
-            when={!requiresPreparation((screen() as { projectId: number }).projectId)}
-            fallback={
-              <ProjectPreparationPage
-                projectId={(screen() as { projectId: number }).projectId}
-                onReady={() => markProjectReady((screen() as { projectId: number }).projectId)}
-              />
-            }
-          >
-            <WorkspacePage
-              projectId={(screen() as { projectId: number }).projectId}
-              threadId={(screen() as { threadId: string }).threadId}
-            />
-          </Show>
+          <WorkspacePage
+            projectId={(screen() as { projectId: number }).projectId}
+            threadId={(screen() as { threadId: string }).threadId}
+          />
         </Show>
 
         <Show when={screen().page === "librarian"}>
-          <Show
-            when={!requiresPreparation((screen() as { projectId: number }).projectId)}
-            fallback={
-              <ProjectPreparationPage
-                projectId={(screen() as { projectId: number }).projectId}
-                onReady={() => markProjectReady((screen() as { projectId: number }).projectId)}
-              />
-            }
-          >
-            <WorkspacePage
-              projectId={(screen() as { projectId: number }).projectId}
-              librarianView={true}
-            />
-          </Show>
+          <WorkspacePage
+            projectId={(screen() as { projectId: number }).projectId}
+            librarianView={true}
+          />
         </Show>
 
         <Show when={screen().page === "settings"}>

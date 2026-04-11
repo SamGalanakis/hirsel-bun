@@ -170,6 +170,17 @@ function iconSearch() {
   );
 }
 
+function iconSidebarLeft() {
+  return (
+    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="1.5" />
+      <path d="M9 4v16" />
+    </svg>
+  );
+}
+
+const TREE_COLLAPSED_KEY = "hirsel_workspace_tree_collapsed";
+
 function pairKey(pair: ComparePair | null): string {
   if (!pair) return "";
   return `${pair.leftRootId}::${pair.rightRootId}`;
@@ -179,6 +190,16 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
   const [roots, setRoots] = createSignal<WorkspaceRoot[]>([]);
   const [rootsLoading, setRootsLoading] = createSignal(false);
   const [rootsError, setRootsError] = createSignal("");
+  const [treeCollapsed, setTreeCollapsed] = createSignal(
+    typeof localStorage !== "undefined" && localStorage.getItem(TREE_COLLAPSED_KEY) === "1",
+  );
+  const toggleTreeCollapsed = () => {
+    const next = !treeCollapsed();
+    setTreeCollapsed(next);
+    try {
+      localStorage.setItem(TREE_COLLAPSED_KEY, next ? "1" : "0");
+    } catch {}
+  };
   const [expandedKeys, setExpandedKeys] = createSignal<Set<string>>(new Set());
   const [treeCache, setTreeCache] = createSignal<Record<string, WorkspaceTreeEntry[]>>({});
   const [treeLoading, setTreeLoading] = createSignal<Record<string, boolean>>({});
@@ -320,7 +341,7 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
       setTreeCache((current) => ({ ...current, [key]: tree.entries }));
     } catch (error) {
       if (error instanceof ApiError) setRootsError(error.message);
-      else setRootsError("Failed to load workspace tree");
+      else setRootsError("Couldn't load the file tree. Try refreshing.");
     } finally {
       setTreeLoading((current) => ({ ...current, [key]: false }));
     }
@@ -338,7 +359,7 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
       setCurrentDiff(diff);
     } catch (error) {
       setCurrentDiff(null);
-      setDiffFileError(error instanceof Error ? error.message : "Failed to load diff file");
+      setDiffFileError(error instanceof Error ? error.message : "Couldn't load this diff. Try again.");
     } finally {
       setDiffFileLoading(false);
     }
@@ -368,7 +389,7 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
     } catch (error) {
       setDiffEntries([]);
       setCurrentDiff(null);
-      setDiffError(error instanceof Error ? error.message : "Failed to load workspace diff");
+      setDiffError(error instanceof Error ? error.message : "Couldn't load the diff. Try again.");
     } finally {
       setDiffLoading(false);
     }
@@ -396,15 +417,22 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
         clearCompareMode();
       }
 
+      if (nextRoots.length === 0) {
+        // Project has no workspaces attached yet — show the empty state,
+        // don't try to fetch a tree (the backend will 400).
+        setRootsError("no usable workspace");
+        setSelectedNode({ kind: "root", rootId: "", path: "" });
+        return;
+      }
+
       const preferred = nextRoots.find((root) => root.id === defaultRootId())?.id
-        ?? nextRoots[0]?.id
-        ?? "main";
+        ?? nextRoots[0]!.id;
       setSelectedNode({ kind: "root", rootId: preferred, path: "" });
       setSearchScope(SEARCH_SCOPE_ALL);
       setExpandedKeys(new Set([rootExpandKey(preferred)]));
       await loadTree(preferred, "", true);
     } catch (error) {
-      setRootsError(error instanceof Error ? error.message : "Failed to load workspace roots");
+      setRootsError(error instanceof Error ? error.message : "Couldn't load workspaces for this project.");
       setRoots([]);
       clearCompareMode();
     } finally {
@@ -431,7 +459,7 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
     } catch (error) {
       setCurrentFile(null);
       setDraft("");
-      setFileError(error instanceof Error ? error.message : "Failed to load file");
+      setFileError(error instanceof Error ? error.message : "Couldn't open this file.");
     } finally {
       setFileLoading(false);
     }
@@ -503,7 +531,7 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
       setCurrentFile({ ...file, content: draft(), truncated: false });
       await loadTree(file.rootId, dirname(file.path), true);
     } catch (error) {
-      setFileError(error instanceof Error ? error.message : "Failed to save file");
+      setFileError(error instanceof Error ? error.message : "Couldn't save. Your changes weren't written — try again.");
     } finally {
       setSaveBusy(false);
     }
@@ -525,7 +553,7 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
         await openFile(target.rootId, uploadedPath, null, true);
       }
     } catch (error) {
-      setFileError(error instanceof Error ? error.message : "Failed to upload files");
+      setFileError(error instanceof Error ? error.message : "Upload failed. Check the file and try again.");
     }
   };
 
@@ -676,6 +704,16 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
       onDrop={(event) => void handleDrop(event)}
     >
       <div class="flex items-center gap-1.5 border-b border-border bg-card px-2 py-1.5">
+        <button
+          type="button"
+          class="flex h-7 w-7 items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground"
+          onClick={toggleTreeCollapsed}
+          title={treeCollapsed() ? "Show file tree" : "Hide file tree"}
+          aria-label={treeCollapsed() ? "Show file tree" : "Hide file tree"}
+          aria-pressed={treeCollapsed() ? "false" : "true"}
+        >
+          {iconSidebarLeft()}
+        </button>
         <div class="relative min-w-0 flex-1">
           <span class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground/60">
             {iconSearch()}
@@ -683,7 +721,8 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
           <input
             type="text"
             class="h-7 w-full bg-transparent pl-8 pr-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
-            placeholder="Search workspace…"
+            placeholder="Find files or text…"
+            aria-label="Search files and content"
             value={searchQuery()}
             onInput={(event) => setSearchQuery(event.currentTarget.value)}
             onKeyDown={(event) => {
@@ -777,7 +816,13 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
       />
 
       <div class="flex min-h-0 flex-1">
-        <aside class="flex w-[220px] shrink-0 flex-col bg-card/60">
+        <aside
+          class={cn(
+            "flex shrink-0 flex-col overflow-hidden bg-card/60 transition-[width] duration-150",
+            treeCollapsed() ? "w-0 border-r-0" : "w-[200px]",
+          )}
+          aria-hidden={treeCollapsed() ? "true" : "false"}
+        >
           <Show when={searchResults().length > 0 || searchLoading() || searchError()}>
             <div class="border-b border-border/60">
               <div class="flex items-center justify-between px-2.5 py-1.5">
@@ -833,7 +878,28 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
             >
               <Show
                 when={!rootsError()}
-                fallback={<div class="px-2.5 py-3 text-[11px] text-signal-red">{rootsError()}</div>}
+                fallback={(() => {
+                  const isNoWorkspace = rootsError().includes("no usable workspace") || rootsError().includes("no workspace");
+                  return (
+                    <Show
+                      when={isNoWorkspace}
+                      fallback={<div class="px-3 py-3 text-[11px] text-signal-red">{rootsError()}</div>}
+                    >
+                      <div class="flex flex-col items-start gap-4 px-4 py-8">
+                        <div class="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/60">
+                          <span class="inline-block h-px w-5 bg-muted-foreground/40" />
+                          <span>Empty</span>
+                        </div>
+                        <p class="text-[13px] leading-[1.7] text-muted-foreground">
+                          No workspaces attached to this project yet.
+                        </p>
+                        <p class="text-[12px] leading-[1.6] text-muted-foreground/70">
+                          A workspace is a local directory or git repository the agent can explore. Add one in project settings to get started.
+                        </p>
+                      </div>
+                    </Show>
+                  );
+                })()}
               >
                 <For each={roots()}>
                   {(root) => {
@@ -885,7 +951,7 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
                             </Show>
                           </div>
                           <Show when={compareOrder()}>
-                            <span class="flex h-4 min-w-4 items-center justify-center rounded-full bg-signal-blue/12 px-1 text-[10px] font-medium text-signal-blue">
+                            <span class="flex h-4 min-w-4 items-center justify-center bg-brand/15 px-1 font-mono text-[10px] font-medium text-brand">
                               {compareOrder()}
                             </span>
                           </Show>
@@ -1025,7 +1091,8 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
                         <input
                           type="text"
                           class="h-8 w-full bg-transparent text-xs text-foreground outline-none placeholder:text-muted-foreground/50"
-                          placeholder="Filter changed files…"
+                          placeholder="Filter files…"
+                          aria-label="Filter changed files"
                           value={diffFilter()}
                           onInput={(event) => setDiffFilter(event.currentTarget.value)}
                         />

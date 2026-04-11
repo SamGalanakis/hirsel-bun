@@ -12,9 +12,9 @@ The old rewrite-eval checklist targeted a different Hirsel shape. The current re
 Use these checks for the current repo:
 
 ```bash
-cargo check --manifest-path src-tauri/Cargo.toml --all-targets --all-features
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
-bash -n dev.sh
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+just --unstable --fmt --check
 bun run vite:build
 bun run test
 ```

@@ -15,9 +15,7 @@ From the repo checkout:
 
 ```bash
 HIRSEL_API_KEY=replace-me cargo run \
-  --manifest-path src-tauri/Cargo.toml \
-  --no-default-features \
-  --features server \
+  -p hirsel-cli \
   --bin hirsel-server \
   -- --port 8080
 ```
@@ -25,8 +23,8 @@ HIRSEL_API_KEY=replace-me cargo run \
 Or build a release binary first:
 
 ```bash
-cargo build --manifest-path src-tauri/Cargo.toml --release --no-default-features --features server --bin hirsel-server
-HIRSEL_API_KEY=replace-me ./src-tauri/target/release/hirsel-server --port 8080
+cargo build -p hirsel-cli --release --bin hirsel-server
+HIRSEL_API_KEY=replace-me ./target/release/hirsel-server --port 8080
 ```
 
 ## Worker Image

@@ -23,18 +23,43 @@ function scopeId(scope: TerminalScope): string {
   return `thread:${scope.thread}`;
 }
 
+// Resolve a CSS token (OKLCH, HSL, RGB, or named) to a concrete rgb() string
+// via a 1×1 canvas, which forces coercion through sRGB regardless of input space.
+function resolveTokenToRgb(tokenName: string, fallback: string): string {
+  try {
+    const el = document.createElement("div");
+    el.style.background = `var(${tokenName})`;
+    document.body.appendChild(el);
+    const computed = getComputedStyle(el).backgroundColor;
+    el.remove();
+
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return fallback;
+    ctx.fillStyle = computed;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgb(${r}, ${g}, ${b})`;
+  } catch {
+    return fallback;
+  }
+}
+
 function getTerminalTheme(): Record<string, string> {
-  const style = getComputedStyle(document.documentElement);
-  const resolve = (varName: string, fallback: string): string => {
-    const raw = style.getPropertyValue(varName).trim();
-    if (!raw) return fallback;
-    return `hsl(${raw})`;
-  };
+  const bg = resolveTokenToRgb("--color-background", "rgb(26, 25, 20)");
+  const fg = resolveTokenToRgb("--color-foreground", "rgb(218, 210, 192)");
+  const amberRgb = resolveTokenToRgb("--color-signal-amber", "rgb(201, 165, 84)");
+  // Selection uses amber with alpha — extract numbers and wrap in rgba
+  const match = amberRgb.match(/\d+/g);
+  const selection = match
+    ? `rgba(${match[0]}, ${match[1]}, ${match[2]}, 0.28)`
+    : "rgba(201, 165, 84, 0.28)";
   return {
-    background: resolve("--background", "#111114"),
-    foreground: resolve("--foreground", "#c8c8c8"),
-    cursor: resolve("--foreground", "#c8c8c8"),
-    selectionBackground: resolve("--signal-amber", "#d4a843") + "40",
+    background: bg,
+    foreground: fg,
+    cursor: fg,
+    selectionBackground: selection,
   };
 }
 
@@ -107,7 +132,7 @@ const TerminalPanel: Component<TerminalPanelProps> = (props) => {
 
     const theme = getTerminalTheme();
     terminal = new Terminal({
-      fontFamily: "Martian Mono, ui-monospace, monospace",
+      fontFamily: "Red Hat Mono, ui-monospace, monospace",
       fontSize: 12,
       lineHeight: 1.4,
       cursorBlink: true,
@@ -153,12 +178,14 @@ const TerminalPanel: Component<TerminalPanelProps> = (props) => {
   return (
     <div class="flex h-full flex-col bg-background">
       {/* Terminal header */}
-      <div class="flex h-7 shrink-0 items-center gap-1 px-1">
+      <div class="flex h-8 shrink-0 items-center gap-0.5 border-b border-border/60 px-1.5">
         <button
           type="button"
           class={cn(
-            "px-2 py-0.5 text-[11px] transition-colors",
-            scope() === "host" ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground",
+            "relative px-2.5 py-1 text-[11px] font-medium transition-colors",
+            scope() === "host"
+              ? "text-foreground after:absolute after:inset-x-1.5 after:bottom-[-1px] after:h-[1.5px] after:bg-foreground"
+              : "text-muted-foreground hover:text-foreground",
           )}
           onClick={() => switchScope("host")}
         >
@@ -167,44 +194,53 @@ const TerminalPanel: Component<TerminalPanelProps> = (props) => {
         <button
           type="button"
           class={cn(
-            "px-2 py-0.5 text-[11px] transition-colors",
-            scope() === "shepherd" ? "text-foreground" : "text-muted-foreground/40 hover:text-foreground",
+            "relative px-2.5 py-1 text-[11px] font-medium transition-colors",
+            scope() === "shepherd"
+              ? "text-foreground after:absolute after:inset-x-1.5 after:bottom-[-1px] after:h-[1.5px] after:bg-foreground"
+              : "text-muted-foreground hover:text-foreground",
           )}
           onClick={() => switchScope("shepherd")}
         >
           Shepherd
         </button>
         <For each={props.threads}>
-          {(thread) => (
-            <button
-              type="button"
-              class={cn(
-                "max-w-[120px] truncate px-2 py-0.5 text-[11px] transition-colors",
-                typeof scope() === "object" && scope() !== null && (scope() as { thread: string }).thread === thread.id
-                  ? "text-foreground"
-                  : "text-muted-foreground/40 hover:text-foreground",
-              )}
-              onClick={() => switchScope({ thread: thread.id, title: thread.title })}
-            >
-              {thread.title}
-            </button>
-          )}
+          {(thread) => {
+            const isActive = () =>
+              typeof scope() === "object" && scope() !== null && (scope() as { thread: string }).thread === thread.id;
+            return (
+              <button
+                type="button"
+                class={cn(
+                  "relative max-w-[120px] truncate px-2.5 py-1 text-[11px] font-medium transition-colors",
+                  isActive()
+                    ? "text-foreground after:absolute after:inset-x-1.5 after:bottom-[-1px] after:h-[1.5px] after:bg-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+                onClick={() => switchScope({ thread: thread.id, title: thread.title })}
+              >
+                {thread.title}
+              </button>
+            );
+          }}
         </For>
 
-        <div class="ml-auto flex items-center gap-1">
-          <span class={cn(
-            "h-1.5 w-1.5 rounded-full",
-            connected() ? "bg-signal-green" : "bg-muted-foreground/30",
-          )} />
-          <Show when={error()}>
-            <span class="text-[10px] text-signal-red">{error()}</span>
-          </Show>
+        <div class="ml-auto flex items-center gap-2">
+          <div class="flex items-center gap-1.5">
+            <span class={cn(
+              "h-2 w-2 rounded-full transition-colors",
+              connected() ? "bg-signal-green" : "bg-muted-foreground/30",
+            )} />
+            <Show when={error()}>
+              <span class="text-[10px] text-signal-red">{error()}</span>
+            </Show>
+          </div>
           <button
             type="button"
-            class="flex h-5 w-5 items-center justify-center text-muted-foreground/30 transition-colors hover:text-foreground"
+            class="flex h-6 w-6 items-center justify-center text-muted-foreground/40 transition-colors hover:text-foreground"
             onClick={props.onClose}
+            aria-label="Close terminal"
           >
-            <svg viewBox="0 0 24 24" class="h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2">
+            <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M6 6l12 12" />
               <path d="M18 6L6 18" />
             </svg>
@@ -213,7 +249,7 @@ const TerminalPanel: Component<TerminalPanelProps> = (props) => {
       </div>
 
       {/* Terminal container */}
-      <div ref={containerRef} class="min-h-0 flex-1 px-1 pb-1" />
+      <div ref={containerRef} class="min-h-0 flex-1 px-1.5 pb-1.5" />
     </div>
   );
 };

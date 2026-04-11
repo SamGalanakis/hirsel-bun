@@ -79,14 +79,6 @@ function iconFolder() {
   );
 }
 
-function iconSpark() {
-  return (
-    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8">
-      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" />
-    </svg>
-  );
-}
-
 const ChatComposer: Component<ChatComposerProps> = (props) => {
   const [skills] = createResource(() => props.projectId, listProjectSkills);
   const [cursor, setCursor] = createSignal(props.value.length);
@@ -379,61 +371,61 @@ const ChatComposer: Component<ChatComposerProps> = (props) => {
   return (
     <div class="relative">
       <Show when={skillBrowserOpen()}>
-        <div class="absolute inset-x-0 bottom-[calc(100%+12px)] z-20 border border-border bg-card shadow-lift">
-          <div class="flex items-center gap-2 border-b border-border px-3 py-2">
-            <span class="flex h-7 w-7 items-center justify-center border border-signal-blue/20 bg-signal-blue/8 text-signal-blue">
-              {iconSpark()}
+        <div class="absolute inset-x-0 bottom-[calc(100%+10px)] z-20 border border-border/60 bg-card shadow-lift">
+          <div class="flex items-baseline justify-between border-b border-border/50 px-3 py-1.5">
+            <span class="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">
+              Skills · Enter to insert
             </span>
-            <div class="min-w-0">
-              <div class="text-sm font-medium text-foreground">Skills</div>
-              <div class="text-[11px] text-muted-foreground">
-                Pick a skill to insert into the message.
-              </div>
-            </div>
             <button
               type="button"
-              class="ml-auto text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60 transition-colors hover:text-foreground"
               onClick={() => {
                 setSkillBrowserOpen(false);
                 focusTextarea();
               }}
             >
-              close
+              esc
             </button>
           </div>
-          <div class="max-h-72 overflow-y-auto p-2">
+          <div class="max-h-72 overflow-y-auto">
             <Show
               when={!skills.loading}
-              fallback={<div class="px-2 py-6 text-center text-xs text-muted-foreground">Loading skills…</div>}
+              fallback={<div class="px-3 py-6 text-center text-xs text-muted-foreground">Loading skills…</div>}
             >
               <Show
                 when={skillBrowserItems().length > 0}
-                fallback={<div class="px-2 py-6 text-center text-xs text-muted-foreground">No skills found for this project.</div>}
+                fallback={<div class="px-3 py-6 text-center text-xs text-muted-foreground">No skills found for this project.</div>}
               >
                 <For each={skillBrowserItems()}>
-                  {(skill, index) => (
-                    <button
-                      type="button"
-                      class={cn(
-                        "flex w-full items-start gap-3 border px-3 py-2 text-left transition-colors",
-                        index() === skillBrowserIndex()
-                          ? "border-signal-blue/30 bg-signal-blue/8"
-                          : "border-transparent hover:border-border hover:bg-background",
-                      )}
-                      onMouseEnter={() => setSkillBrowserIndex(index())}
-                      onClick={() => insertSkill(skill.name)}
-                    >
-                      <div class="flex h-8 w-8 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground">
-                        {iconSlash()}
-                      </div>
-                      <div class="min-w-0">
-                        <div class="font-mono text-[12px] text-foreground">/{skill.name}</div>
-                        <div class="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  {(skill, index) => {
+                    const isSelected = () => index() === skillBrowserIndex();
+                    return (
+                      <button
+                        type="button"
+                        class={cn(
+                          "group flex w-full items-baseline gap-3 border-t border-border/30 px-3 py-2 text-left transition-colors",
+                          isSelected()
+                            ? "bg-secondary/50"
+                            : "hover:bg-secondary/30",
+                        )}
+                        onMouseEnter={() => setSkillBrowserIndex(index())}
+                        onClick={() => insertSkill(skill.name)}
+                      >
+                        <span class={cn(
+                          "w-6 shrink-0 font-mono text-[10px] tabular-nums",
+                          isSelected() ? "text-brand" : "text-muted-foreground/40",
+                        )}>
+                          {String(index() + 1).padStart(2, "0")}
+                        </span>
+                        <span class="shrink-0 font-mono text-[12px] text-foreground">
+                          /{skill.name}
+                        </span>
+                        <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground/70">
                           {skill.description || "Invoke skill"}
-                        </div>
-                      </div>
-                    </button>
-                  )}
+                        </span>
+                      </button>
+                    );
+                  }}
                 </For>
               </Show>
             </Show>
@@ -442,47 +434,53 @@ const ChatComposer: Component<ChatComposerProps> = (props) => {
       </Show>
 
       <Show when={showAutocomplete()}>
-        <div class="absolute inset-x-0 bottom-[calc(100%+12px)] z-20 border border-border bg-card shadow-lift">
-          <div class="max-h-72 overflow-y-auto p-1.5">
+        <div class="absolute inset-x-0 bottom-[calc(100%+6px)] z-20 border border-border/60 bg-card shadow-lift">
+          <div class="max-h-72 overflow-y-auto">
             <Show when={suggestionsLoading()}>
-              <div class="px-2 py-2 text-xs text-muted-foreground">Loading…</div>
+              <div class="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/50">Loading…</div>
             </Show>
             <Show when={!suggestionsLoading() && suggestionsError()}>
-              <div class="px-2 py-2 text-xs text-signal-red">{suggestionsError()}</div>
+              <div class="px-3 py-2 text-[11px] text-signal-red">{suggestionsError()}</div>
             </Show>
             <For each={suggestions()}>
-              {(suggestion, index) => (
-                <button
-                  type="button"
-                  class={cn(
-                    "flex w-full items-start gap-2 px-2 py-2 text-left text-xs transition-colors",
-                    index() === selectedSuggestionIndex()
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:bg-secondary/70 hover:text-foreground",
-                  )}
-                  onMouseEnter={() => setSelectedSuggestionIndex(index())}
-                  onClick={() => acceptSuggestion(suggestion)}
-                >
-                  <span class="mt-0.5 shrink-0 text-muted-foreground/70">
-                    {suggestion.kind === "command"
-                      ? iconSpark()
-                      : suggestion.kind === "skill"
-                        ? iconSlash()
-                        : suggestion.entry.kind === "directory"
+              {(suggestion, index) => {
+                const isSelected = () => index() === selectedSuggestionIndex();
+                const needsGlyph = suggestion.kind === "file";
+                return (
+                  <button
+                    type="button"
+                    class={cn(
+                      "flex w-full items-baseline gap-2.5 border-t border-border/30 px-3 py-1.5 text-left transition-colors first:border-t-0",
+                      isSelected() ? "bg-secondary/50" : "hover:bg-secondary/30",
+                    )}
+                    onMouseEnter={() => setSelectedSuggestionIndex(index())}
+                    onClick={() => acceptSuggestion(suggestion)}
+                  >
+                    <Show when={needsGlyph}>
+                      <span class={cn(
+                        "shrink-0",
+                        isSelected() ? "text-brand" : "text-muted-foreground/40",
+                      )}>
+                        {suggestion.kind === "file" && suggestion.entry.kind === "directory"
                           ? iconFolder()
                           : iconFile()}
-                  </span>
-                  <div class="min-w-0">
-                    <div class="font-mono text-[12px] text-foreground">{suggestion.label}</div>
-                    <div class="mt-0.5 leading-5 text-muted-foreground">
+                      </span>
+                    </Show>
+                    <span class={cn(
+                      "shrink-0 font-mono text-[11px]",
+                      isSelected() ? "text-brand" : "text-foreground",
+                    )}>
+                      {suggestion.label}
+                    </span>
+                    <span class="min-w-0 flex-1 truncate text-[11px] text-muted-foreground/60">
                       {suggestion.description}
-                    </div>
-                  </div>
-                </button>
-              )}
+                    </span>
+                  </button>
+                );
+              }}
             </For>
             <Show when={!suggestionsLoading() && !suggestionsError() && suggestions().length === 0}>
-              <div class="px-2 py-2 text-xs text-muted-foreground">No matches.</div>
+              <div class="px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/40">No matches</div>
             </Show>
           </div>
         </div>
@@ -495,16 +493,33 @@ const ChatComposer: Component<ChatComposerProps> = (props) => {
         }}
       >
         <div class={cn(
-          "border bg-background shadow-sm transition-[border-color] duration-300",
-          props.running ? "border-signal-amber/25" : "border-border focus-within:border-ring",
+          "group border-t-2 transition-colors",
+          props.running
+            ? "border-signal-amber/60"
+            : "border-border/70 focus-within:border-brand/70",
         )}>
-          <div class="flex items-end gap-1 p-1">
+          <div class="flex items-center px-3 pt-1.5">
+            <span
+              aria-hidden="true"
+              class={cn(
+                "font-mono text-[9px] uppercase tracking-[0.2em] transition-colors",
+                props.running
+                  ? "text-signal-amber/80"
+                  : "text-muted-foreground/60 group-focus-within:text-brand/80",
+              )}
+            >
+              {props.running ? "Running" : props.threadId ? "Thread" : "Compose"}
+            </span>
+          </div>
+          <div class="flex items-end gap-1 px-1 pb-1">
             <textarea
               ref={textareaRef}
-              class="min-h-[42px] max-h-[220px] flex-1 resize-none appearance-none border-0 bg-transparent px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground"
+              class="min-h-[36px] max-h-[200px] flex-1 resize-none appearance-none border-0 bg-transparent px-2.5 py-2 text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground/60"
+              style={{ "field-sizing": "content" }}
               rows={1}
+              placeholder={props.running ? "Type to queue a follow-up…" : (props.threadId ? "Continue this thread…" : "Ask a question, start a task, or type / for skills…")}
               value={props.value}
-              aria-label={props.threadId ? "Thread message" : "Project message"}
+              aria-label={props.threadId ? "Message this thread" : "Message the shepherd"}
               onInput={(event) => {
                 props.onValueChange(event.currentTarget.value);
                 setCursor(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
@@ -579,35 +594,46 @@ const ChatComposer: Component<ChatComposerProps> = (props) => {
               }}
             />
 
-            <Show when={props.running}>
+            <Show
+              when={props.running}
+              fallback={
+                <button
+                  type="button"
+                  class={cn(
+                    "flex h-8 w-8 shrink-0 items-center justify-center transition-all duration-150",
+                    props.value.trim()
+                      ? "bg-brand text-background hover:bg-brand/85 active:scale-95"
+                      : "text-muted-foreground/20 cursor-default",
+                  )}
+                  onClick={() => { if (props.value.trim()) void props.onSubmit(); }}
+                  aria-label="Send message"
+                  title="Send (Enter)"
+                >
+                  <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 12L20 4L14 20L11 13L4 12Z" />
+                  </svg>
+                </button>
+              }
+            >
               <button
                 type="button"
-                class="relative flex h-9 w-9 shrink-0 items-center justify-center transition-transform hover:scale-105 active:scale-[0.92]"
+                class="flex h-8 w-8 shrink-0 items-center justify-center bg-signal-red text-background transition-all duration-150 hover:bg-signal-red/85 active:scale-95"
                 onClick={() => void props.onStop()}
                 aria-label="Stop"
                 title="Stop (Esc)"
               >
-                {/* Outer arc — clockwise, slow */}
-                <svg class="absolute inset-0 h-full w-full animate-spin-arc" viewBox="0 0 36 36" fill="none">
-                  <circle cx="18" cy="18" r="16.5" stroke="hsl(var(--signal-amber))" stroke-width="1" stroke-dasharray="20 80" stroke-linecap="round" opacity="0.45" />
-                </svg>
-                {/* Inner arc — counter-clockwise, faster */}
-                <svg class="absolute inset-[4px] h-[calc(100%-8px)] w-[calc(100%-8px)] animate-spin-arc-reverse" viewBox="0 0 36 36" fill="none">
-                  <circle cx="18" cy="18" r="16.5" stroke="hsl(var(--foreground))" stroke-width="1.5" stroke-dasharray="28 72" stroke-linecap="round" opacity="0.5" />
-                </svg>
-                {/* Stop square */}
-                <svg viewBox="0 0 24 24" class="relative h-2.5 w-2.5 text-foreground" fill="currentColor">
-                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                <svg viewBox="0 0 24 24" class="h-3 w-3" fill="currentColor">
+                  <rect x="6" y="6" width="12" height="12" rx="1" />
                 </svg>
               </button>
             </Show>
           </div>
 
           <Show when={recognizedSkills().length > 0 || recognizedFiles().length > 0}>
-            <div class="flex flex-wrap gap-1 border-t border-border/70 px-3 py-2">
+            <div class="flex flex-wrap gap-1.5 px-3 pb-2 pt-0.5">
               <For each={recognizedSkills()}>
                 {(skill) => (
-                  <Badge variant="outline" class="gap-1 border-signal-blue/25 bg-signal-blue/8 text-signal-blue">
+                  <Badge variant="outline" class="gap-1 border-signal-blue/20 bg-signal-blue/[0.06] text-signal-blue">
                     {iconSlash()}
                     {skill.label}
                   </Badge>
@@ -615,7 +641,7 @@ const ChatComposer: Component<ChatComposerProps> = (props) => {
               </For>
               <For each={recognizedFiles()}>
                 {(file) => (
-                  <Badge variant="outline" class="gap-1 border-signal-green/20 bg-signal-green/8 text-signal-green">
+                  <Badge variant="outline" class="gap-1 border-signal-green/20 bg-signal-green/[0.06] text-signal-green">
                     {iconFile()}
                     {file.label}
                   </Badge>
@@ -624,17 +650,11 @@ const ChatComposer: Component<ChatComposerProps> = (props) => {
             </div>
           </Show>
 
-          {/* Streaming shimmer — thin gradient sweep at bottom edge */}
-          <Show when={props.running}>
-            <div class="h-[2px] w-full overflow-hidden">
-              <div class="h-full w-1/3 animate-shimmer-flow bg-gradient-to-r from-transparent via-signal-amber/40 to-transparent" />
-            </div>
-          </Show>
         </div>
 
         <Show when={props.justStopped}>
-          <div class="mt-1 text-center text-[11px] text-muted-foreground">
-            Stopped. Send a message to continue.
+          <div class="mt-1.5 text-center font-mono text-[10px] text-muted-foreground/40">
+            Stopped — send a message to continue.
           </div>
         </Show>
       </form>

@@ -4,8 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::backend::api_types::LlmProviderResponse;
-use crate::backend::config;
+use hirsel_core::backend::api_types::LlmProviderResponse;
+use hirsel_core::backend::config;
 
 /// Agent model overrides for update requests
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

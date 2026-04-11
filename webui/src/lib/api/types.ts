@@ -1,41 +1,19 @@
+export interface ProjectWorkspaceEntry {
+  id: string;
+  kind: "local" | "git";
+  label: string;
+  path: string | null;
+  url: string | null;
+  branch: string | null;
+}
+
 export interface Project {
   id: number;
   name: string;
   description: string | null;
-  sandbox_image: string | null;
+  workspaces: ProjectWorkspaceEntry[];
+  shepherd_cwd: string | null;
   created_at: string;
-}
-
-export type ProjectPreparationStatus = "pending" | "working" | "done" | "failed";
-
-export interface ProjectPreparationStep {
-  id: string;
-  label: string;
-  status: ProjectPreparationStatus;
-  detail: string | null;
-  progress: number | null;
-}
-
-export interface ProjectPreparation {
-  project: Project;
-  worker_image: string;
-  status: ProjectPreparationStatus;
-  headline: string;
-  detail: string | null;
-  progress: number;
-  steps: ProjectPreparationStep[];
-  current_step_id: string | null;
-  started_at: string;
-  updated_at: string;
-}
-
-export interface ProjectCreateProbe {
-  normalized_repo_url: string;
-  suggested_name: string;
-  selected_branch: string;
-  branch_source: "explicit" | "url" | "detected";
-  branches: string[];
-  worker_image: string;
 }
 
 export interface ProjectSurface {
@@ -59,7 +37,6 @@ export interface WorkspaceSnapshot {
 
 export type LiveUpdateKind =
   | "project_changed"
-  | "project_preparation_changed"
   | "project_surface_changed"
   | "project_history_changed"
   | "project_activity_changed"
@@ -85,6 +62,7 @@ export interface ShepherdThread {
   objective: string;
   summary: string;
   status: string;
+  cwd: string | null;
   created_at: string;
   updated_at: string;
   last_activity_at: string;
@@ -93,6 +71,9 @@ export interface ShepherdThread {
 export interface ChatMessage {
   id: number;
   role: string;
+  message_kind: string;
+  preview_text: string | null;
+  collapsed_by_default: boolean;
   chunks_json: string;
   timestamp: string;
 }

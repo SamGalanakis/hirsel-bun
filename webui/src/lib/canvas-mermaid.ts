@@ -15,36 +15,60 @@ function loadMermaid(): Promise<MermaidInstance> {
   return mermaidPromise;
 }
 
-function themeColor(style: CSSStyleDeclaration, variable: string, fallback: string): string {
-  const raw = style.getPropertyValue(variable).trim();
-  return raw ? `hsl(${raw})` : fallback;
+// Resolve a CSS token to a concrete rgb() string via a 1×1 canvas.
+// This works for any color space the browser understands (oklch, hsl, rgb, named).
+function tokenToRgb(tokenName: string, fallback: string): string {
+  try {
+    const el = document.createElement("div");
+    el.style.background = `var(${tokenName})`;
+    document.body.appendChild(el);
+    const computed = getComputedStyle(el).backgroundColor;
+    el.remove();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return fallback;
+    ctx.fillStyle = computed;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgb(${r}, ${g}, ${b})`;
+  } catch {
+    return fallback;
+  }
 }
 
-function applyMermaidTheme(target: Element, mermaid: MermaidInstance): void {
-  const style = getComputedStyle(target);
+function applyMermaidTheme(_target: Element, mermaid: MermaidInstance): void {
+  // Fallbacks are warm neutrals so we never leak pure black/white if resolution fails.
+  const bg = tokenToRgb("--color-background", "rgb(26, 25, 20)");
+  const card = tokenToRgb("--color-card", "rgb(33, 32, 26)");
+  const fg = tokenToRgb("--color-foreground", "rgb(218, 210, 192)");
+  const border = tokenToRgb("--color-border", "rgb(68, 63, 55)");
+  const secondary = tokenToRgb("--color-secondary", "rgb(43, 41, 34)");
+  const mutedFg = tokenToRgb("--color-muted-foreground", "rgb(138, 132, 118)");
+
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: "loose",
     theme: "base",
-    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    fontFamily: `"Karla", system-ui, sans-serif`,
     themeVariables: {
-      background: themeColor(style, "--background", "#f6f5f1"),
-      primaryColor: themeColor(style, "--card", "#ffffff"),
-      primaryTextColor: themeColor(style, "--foreground", "#111111"),
-      primaryBorderColor: themeColor(style, "--border", "#d2d1cb"),
-      secondaryColor: themeColor(style, "--secondary", "#efeeea"),
-      secondaryTextColor: themeColor(style, "--foreground", "#111111"),
-      secondaryBorderColor: themeColor(style, "--border", "#d2d1cb"),
-      tertiaryColor: themeColor(style, "--secondary", "#efeeea"),
-      tertiaryBorderColor: themeColor(style, "--border", "#d2d1cb"),
-      tertiaryTextColor: themeColor(style, "--muted-foreground", "#666666"),
-      lineColor: themeColor(style, "--foreground", "#111111"),
-      textColor: themeColor(style, "--foreground", "#111111"),
-      mainBkg: themeColor(style, "--card", "#ffffff"),
-      clusterBkg: themeColor(style, "--secondary", "#efeeea"),
-      clusterBorder: themeColor(style, "--border", "#d2d1cb"),
-      nodeBorder: themeColor(style, "--border", "#d2d1cb"),
-      edgeLabelBackground: themeColor(style, "--background", "#f6f5f1"),
+      background: bg,
+      primaryColor: card,
+      primaryTextColor: fg,
+      primaryBorderColor: border,
+      secondaryColor: secondary,
+      secondaryTextColor: fg,
+      secondaryBorderColor: border,
+      tertiaryColor: secondary,
+      tertiaryBorderColor: border,
+      tertiaryTextColor: mutedFg,
+      lineColor: fg,
+      textColor: fg,
+      mainBkg: card,
+      clusterBkg: secondary,
+      clusterBorder: border,
+      nodeBorder: border,
+      edgeLabelBackground: bg,
       fontSize: "14px",
     },
     flowchart: {

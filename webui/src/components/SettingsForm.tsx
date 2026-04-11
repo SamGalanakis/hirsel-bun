@@ -24,10 +24,12 @@ import {
 import { openUrl } from "@/lib/open-url";
 
 const THEME_SWATCHES: Record<string, [string, string, string]> = {
-  hirsel:        ["hsl(42 20% 95%)", "hsl(30 8% 10%)", "hsl(36 80% 50%)"],
-  "hirsel-dark": ["hsl(40 8% 6%)",  "hsl(40 10% 88%)", "hsl(36 80% 50%)"],
-  midnight:      ["hsl(230 25% 7%)", "hsl(210 15% 88%)", "hsl(185 80% 55%)"],
-  bone:          ["hsl(38 40% 95%)", "hsl(20 8% 10%)",  "hsl(20 60% 40%)"],
+  forge:         ["oklch(0.16 0.012 65)", "oklch(0.91 0.018 75)", "oklch(0.70 0.13 75)"],
+  eclipse:       ["oklch(0.08 0.004 65)", "oklch(0.94 0.012 75)", "oklch(0.76 0.14 75)"],
+  graphite:      ["oklch(0.175 0.010 245)", "oklch(0.92 0.008 235)", "oklch(0.72 0.12 230)"],
+  miasma:        ["oklch(0.175 0.012 85)", "oklch(0.82 0.020 100)", "oklch(0.74 0.108 86)"],
+  parchment:     ["oklch(0.96 0.012 78)", "oklch(0.17 0.022 65)", "oklch(0.55 0.15 75)"],
+  bone:          ["oklch(0.97 0.004 235)", "oklch(0.20 0.020 245)", "oklch(0.48 0.15 250)"],
 };
 
 const providerOptions: SelectOption[] = [
@@ -200,7 +202,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
       });
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load settings");
+      setError(err instanceof Error ? err.message : "Couldn't load settings. Try refreshing the page.");
     }
   };
 
@@ -571,7 +573,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
             </Show>
 
             <Show when={llmProvider() === "openrouter"}>
-              <div class="border-l-[2px] border-border pl-5 space-y-4">
+              <div class="mt-2 border border-border/60 px-5 py-4 space-y-4">
                 <div class="space-y-1.5">
                   <Label for="or-key">API Key</Label>
                   <Show when={settings()?.openrouter_key_masked}>
@@ -805,15 +807,18 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
                       <For each={THEME_SWATCHES[t.name] ?? []}>
                         {(color) => (
                           <span
-                            class="h-4 w-2 border border-border"
+                            class="h-5 w-2.5 border border-border"
                             style={{ background: color }}
                           />
                         )}
                       </For>
                     </div>
-                    <span class="flex-1 font-medium">{t.label}</span>
+                    <div class="min-w-0 flex-1">
+                      <div class="font-medium">{t.label}</div>
+                      <div class="text-[11px] text-muted-foreground/80">{t.description}</div>
+                    </div>
                     <Show when={theme() === t.name}>
-                      <span class="font-mono text-[11px] text-muted-foreground">active</span>
+                      <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-brand">active</span>
                     </Show>
                   </button>
                 )}

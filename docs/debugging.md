@@ -40,7 +40,7 @@ docker info >/dev/null && echo ok
 The standalone backend requires an API key:
 
 ```bash
-HIRSEL_API_KEY=replace-me cargo run --manifest-path src-tauri/Cargo.toml --no-default-features --features server --bin hirsel-server -- --port 8080
+HIRSEL_API_KEY=replace-me cargo run -p hirsel-cli --bin hirsel-server -- --port 8080
 ```
 
 Health check:
@@ -51,12 +51,12 @@ curl http://127.0.0.1:8080/health -H 'x-api-key: replace-me'
 
 ## Local Dev Auth
 
-`./dev.sh` now disables HTTP API key auth by default in debug builds, even if your shell already has `HIRSEL_API_KEY` set.
+`just dev` now disables HTTP API key auth by default in debug builds, even if your shell already has `HIRSEL_API_KEY` set.
 
 Opt in explicitly when you want to test the auth flow:
 
 ```bash
-HIRSEL_DEV_AUTH=1 HIRSEL_DEV_API_KEY=replace-me ./dev.sh
+HIRSEL_DEV_AUTH=1 HIRSEL_DEV_API_KEY=replace-me just dev
 ```
 
 ## Desktop Shell
@@ -96,13 +96,13 @@ If a project has no `flake.nix`, shepherd can still answer directly and can boot
 
 ```bash
 # Full debug logging
-RUST_LOG=hirsel=debug ./dev.sh
+RUST_LOG=hirsel=debug just dev
 
 # Focus on the backend UI / HTTP path
-RUST_LOG=hirsel_lib::backend::server=debug,hirsel_lib::backend::webui=debug ./dev.sh
+RUST_LOG=hirsel_lib::backend::server=debug,hirsel_lib::backend::webui=debug just dev
 
 # Focus on shepherd queueing and container launch
-RUST_LOG=hirsel_lib::backend::shepherd_runtime=debug,hirsel_lib::backend::sandbox=debug ./dev.sh
+RUST_LOG=hirsel_lib::backend::shepherd_runtime=debug,hirsel_lib::backend::sandbox=debug just dev
 ```
 
 ## Resetting Local State
@@ -111,14 +111,14 @@ RUST_LOG=hirsel_lib::backend::shepherd_runtime=debug,hirsel_lib::backend::sandbo
 # Remove local Hirsel state
 rm -rf ~/.hirsel
 
-# Remove dev-local state used by ./dev.sh
+# Remove dev-local state used by `just dev`
 rm -rf ./.hirsel-dev
 ```
 
 ## Profiling
 
 ```bash
-./dev.sh --profiling
+just profiling
 ```
 
 This writes Perfetto-compatible traces under `~/.hirsel/profiling/`.

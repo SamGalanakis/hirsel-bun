@@ -1,26 +1,31 @@
 import { createSignal, onCleanup } from "solid-js";
 
-export type ThemeName = "hirsel" | "hirsel-dark" | "midnight" | "bone";
+export type ThemeName = "forge" | "eclipse" | "graphite" | "miasma" | "parchment" | "bone";
 
 export interface ThemeOption {
   name: ThemeName;
   label: string;
   mode: "light" | "dark";
+  description: string;
 }
 
 export const themes: ThemeOption[] = [
-  { name: "hirsel", label: "Hirsel", mode: "light" },
-  { name: "hirsel-dark", label: "Hirsel Dark", mode: "dark" },
-  { name: "midnight", label: "Midnight", mode: "dark" },
-  { name: "bone", label: "Bone", mode: "light" },
+  { name: "forge", label: "Forge", mode: "dark", description: "Warm dark — amber on walnut" },
+  { name: "eclipse", label: "Eclipse", mode: "dark", description: "Very dark — black with burnished brass" },
+  { name: "graphite", label: "Graphite", mode: "dark", description: "Cool dark — steel and ice" },
+  { name: "miasma", label: "Miasma", mode: "dark", description: "Olive dark — moss and fog" },
+  { name: "parchment", label: "Parchment", mode: "light", description: "Warm light — cream and walnut" },
+  { name: "bone", label: "Bone", mode: "light", description: "Cool light — paper and slate" },
 ];
 
 const STORAGE_KEY = "hirsel-theme";
 
 const modeMap: Record<ThemeName, "light" | "dark"> = {
-  hirsel: "light",
-  "hirsel-dark": "dark",
-  midnight: "dark",
+  forge: "dark",
+  eclipse: "dark",
+  graphite: "dark",
+  miasma: "dark",
+  parchment: "light",
   bone: "light",
 };
 
@@ -32,8 +37,8 @@ function resolveInitial(): ThemeName {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (isValidTheme(stored)) return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "hirsel-dark"
-    : "hirsel";
+    ? "forge"
+    : "parchment";
 }
 
 function applyTheme(name: ThemeName) {
@@ -57,11 +62,10 @@ export function useTheme() {
     applyTheme(name);
   }
 
-  // Listen for system preference changes
   const mql = window.matchMedia("(prefers-color-scheme: dark)");
   const handler = () => {
     if (!localStorage.getItem(STORAGE_KEY)) {
-      const auto = mql.matches ? "hirsel-dark" : "hirsel";
+      const auto = mql.matches ? "forge" : "parchment";
       setThemeSignal(auto);
       applyTheme(auto);
     }
@@ -69,7 +73,6 @@ export function useTheme() {
   mql.addEventListener("change", handler);
   onCleanup(() => mql.removeEventListener("change", handler));
 
-  // Apply on mount
   applyTheme(theme());
 
   return { theme, setTheme };

@@ -6,9 +6,8 @@ import type {
   KnowledgeGraphNode,
   LiveUpdateEvent,
   Project,
-  ProjectCreateProbe,
-  ProjectPreparation,
   ProjectSurface,
+  ProjectWorkspaceEntry,
   ScopeActivity,
   WorkspaceSnapshot,
 } from "@/lib/api/types";
@@ -23,36 +22,55 @@ export async function getProject(projectId: number): Promise<Project> {
   return parseJson<Project>(res);
 }
 
-export async function probeProjectCreate(data: {
-  repo_url: string;
-  branch?: string;
-}): Promise<ProjectCreateProbe> {
-  const params = new URLSearchParams();
-  params.set("repo_url", data.repo_url);
-  if (data.branch?.trim()) {
-    params.set("branch", data.branch.trim());
-  }
-  const res = await apiFetch(`/projects/probe?${params.toString()}`);
-  return parseJson<ProjectCreateProbe>(res);
-}
-
-export async function getProjectPreparation(projectId: number): Promise<ProjectPreparation> {
-  const res = await apiFetch(`/projects/${projectId}/preparation`);
-  return parseJson<ProjectPreparation>(res);
-}
-
-export async function startProjectPreparation(projectId: number): Promise<ProjectPreparation> {
-  const res = await apiFetch(`/projects/${projectId}/preparation/start`, {
+export async function createProject(data: {
+  name: string;
+  description?: string;
+}): Promise<Project> {
+  const res = await apiFetch("/projects", {
     method: "POST",
+    body: JSON.stringify(data),
   });
-  return parseJson<ProjectPreparation>(res);
+  return parseJson<Project>(res);
 }
 
-export async function retryProjectPreparation(projectId: number): Promise<ProjectPreparation> {
-  const res = await apiFetch(`/projects/${projectId}/preparation/retry`, {
+export async function deleteProject(projectId: number): Promise<void> {
+  const res = await apiFetch(`/projects/${projectId}`, { method: "DELETE" });
+  await parseJson<{ ok: true }>(res);
+}
+
+export async function saveProjectSettings(
+  projectId: number,
+  data: {
+    name: string;
+    description?: string | null;
+  },
+): Promise<Project> {
+  const res = await apiFetch(`/projects/${projectId}/settings`, {
     method: "POST",
+    body: JSON.stringify(data),
   });
-  return parseJson<ProjectPreparation>(res);
+  return parseJson<Project>(res);
+}
+
+export async function addProjectWorkspace(
+  projectId: number,
+  workspace: Omit<ProjectWorkspaceEntry, "id">,
+): Promise<Project> {
+  const res = await apiFetch(`/projects/${projectId}/workspaces`, {
+    method: "POST",
+    body: JSON.stringify(workspace),
+  });
+  return parseJson<Project>(res);
+}
+
+export async function removeProjectWorkspace(
+  projectId: number,
+  workspaceId: string,
+): Promise<Project> {
+  const res = await apiFetch(`/projects/${projectId}/workspaces/${workspaceId}`, {
+    method: "DELETE",
+  });
+  return parseJson<Project>(res);
 }
 
 export async function getProjectActivity(projectId: number): Promise<ScopeActivity> {
@@ -163,13 +181,6 @@ export async function stopLibrarianChat(projectId: number): Promise<void> {
   await parseJson<{ ok: true }>(res);
 }
 
-export async function triggerKnowledgeScan(projectId: number): Promise<void> {
-  const res = await apiFetch(`/projects/${projectId}/knowledge-graph/scan`, {
-    method: "POST",
-  });
-  await parseJson<{ ok: true }>(res);
-}
-
 export async function getKnowledgeGraph(projectId: number): Promise<KnowledgeGraph> {
   const res = await apiFetch(`/projects/${projectId}/knowledge-graph`);
   return parseJson<KnowledgeGraph>(res);
@@ -195,37 +206,4 @@ export async function sendChatMessage(projectId: number, content: string): Promi
 export async function stopChat(projectId: number): Promise<void> {
   const res = await apiFetch(`/projects/${projectId}/chat/stop`, { method: "POST" });
   await parseJson<{ ok: true }>(res);
-}
-
-export async function createProject(data: {
-  name: string;
-  repo_url: string;
-  branch?: string;
-  sandbox_image?: string;
-}): Promise<Project> {
-  const res = await apiFetch("/projects", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-  return parseJson<Project>(res);
-}
-
-export async function deleteProject(projectId: number): Promise<void> {
-  const res = await apiFetch(`/projects/${projectId}`, { method: "DELETE" });
-  await parseJson<{ ok: true }>(res);
-}
-
-export async function saveProjectSettings(
-  projectId: number,
-  data: {
-    name: string;
-    description?: string | null;
-    sandbox_image?: string;
-  },
-): Promise<Project> {
-  const res = await apiFetch(`/projects/${projectId}/settings`, {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
-  return parseJson<Project>(res);
 }

@@ -563,13 +563,13 @@ function nodeKey(kind: string, nodeId: string): string {
 async function loadGraphNodeMap(projectId: number): Promise<Map<string, CachedGraphNode>> {
   const cached = knowledgeGraphCache.get(projectId);
   if (cached) return cached;
-    const pending = getKnowledgeGraph(projectId).then((graph) => {
-      const map = new Map<string, CachedGraphNode>();
-      for (const node of graph.nodes) {
-        map.set(nodeKey(node.kind, node.node_id), node as unknown as CachedGraphNode);
-      }
-      return map;
-    });
+  const pending = getKnowledgeGraph(projectId).then((graph) => {
+    const map = new Map<string, CachedGraphNode>();
+    for (const node of graph.nodes) {
+      map.set(nodeKey(node.kind, node.node_id), node as unknown as CachedGraphNode);
+    }
+    return map;
+  });
   knowledgeGraphCache.set(projectId, pending);
   return pending;
 }
@@ -1113,7 +1113,7 @@ class HirselProgressElement extends HTMLElement {
           </div>
         ` : ""}
         <div class="hirsel-progress-track">
-          <div class="hirsel-progress-fill" style="width:${percent}%"></div>
+          <div class="hirsel-progress-fill" style="transform:scaleX(${percent / 100})"></div>
         </div>
         ${footer}
       </div>
@@ -2037,7 +2037,7 @@ class HirselNodeRefElement extends HTMLElement {
     }
     const parsed = parseNodeAttr(this.getAttribute("node"));
     if (!parsed) {
-      this.innerHTML = renderNodeError("Invalid node reference. Expected kind:id.");
+      this.innerHTML = renderNodeError("Invalid node reference. Expected node=\"kind:id\".");
       return;
     }
     const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));
@@ -2091,7 +2091,7 @@ class HirselNodeFieldElement extends HTMLElement {
     const parsed = parseNodeAttr(this.getAttribute("node"));
     const field = this.getAttribute("field")?.trim() ?? "";
     if (!parsed || !field) {
-      this.innerHTML = renderNodeError("hirsel-node-field requires node and field attributes.");
+      this.innerHTML = renderNodeError("hirsel-node-field requires field plus node=\"kind:id\".");
       return;
     }
     const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));
@@ -2140,7 +2140,7 @@ class HirselNodeListElement extends HTMLElement {
     const parsed = parseNodeAttr(this.getAttribute("node"));
     const relation = this.getAttribute("relation")?.trim() ?? "";
     if (!parsed || !relation) {
-      this.innerHTML = renderNodeError("hirsel-node-list requires node and relation attributes.");
+      this.innerHTML = renderNodeError("hirsel-node-list requires relation plus node=\"kind:id\".");
       return;
     }
     const graph = await getKnowledgeGraph(projectId);
@@ -2194,7 +2194,7 @@ class HirselDocLinkElement extends HTMLElement {
     }
     const parsed = parseNodeAttr(this.getAttribute("node"));
     if (!parsed) {
-      this.innerHTML = renderNodeError("hirsel-doc-link requires a node attribute (e.g. document:architecture).");
+      this.innerHTML = renderNodeError("hirsel-doc-link requires node=\"kind:id\".");
       return;
     }
     const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));
@@ -2243,7 +2243,7 @@ class HirselDocEmbedElement extends HTMLElement {
     }
     const parsed = parseNodeAttr(this.getAttribute("node"));
     if (!parsed) {
-      this.innerHTML = renderNodeError("hirsel-doc-embed requires a node attribute (e.g. document:architecture).");
+      this.innerHTML = renderNodeError("hirsel-doc-embed requires node=\"kind:id\".");
       return;
     }
     const node = (await loadGraphNodeMap(projectId)).get(nodeKey(parsed.kind, parsed.nodeId));

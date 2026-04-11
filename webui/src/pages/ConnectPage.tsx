@@ -39,43 +39,52 @@ const ConnectPage: Component = () => {
   };
 
   return (
-    <div class="flex min-h-screen items-center justify-center bg-background px-6">
-      <Card class="w-full max-w-md">
-        <CardHeader>
-          <CardTitle class="font-display text-3xl tracking-tight">Sign in</CardTitle>
-          <p class="text-sm text-muted-foreground">
-            Enter your API key to connect.
+    <div class="workspace-shell relative flex min-h-screen items-center justify-center bg-background px-6">
+      <div class="w-full max-w-sm">
+        <div class="mb-8 text-center">
+          <h1 class="font-display text-2xl font-semibold tracking-tight text-foreground">HIRSEL</h1>
+          <p class="mt-2 text-sm text-muted-foreground/70">
+            Connect your API key to get started.
           </p>
-        </CardHeader>
+        </div>
 
-        <CardContent>
-          <form onSubmit={handleSubmit} class="space-y-4">
-            <div class="space-y-1.5">
-              <Label for="api-key">API Key</Label>
-              <Input
-                id="api-key"
-                type="password"
-                placeholder="sk-ant-..."
-                value={apiKey()}
-                onInput={(e) => setApiKey(e.currentTarget.value)}
-                autofocus
-              />
-            </div>
+        <Card class="shadow-md">
+          <CardContent class="p-6">
+            <form onSubmit={handleSubmit} class="space-y-5">
+              <div class="space-y-2">
+                <Label for="api-key">API Key</Label>
+                <Input
+                  id="api-key"
+                  type="password"
+                  placeholder="sk-ant-..."
+                  value={apiKey()}
+                  onInput={(e) => setApiKey(e.currentTarget.value)}
+                  autofocus
+                />
+                <p class="text-[11px] text-muted-foreground/50">
+                  Your key is stored locally and never shared.
+                </p>
+              </div>
 
-            {error() && <p class="text-xs text-signal-red">{error()}</p>}
+              {error() && (
+                <div class="border border-signal-red/20 bg-signal-red/[0.05] px-3 py-2 text-xs text-signal-red">
+                  {error()}
+                </div>
+              )}
 
-            <Button
-              variant="primary"
-              type="submit"
-              class="w-full"
-              loading={loading()}
-              disabled={!apiKey().trim()}
-            >
-              Connect
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+              <Button
+                variant="primary"
+                type="submit"
+                class="w-full"
+                loading={loading()}
+                disabled={!apiKey().trim()}
+              >
+                Connect
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 };

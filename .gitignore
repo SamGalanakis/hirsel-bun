@@ -42,5 +42,9 @@ __pycache__/
 
 # Rust/Cargo build output
 target/
-src-tauri/target/
+**/target/
 result
+
+# Local temp/editor leftovers
+.tmp/
+*~

@@ -1,8 +1,18 @@
 #V2
-USE NS hirsel DB app;
-SELECT id, updated_at FROM kg_node WHERE updated_at IS NOT NONE AND type::is_string(updated_at) LIMIT 20;
-USE NS hirsel DB app;
-SELECT id, updated_at, type::string(updated_at) AS updated_at_string FROM kg_node WHERE updated_at IS NOT NONE LIMIT 5;
-USE NS hirsel DB app;
-UPDATE kg_node SET updated_at = <datetime> type::string(updated_at) WHERE updated_at IS NOT NONE;
-SELECT id, updated_at FROM kg_node WHERE updated_at IS NOT NONE LIMIT 5;
+INFO FOR DB;
+DEFINE TABLE IF NOT EXISTS agent SCHEMALESS;
+DEFINE ACCESS IF NOT EXISTS librarian ON DATABASE TYPE RECORD
+INFO FOR TABLE kg_node;
+INFO FOR TABLE kg_edge;
+SELECT count() AS count FROM kg_node GROUP ALL;
+SELECT kind, node_id, label, source, project_id FROM kg_node ORDER BY kind, node_id;
+SELECT * FROM kg_node WHERE node_id = 'test-node';
+SELECT * FROM kg_node WHERE kind = 'feature' AND node_id = 'test-node';
+SELECT count() AS count FROM kg_edge GROUP ALL;
+SELECT * FROM kg_edge;
+SELECT count() AS count FROM kg_node GROUP ALL;
+SELECT id, kind, node_id, label, project_id, source FROM kg_node ORDER BY kind, node_id;
+SELECT * FROM kg_node WHERE node_id = 'test-node';
+SELECT id, id[0] AS id0, id[1] AS id1, id[2] AS id2 FROM kg_node;
+SELECT * FROM kg_node WHERE id[0] = 2;
+SELECT count() AS count FROM kg_edge GROUP ALL;

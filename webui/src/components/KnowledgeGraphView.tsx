@@ -13,61 +13,70 @@ function ensureCanvasComponents(): Promise<void> {
   return canvasComponentsLoaded;
 }
 
-// ── Color system ──
+// ── Color system — warm, analog palette aligned with brand ──
+// Colors chosen to harmonize with the forge/miasma/parchment palette:
+// dominant amber/gold for features, moss for lore, burnt for issues,
+// terracotta for decisions, tawny for documents, etc.
 
 const KIND_COLORS: Record<string, number> = {
-  artifact:    0x7a8fa5,
-  feature:     0xd4a843,
-  issue:       0xc94040,
-  decision:    0xd4843a,
-  lore:        0x5db86c,
-  document:    0xb07cd4,
-  module:      0x5a9bcf,
-  function:    0x4caf80,
-  bug:         0xe05555,
-  idea:        0xc490d8,
-  observation: 0x5ac4c4,
-  risk:        0xd45080,
+  artifact:    0x9aa098,  // dusty sage gray
+  feature:     0xc9a554,  // gold
+  issue:       0xb35642,  // burnt sienna
+  decision:    0xc87a3a,  // terracotta
+  lore:        0x6b8e5a,  // moss
+  document:    0xb8926a,  // tawny
+  module:      0x7a8870,  // olive gray
+  function:    0x8ba970,  // sage green
+  bug:         0xc34444,  // brick red
+  idea:        0xd4a850,  // warm amber
+  observation: 0x8a9a88,  // muted sage
+  risk:        0xb86848,  // rust
 };
 
 const KIND_CSS: Record<string, string> = {
-  artifact:    "#7a8fa5",
-  feature:     "#d4a843",
-  issue:       "#c94040",
-  decision:    "#d4843a",
-  lore:        "#5db86c",
-  document:    "#b07cd4",
-  module:      "#5a9bcf",
-  function:    "#4caf80",
-  bug:         "#e05555",
-  idea:        "#c490d8",
-  observation: "#5ac4c4",
-  risk:        "#d45080",
+  artifact:    "#9aa098",
+  feature:     "#c9a554",
+  issue:       "#b35642",
+  decision:    "#c87a3a",
+  lore:        "#6b8e5a",
+  document:    "#b8926a",
+  module:      "#7a8870",
+  function:    "#8ba970",
+  bug:         "#c34444",
+  idea:        "#d4a850",
+  observation: "#8a9a88",
+  risk:        "#b86848",
 };
 
-const DEFAULT_COLOR = 0x888888;
-const DEFAULT_CSS = "#888888";
-const EDGE_COLOR = 0x555555;
-const EDGE_HIGHLIGHT = 0xaaaaaa;
-const LABEL_COLOR = "#c8c8c8";
+// Neutral fallbacks used only when the CSS token reader fails.
+// Actual rendering uses the active theme's tokens via tokenToRgba/getBgColor.
+const DEFAULT_COLOR = 0x706c64;
+const DEFAULT_CSS = "#706c64";
+const EDGE_COLOR = 0x4a4640;
+const EDGE_HIGHLIGHT = 0xa89060;
 
 function getBgColor(): number {
-  const style = getComputedStyle(document.documentElement);
-  const raw = style.getPropertyValue("--background").trim();
-  const match = raw.match(/([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/);
-  if (match) {
-    const [, h, s, l] = match.map(Number);
-    const el = document.createElement("div");
-    el.style.color = `hsl(${h} ${s}% ${l}%)`;
-    document.body.appendChild(el);
-    const computed = getComputedStyle(el).color;
-    el.remove();
-    const rgb = computed.match(/\d+/g);
-    if (rgb && rgb.length >= 3) {
-      return (Number(rgb[0]) << 16) | (Number(rgb[1]) << 8) | Number(rgb[2]);
-    }
+  // Read the current theme background, then use a 1x1 canvas to convert
+  // any color string (oklch, rgb, hsl, named) to an RGB int. Canvas fillStyle
+  // coerces through sRGB so this handles every color space the browser knows.
+  const el = document.createElement("div");
+  el.style.background = "var(--color-background)";
+  document.body.appendChild(el);
+  const computed = getComputedStyle(el).backgroundColor;
+  el.remove();
+
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return 0x1a1914;
+    ctx.fillStyle = computed;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return (r << 16) | (g << 8) | b;
+  } catch {
+    return 0x1a1914;
   }
-  return 0x111114;
 }
 
 // ── Types ──
@@ -118,16 +127,19 @@ function extractRecordKey(id: unknown): string {
   return String(id);
 }
 
+// Font stack for in-canvas text — uses the brand font family with fallbacks.
+const CANVAS_FONT = `'Karla', system-ui, sans-serif`;
+
 function makeTextSprite(text: string, color: string, fontSize = 28, fontWeight = "500"): THREE.Sprite {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
-  ctx.font = `${fontWeight} ${fontSize}px system-ui, sans-serif`;
+  ctx.font = `${fontWeight} ${fontSize}px ${CANVAS_FONT}`;
   const metrics = ctx.measureText(text);
   const width = Math.ceil(metrics.width) + 12;
   const height = fontSize + 8;
   canvas.width = width;
   canvas.height = height;
-  ctx.font = `${fontWeight} ${fontSize}px system-ui, sans-serif`;
+  ctx.font = `${fontWeight} ${fontSize}px ${CANVAS_FONT}`;
   ctx.fillStyle = color;
   ctx.textBaseline = "middle";
   ctx.fillText(text, 6, height / 2);
@@ -139,11 +151,33 @@ function makeTextSprite(text: string, color: string, fontSize = 28, fontWeight =
   return sprite;
 }
 
+// Resolve a CSS token to rgba(...) at the given alpha. Used so edge label pills
+// and label text follow the active theme.
+function tokenToRgba(tokenName: string, alpha: number, fallback: string): string {
+  try {
+    const el = document.createElement("div");
+    el.style.background = `var(${tokenName})`;
+    document.body.appendChild(el);
+    const computed = getComputedStyle(el).backgroundColor;
+    el.remove();
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 1;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return fallback;
+    ctx.fillStyle = computed;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  } catch {
+    return fallback;
+  }
+}
+
 function makeEdgeLabelSprite(text: string): THREE.Sprite {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   const fontSize = 20;
-  ctx.font = `400 ${fontSize}px system-ui, sans-serif`;
+  ctx.font = `400 ${fontSize}px ${CANVAS_FONT}`;
   const metrics = ctx.measureText(text);
   const pad = 8;
   const width = Math.ceil(metrics.width) + pad * 2;
@@ -151,11 +185,11 @@ function makeEdgeLabelSprite(text: string): THREE.Sprite {
   canvas.width = width;
   canvas.height = height;
 
-  // Background pill
-  ctx.fillStyle = "rgba(0,0,0,0.7)";
+  // Background pill — uses the theme's background token, not pure black
+  ctx.fillStyle = tokenToRgba("--color-background", 0.82, "rgba(26, 25, 20, 0.82)");
   ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = "#999";
-  ctx.font = `400 ${fontSize}px system-ui, sans-serif`;
+  ctx.fillStyle = tokenToRgba("--color-muted-foreground", 0.9, "rgba(150, 145, 135, 0.9)");
+  ctx.font = `400 ${fontSize}px ${CANVAS_FONT}`;
   ctx.textBaseline = "middle";
   ctx.fillText(text, pad, height / 2);
 
@@ -245,6 +279,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
   let resizeObserver: ResizeObserver | undefined;
 
   const [loading, setLoading] = createSignal(true);
+  const [loadError, setLoadError] = createSignal<string | null>(null);
   const [nodeCount, setNodeCount] = createSignal(0);
   const [hovered, setHovered] = createSignal<SimNode | null>(null);
   const [hoveredEdge, setHoveredEdge] = createSignal<SimEdge | null>(null);
@@ -502,7 +537,8 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
 
       const label = node.label || node.node_id || node.kind;
       const displayLabel = label.length > 22 ? label.slice(0, 20) + "\u2026" : label;
-      const sprite = makeTextSprite(displayLabel, LABEL_COLOR);
+      const labelColor = tokenToRgba("--color-foreground", 0.92, "rgba(218, 210, 192, 0.92)");
+      const sprite = makeTextSprite(displayLabel, labelColor);
 
       const prior = previousNodes.get(key);
       const position = (() => {
@@ -729,11 +765,13 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
 
   const loadData = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await getKnowledgeGraph(props.projectId);
       buildGraph(data);
-    } catch {
-      // empty graph is fine
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Failed to load knowledge graph");
+      buildGraph({ nodes: [], edges: [] });
     } finally {
       setLoading(false);
     }
@@ -763,6 +801,18 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
     resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(containerRef);
     resize();
+
+    // Listen for theme changes — repaint clear color when <html data-theme> changes
+    const themeObserver = new MutationObserver(() => {
+      if (renderer) {
+        renderer.setClearColor(getBgColor());
+      }
+    });
+    themeObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    onCleanup(() => themeObserver.disconnect());
 
     // Wheel zoom
     containerRef.addEventListener("wheel", (e) => {
@@ -1138,7 +1188,20 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
           <span class="kg-status-text">Loading graph\u2026</span>
         </div>
       </Show>
-      <Show when={!loading() && nodeCount() === 0}>
+      <Show when={!loading() && !!loadError()}>
+        <div class="kg-status-overlay">
+          <div class="kg-empty">
+            <svg viewBox="0 0 24 24" class="kg-empty-icon" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 8v5" />
+              <circle cx="12" cy="16.5" r="0.8" fill="currentColor" stroke="none" />
+            </svg>
+            <p class="kg-empty-title">Knowledge graph unavailable</p>
+            <p class="kg-empty-hint">{loadError()}</p>
+          </div>
+        </div>
+      </Show>
+      <Show when={!loading() && !loadError() && nodeCount() === 0}>
         <div class="kg-empty">
           <svg viewBox="0 0 24 24" class="kg-empty-icon" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="12" cy="12" r="3" />

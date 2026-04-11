@@ -71,7 +71,7 @@ const MonacoTextEditor: Component<MonacoTextEditorProps> = (props) => {
       applyTheme();
       editor = monaco.editor.create(hostRef, {
         automaticLayout: false,
-        fontFamily: "Martian Mono, ui-monospace, monospace",
+        fontFamily: "Red Hat Mono, ui-monospace, monospace",
         fontLigatures: false,
         fontSize: 12,
         glyphMargin: false,

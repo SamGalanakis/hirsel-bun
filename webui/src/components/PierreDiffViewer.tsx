@@ -27,7 +27,7 @@ interface PierreDiffViewerProps {
 
 function currentThemeType(): "dark" | "light" {
   const theme = document.documentElement.getAttribute("data-theme") ?? "";
-  return theme === "hirsel" || theme === "bone" ? "light" : "dark";
+  return theme === "parchment" || theme === "bone" ? "light" : "dark";
 }
 
 const PierreDiffViewer: Component<PierreDiffViewerProps> = (props) => {

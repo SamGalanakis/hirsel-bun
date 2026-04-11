@@ -1,5 +1,6 @@
 //! Unified error handling for Tauri GUI commands.
 
+use hirsel_core::backend::config;
 use serde::Serialize;
 use std::fmt;
 
@@ -107,14 +108,8 @@ impl From<std::io::Error> for GuiError {
     }
 }
 
-impl From<crate::backend::git::GitError> for GuiError {
-    fn from(err: crate::backend::git::GitError) -> Self {
-        Self::new(ErrorCode::GitError, "Git operation failed").with_details(err.to_string())
-    }
-}
-
-impl From<crate::backend::config::ConfigError> for GuiError {
-    fn from(err: crate::backend::config::ConfigError) -> Self {
+impl From<config::ConfigError> for GuiError {
+    fn from(err: config::ConfigError) -> Self {
         Self::new(ErrorCode::ConfigError, "Configuration error").with_details(err.to_string())
     }
 }

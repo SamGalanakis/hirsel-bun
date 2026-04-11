@@ -111,6 +111,7 @@ const GLOBAL_ATTRIBUTES = new Set([
   "d",
   "detail",
   "disabled",
+  "field",
   "fill",
   "filename",
   "for",

@@ -4,8 +4,8 @@
 
 use super::types::ConfigUpdateRequest;
 use super::ResultExt;
-use crate::backend::api_types::ConfigResponse;
-use crate::backend::config;
+use hirsel_core::backend::api_types::ConfigResponse;
+use hirsel_core::backend::config;
 use tauri::Manager;
 
 /// Get application configuration stored on this client.

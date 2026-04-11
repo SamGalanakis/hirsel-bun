@@ -14,7 +14,7 @@ import {
 import { cn } from "@/lib/cn";
 import CanvasSurface from "@/components/CanvasSurface";
 import ChatComposer from "@/components/ChatComposer";
-import ChatMessage from "@/components/ChatMessage";
+import ChatTranscript from "@/components/chat/ChatTranscript";
 import SettingsForm from "@/components/SettingsForm";
 import { matchesAction } from "@/lib/keybindings";
 import {
@@ -37,11 +37,13 @@ import {
   stopChat,
   stopThreadChat,
   subscribeProjectEvents,
-  triggerKnowledgeScan,
   sendLibrarianMessage,
   stopLibrarianChat,
   deleteProject,
   saveProjectSettings,
+  addProjectWorkspace,
+  removeProjectWorkspace,
+  type ProjectWorkspaceEntry,
 } from "@/lib/api";
 
 const KnowledgeGraphView = lazy(() => import("@/components/KnowledgeGraphView"));
@@ -57,12 +59,15 @@ interface WorkspacePageProps {
 const ROOT_CHANNEL_LABEL = "Shepherd";
 const MOBILE_MEDIA = "(max-width: 900px)";
 const INSPECTOR_WIDTH_KEY = "hirsel_workspace_inspector_width";
-const INSPECTOR_MIN = 300;
+const INSPECTOR_MIN = 320;
+const INSPECTOR_DEFAULT = 640;
 const SIDEBAR_WIDTH_KEY = "hirsel_workspace_sidebar_width";
-const SIDEBAR_MIN = 180;
-const SIDEBAR_MAX = 480;
-const MAIN_MIN = 360;
-const SIDEBAR_DEFAULT = 260;
+const SIDEBAR_MIN = 160;
+const SIDEBAR_MAX = 360;
+const MAIN_MIN = 420;
+const SIDEBAR_DEFAULT = 210;
+const LIBRARIAN_FULL_SCAN_MESSAGE =
+  "Full workspace scan.\n\nExplore the current workspace, refresh the graph, lore, and canvas anywhere they are stale or incomplete, and then reply with a concise summary of what you updated or that everything was already up to date.";
 
 type WorkspaceBannerError = {
   message: string;
@@ -167,31 +172,36 @@ function classifyWorkspaceError(value: string | null | undefined): WorkspaceBann
   const lower = trimmed.toLowerCase();
   if (lower.includes("codex credentials not configured")) {
     return {
-      message:
-        "Codex is selected as the active provider, but it is not connected. Open Settings -> Provider to connect Codex or switch providers.",
+      message: "Codex isn't connected yet. Open settings to sign in, or switch to another provider.",
       action: "open-settings",
       raw: trimmed,
     };
   }
   if (lower.includes("openrouter api key not configured")) {
     return {
-      message:
-        "OpenRouter is selected as the active provider, but no API key is configured. Open Settings -> Provider to add one or switch providers.",
+      message: "OpenRouter needs an API key. Add one in settings, or switch to another provider.",
       action: "open-settings",
       raw: trimmed,
     };
   }
   if (lower.includes("lock is already locked by another process")) {
     return {
-      message:
-        "The local worker crashed while opening the shared app database. Restart Hirsel so the worker runtime is rebuilt with the latest code.",
+      message: "Hirsel's database is locked by another process. Restart Hirsel to continue.",
       action: null,
       raw: trimmed,
     };
   }
   if (lower.includes("rpc connection closed")) {
     return {
-      message: "The local worker session disconnected unexpectedly. Restart Hirsel and try again.",
+      message: "Lost connection to the local agent. Restart Hirsel and try again.",
+      action: null,
+      raw: trimmed,
+    };
+  }
+  if (lower.includes("returned no user-visible output")
+    || lower.includes("model returned no usable output")) {
+    return {
+      message: "The model finished without producing a response. Try rephrasing your message.",
       action: null,
       raw: trimmed,
     };
@@ -279,7 +289,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     Math.min(
       Math.floor(window.innerWidth * 0.46),
       window.innerWidth - SIDEBAR_DEFAULT - MAIN_MIN,
-      Math.max(INSPECTOR_MIN, Number(localStorage.getItem(INSPECTOR_WIDTH_KEY)) || 520),
+      Math.max(INSPECTOR_MIN, Number(localStorage.getItem(INSPECTOR_WIDTH_KEY)) || INSPECTOR_DEFAULT),
     ),
   );
   const [inspectorDragging, setInspectorDragging] = createSignal(false);
@@ -435,8 +445,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       case "thread_activity_changed":
         scheduleRefresh("workspace", refreshWorkspace, 0);
         break;
-      case "project_preparation_changed":
-        break;
     }
   };
 
@@ -462,6 +470,8 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         setThreads([]);
         setThreadDetail(null);
         setThreadHistory([]);
+        setLibrarianActivity(null);
+        setLibrarianHistory([]);
         setError("");
         setInput("");
         clearOptimisticTurn();
@@ -581,8 +591,19 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       : props.threadId
         ? threadDetail()?.activity.has_active_turn ?? false
         : projectActivity()?.has_active_turn ?? false;
+    const backendSessionStatus = props.librarianView
+      ? librarianActivity()?.session?.status ?? null
+      : props.threadId
+        ? threadDetail()?.activity.session?.status ?? null
+        : projectActivity()?.session?.status ?? null;
 
     if (backendLiveTurn || backendHasActiveTurn) {
+      clearOptimisticTurn();
+      return;
+    }
+
+    const optimisticAgeMs = Date.now() - Date.parse(startedAt);
+    if (backendSessionStatus === "idle" && Number.isFinite(optimisticAgeMs) && optimisticAgeMs > 1500) {
       clearOptimisticTurn();
       return;
     }
@@ -804,13 +825,29 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     if (scanning()) return;
     setScanning(true);
     setError("");
+    setStickToBottom(true);
+    setJustStopped(false);
+    setOptimisticUserMessage({
+      id: -1,
+      role: "user",
+      message_kind: "chat",
+      preview_text: null,
+      collapsed_by_default: false,
+      chunks_json: JSON.stringify([{ type: "text", content: LIBRARIAN_FULL_SCAN_MESSAGE }]),
+      timestamp: new Date().toISOString(),
+    });
+    const shouldStartOptimisticTurn = !isRunning();
+    if (shouldStartOptimisticTurn) {
+      beginOptimisticTurn("running");
+    }
     try {
-      await triggerKnowledgeScan(props.projectId);
-      const refreshed = await loadWorkspaceSnapshotResource();
-      if (!refreshed) {
-        setError("Started librarian scan, but failed to refresh librarian state.");
+      const response = await sendLibrarianMessage(props.projectId, LIBRARIAN_FULL_SCAN_MESSAGE);
+      if (shouldStartOptimisticTurn && !response.started) {
+        clearOptimisticTurn();
       }
     } catch (err) {
+      clearOptimisticTurn();
+      setOptimisticUserMessage(null);
       setError(err instanceof Error ? err.message : "Failed to start librarian scan");
     } finally {
       setScanning(false);
@@ -828,12 +865,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     setOptimisticUserMessage({
       id: -1,
       role: "user",
+      message_kind: "chat",
+      preview_text: null,
+      collapsed_by_default: false,
       chunks_json: JSON.stringify([{ type: "text", content }]),
       timestamp: new Date().toISOString(),
     });
     const shouldStartOptimisticTurn = !isRunning();
     if (shouldStartOptimisticTurn) {
-      beginOptimisticTurn("starting");
+      beginOptimisticTurn("running");
     }
 
     try {
@@ -879,11 +919,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   return (
     <div class="workspace-shell relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
-        <header class="relative z-20 flex h-[54px] shrink-0 items-center gap-3 border-b border-border bg-card/95 px-4 backdrop-blur">
+        <a
+          href="#main-content"
+          class="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-50 focus:bg-brand focus:px-3 focus:py-1.5 focus:font-mono focus:text-[10px] focus:uppercase focus:tracking-wider focus:text-background"
+        >
+          Skip to main content
+        </a>
+        <header class="relative z-20 flex h-12 shrink-0 items-center gap-4 border-b border-border/40 bg-background px-4">
           <button
             type="button"
             class={cn(
-              "flex h-8 w-8 items-center justify-center border border-border bg-background text-muted-foreground transition-colors hover:text-foreground",
+              "flex h-8 w-8 items-center justify-center text-muted-foreground/70 transition-colors hover:text-foreground",
               !compactViewport() && !sidebarCollapsed() && "hidden",
             )}
             onClick={() => {
@@ -893,57 +939,91 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 setSidebarCollapsed(false);
               }
             }}
-            aria-label="Open threads"
-            title="Open threads"
+            aria-label="Open project list"
+            title="Projects"
           >
             <span class="h-4 w-4">{menuIcon()}</span>
           </button>
 
-          <a href="#" class="font-display text-lg font-semibold tracking-tight text-foreground">
-            HIRSEL
+          {/* Engraved nameplate */}
+          <a
+            href="#"
+            class="group/brand flex items-center gap-2 select-none"
+          >
+            <span class="font-display text-[15px] font-medium tracking-[0.04em] text-foreground transition-colors group-hover/brand:text-brand">
+              HIRSEL
+            </span>
+            <span class="font-mono text-[9px] tabular-nums text-muted-foreground/30">v0.4</span>
           </a>
 
-          <div class="flex min-w-0 items-center gap-1.5">
-            <span class="text-xs text-muted-foreground">/</span>
-            <a
-              href={`#project/${props.projectId}`}
-              class="truncate text-sm font-medium text-foreground transition-opacity hover:opacity-75"
-            >
-              {projectName()}
-            </a>
+          {/* Vertical divider */}
+          <span class="h-5 w-px bg-border/50" aria-hidden="true" />
+
+          {/* Project + scope path */}
+          <div class="flex min-w-0 flex-1 items-center gap-3">
+            <h1 class="m-0 truncate">
+              <a
+                href={`#project/${props.projectId}`}
+                class="truncate font-display text-[15px] font-medium tracking-tight text-foreground transition-colors hover:text-brand"
+                title={projectName()}
+              >
+                {projectName()}
+              </a>
+            </h1>
+            <Show when={props.threadId && !settingsOpen() && !projectSettingsOpen()}>
+              <span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70 md:inline">
+                Thread
+              </span>
+              <span class="hidden max-w-[280px] truncate text-[13px] text-foreground/80 md:inline">
+                {activeTitle()}
+              </span>
+            </Show>
+            <Show when={props.librarianView}>
+              <span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70 md:inline">
+                Librarian
+              </span>
+            </Show>
           </div>
 
-          <Show when={props.threadId && !settingsOpen() && !projectSettingsOpen()}>
-            <span class="hidden text-xs text-muted-foreground md:inline">/</span>
-            <span class="hidden max-w-[220px] truncate text-xs text-ink-2 md:inline">
-              {activeTitle()}
-            </span>
-          </Show>
+          {/* Right controls */}
+          <div class="ml-auto flex items-center gap-1">
+            {/* Connection pilot light — just the dot, no label */}
+            <div
+              class="flex h-8 items-center gap-1.5 px-1.5"
+              title={connectionOk() ? "Connected — live updates on" : "Connection lost. Live updates paused — check your network or restart Hirsel."}
+              role="status"
+              aria-live="polite"
+              aria-label={connectionOk() ? "Connected" : "Connection lost"}
+            >
+              <span
+                class={cn(
+                  "h-1.5 w-1.5 rounded-full transition-colors",
+                  connectionOk() ? "bg-signal-green/70" : "bg-signal-red animate-pulse-dot",
+                )}
+                aria-hidden="true"
+              />
+              <Show when={!connectionOk()}>
+                <span class="font-mono text-[9px] uppercase tracking-wider text-signal-red/80">offline</span>
+              </Show>
+            </div>
 
-          <div class="ml-auto flex items-center gap-2">
-            <span
-              class={cn(
-                "h-2 w-2 rounded-full transition-colors",
-                connectionOk() ? "bg-signal-green/60" : "bg-signal-red animate-pulse-dot",
-              )}
-              title={connectionOk() ? "Connected" : "Connection lost"}
-            />
             <button
               type="button"
               class={cn(
-                "inline-flex h-[34px] w-[34px] items-center justify-center border border-border bg-background text-muted-foreground transition-colors hover:text-foreground",
-                settingsOpen() && "bg-secondary text-foreground",
+                "inline-flex h-8 w-8 items-center justify-center text-muted-foreground/70 transition-colors hover:text-foreground",
+                settingsOpen() && "text-brand",
               )}
               title="Settings"
+              aria-label="Open settings"
               onClick={() => { setSettingsOpen((v) => !v); setProjectSettingsOpen(false); }}
             >
-              <span class="h-[15px] w-[15px]">{settingsIcon()}</span>
+              <span class="h-[14px] w-[14px]">{settingsIcon()}</span>
             </button>
           </div>
         </header>
 
         <Show when={pageError()}>
-          <div class="relative z-10 flex items-center justify-between border-b border-border bg-signal-red/10 px-4 py-2 text-xs text-signal-red">
+          <div class="relative z-10 flex items-center justify-between border-b border-signal-red/20 bg-signal-red/[0.06] px-4 py-2.5 text-xs text-signal-red">
             {(() => {
               const banner = pageError();
               if (!banner) return null;
@@ -982,28 +1062,29 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
             class={cn(
               "absolute inset-0 z-20 transition-opacity duration-200 md:hidden",
               compactViewport() && mobileSidebarOpen()
-                ? "bg-foreground/40 backdrop-blur-[2px] opacity-100"
+                ? "bg-background/80 opacity-100"
                 : "pointer-events-none opacity-0",
             )}
             onClick={() => setMobileSidebarOpen(false)}
-            aria-label="Close threads"
+            aria-label="Close project list"
           />
 
-          <aside
+          <nav
+            aria-label="Projects"
             class={cn(
-              "z-30 flex shrink-0 flex-col overflow-hidden bg-card/92 backdrop-blur",
+              "z-30 flex shrink-0 flex-col overflow-hidden bg-card",
               compactViewport()
                 ? cn(
                     "absolute inset-y-0 left-0 w-[280px] shadow-lift transition-transform duration-200",
                     mobileSidebarOpen() ? "translate-x-0" : "-translate-x-full",
                   )
-                : "relative transition-[width] duration-150",
+                : "relative",
             )}
             style={compactViewport() ? undefined : { width: sidebarCollapsed() ? "0px" : `${sidebarWidth()}px` }}
           >
             <Show when={compactViewport()}>
-              <div class="flex items-center justify-between border-b border-border px-4 py-2">
-                <span class="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Projects</span>
+              <div class="flex items-center justify-between border-b border-border/40 px-4 py-2.5">
+                <span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Projects</span>
                 <button
                   type="button"
                   class="flex h-6 w-6 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
@@ -1022,11 +1103,12 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
               {/* PROJECTS header (desktop only — mobile has its own) */}
               <Show when={!compactViewport()}>
                 <div class="flex items-center justify-between px-4 py-3">
-                  <span class="font-mono text-[11px] font-medium uppercase tracking-widest text-muted-foreground">Projects</span>
+                  <span class="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">Projects</span>
                   <a
                     href="#new"
-                    class="flex h-5 w-5 items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground"
+                    class="flex h-6 w-6 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-secondary/60 hover:text-foreground"
                     title="New project"
+                    aria-label="Create a new project"
                   >
                     <svg viewBox="0 0 16 16" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
                       <path d="M8 3v10M3 8h10" />
@@ -1108,42 +1190,56 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
                             {/* Current project: show Project root + Librarian */}
                             <Show when={isCurrent()}>
-                              <a
-                                href={`#project/${project.id}`}
-                                class={cn(
-                                  "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                  !props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
-                                    ? "bg-background text-foreground shadow-sm border border-border"
-                                    : "text-muted-foreground hover:text-foreground border border-transparent hover:border-border",
-                                )}
-                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
-                              >
-                                <span class={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(projectScopeStatus()))} />
-                                <span class="truncate">{ROOT_CHANNEL_LABEL}</span>
-                                <span class="ml-auto font-mono text-[10px] text-muted-foreground">{statusLabel(projectScopeStatus())}</span>
-                              </a>
+                              {(() => {
+                                const isActive = () => !props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen();
+                                return (
+                                  <a
+                                    href={`#project/${project.id}`}
+                                    class={cn(
+                                      "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
+                                      isActive()
+                                        ? "text-foreground"
+                                        : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    style={isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : undefined}
+                                    onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
+                                  >
+                                    <span class={cn(
+                                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                                      isActive() ? "bg-brand" : statusDotClass(projectScopeStatus()),
+                                    )} />
+                                    <span class="truncate font-medium">{ROOT_CHANNEL_LABEL}</span>
+                                    <span class="ml-auto font-mono text-[9px] uppercase tracking-wider text-muted-foreground/50">{statusLabel(projectScopeStatus())}</span>
+                                  </a>
+                                );
+                              })()}
 
-                              <a
-                                href={`#librarian/${project.id}`}
-                                class={cn(
-                                  "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                  props.librarianView && !settingsOpen() && !projectSettingsOpen()
-                                    ? "bg-background text-foreground shadow-sm border border-border"
-                                    : "text-muted-foreground hover:text-foreground border border-transparent hover:border-border",
-                                )}
-                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
-                              >
-                                <span class={cn(
-                                  "h-1.5 w-1.5 shrink-0 rounded-full",
-                                  (props.librarianView && optimisticLiveTurn()) || librarianActivity()?.has_active_turn
-                                    ? "bg-signal-amber animate-pulse-dot"
-                                    : "bg-signal-amber/60",
-                                )} />
-                                <span class="truncate">Librarian</span>
-                                <Show when={(props.librarianView && optimisticLiveTurn()) || librarianActivity()?.has_active_turn}>
-                                  <span class="ml-auto font-mono text-[10px] text-muted-foreground">running</span>
-                                </Show>
-                              </a>
+                              {(() => {
+                                const isActive = () => props.librarianView && !settingsOpen() && !projectSettingsOpen();
+                                const isRunning = () => (props.librarianView && optimisticLiveTurn()) || librarianActivity()?.has_active_turn;
+                                return (
+                                  <a
+                                    href={`#librarian/${project.id}`}
+                                    class={cn(
+                                      "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
+                                      isActive()
+                                        ? "text-foreground"
+                                        : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    style={isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : undefined}
+                                    onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
+                                  >
+                                    <span class={cn(
+                                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                                      isActive() ? "bg-brand" : isRunning() ? "bg-signal-amber animate-pulse-dot" : "bg-signal-amber/40",
+                                    )} />
+                                    <span class="truncate font-medium">Librarian</span>
+                                    <Show when={isRunning()}>
+                                      <span class="ml-auto font-mono text-[9px] uppercase tracking-wider text-signal-amber/60">running</span>
+                                    </Show>
+                                  </a>
+                                );
+                              })()}
                             </Show>
 
                             {/* Thread list */}
@@ -1160,28 +1256,33 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                   const label = statusLabel(status());
                                   return progress ? `${progress} ${label}` : label;
                                 };
+                                const isActive = () => props.threadId === thread.thread.id && isCurrent() && !settingsOpen() && !projectSettingsOpen();
 
                                 return (
                                   <a
                                     href={`#thread/${project.id}/${thread.thread.id}`}
                                     class={cn(
                                       "group flex items-center gap-2 px-2 py-1.5 text-xs transition-all",
-                                      props.threadId === thread.thread.id && isCurrent() && !settingsOpen() && !projectSettingsOpen()
-                                        ? "bg-background text-foreground shadow-sm border border-border"
-                                        : "text-muted-foreground hover:text-foreground border border-transparent hover:border-border active:scale-[0.995]",
+                                      isActive()
+                                        ? "text-foreground"
+                                        : "text-muted-foreground hover:text-foreground active:scale-[0.995]",
                                     )}
+                                    style={isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : undefined}
                                     onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                                   >
-                                    <span class={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(status()))} />
+                                    <span class={cn(
+                                      "h-1.5 w-1.5 shrink-0 rounded-full",
+                                      isActive() ? "bg-brand" : statusDotClass(status()),
+                                    )} />
                                     <span class="flex-1 truncate">{thread.thread.title || "Untitled Thread"}</span>
-                                    <span class="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">{meta()}</span>
+                                    <span class="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground/50">{meta()}</span>
                                   </a>
                                 );
                               }}
                             </For>
 
                             <Show when={isCurrent() && projectThreads().length === 0}>
-                              <div class="px-2 py-4 text-center text-[11px] text-muted-foreground/50">
+                              <div class="px-2 py-3 text-[11px] text-muted-foreground/70 italic">
                                 No threads yet
                               </div>
                             </Show>
@@ -1193,7 +1294,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 </For>
               </div>
             </div>
-          </aside>
+          </nav>
 
           <Show when={!compactViewport()}>
             <div
@@ -1234,31 +1335,74 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
           </Show>
 
           <div class="relative flex min-w-0 flex-1 overflow-hidden">
-            <main class="relative flex flex-1 flex-col overflow-hidden" style={{ "min-width": `${MAIN_MIN}px` }}>
-              <div class="relative flex h-10 shrink-0 items-center gap-2 border-b border-border bg-card px-4">
-                <span class="truncate text-sm font-medium text-foreground">
-                  {activeTitle()}
-                </span>
+            <main id="main-content" class="relative flex flex-1 flex-col overflow-hidden" style={{ "min-width": `${MAIN_MIN}px` }}>
+              <div class="relative flex h-10 shrink-0 items-center gap-3 border-b border-border/30 bg-background px-4">
+                <Show when={settingsOpen()}>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-brand/80">
+                    Settings
+                  </span>
+                </Show>
+                <Show when={projectSettingsOpen()}>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-brand/80">
+                    Project
+                  </span>
+                  <span class="h-3 w-px bg-border/40" aria-hidden="true" />
+                  <span class="truncate text-[13px] font-medium text-foreground">
+                    {project()?.name ?? "Project"}
+                  </span>
+                </Show>
                 <Show when={!settingsOpen() && !projectSettingsOpen()}>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70">
+                    {props.threadId ? "Thread" : props.librarianView ? "Librarian" : "Shepherd"}
+                  </span>
+                  <span class="h-3 w-px bg-border/40" aria-hidden="true" />
+                  <span class="truncate text-[13px] font-medium text-foreground">
+                    {activeTitle()}
+                  </span>
                   <span class={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDotClass(activeStatus()))} />
                   <button
                     type="button"
-                    class="ml-1 font-mono text-[10px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
+                    class="ml-0.5 font-mono text-[10px] text-muted-foreground/70 transition-colors hover:text-muted-foreground"
                     onClick={() => setSettingsOpen(true)}
-                    title="Model settings"
+                    title="Change model"
+                    aria-label={`Current model: ${activeModel()}. Click to change.`}
                   >
                     {activeModel()}
                   </button>
                 </Show>
+                <Show when={settingsOpen() || projectSettingsOpen()}>
+                  <button
+                    type="button"
+                    class="ml-auto flex h-8 w-8 items-center justify-center text-muted-foreground/70 transition-colors hover:text-foreground"
+                    onClick={() => { setSettingsOpen(false); setProjectSettingsOpen(false); }}
+                    title="Close (Esc)"
+                    aria-label="Close"
+                  >
+                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 6l12 12" />
+                      <path d="M18 6L6 18" />
+                    </svg>
+                  </button>
+                </Show>
                 <Show when={!settingsOpen() && !projectSettingsOpen() && !inspectorOpen()}>
-                  <div class="ml-auto flex shrink-0 items-center">
+                  <div class="ml-auto flex shrink-0 items-center gap-1">
                     <button
                       type="button"
-                      class="flex h-7 w-7 items-center justify-center text-muted-foreground/50 transition-colors hover:text-foreground"
+                      class="flex h-8 w-8 items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground"
                       onClick={() => openInspectorTab("files")}
-                      title="Open inspector"
+                      title="Open files"
+                      aria-label="Open files panel"
                     >
-                      <span class="h-4 w-4">{filesIcon()}</span>
+                      <span class="h-3.5 w-3.5">{filesIcon()}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-8 w-8 items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground"
+                      onClick={() => openInspectorTab("canvas")}
+                      title="Open canvas"
+                      aria-label="Open canvas panel"
+                    >
+                      <span class="h-3.5 w-3.5">{canvasIcon()}</span>
                     </button>
                   </div>
                 </Show>
@@ -1269,17 +1413,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 fallback={
                   <div class="flex-1 overflow-y-auto chassis-scroll">
                     <Show when={settingsOpen()}>
-                      <div class="mx-auto max-w-xl px-6 py-6">
-                        <div class="mb-4 flex items-center justify-between">
-                          <span class="text-sm font-medium text-foreground">Settings</span>
-                          <button
-                            type="button"
-                            class="text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
-                            onClick={() => setSettingsOpen(false)}
-                          >
-                            Done
-                          </button>
-                        </div>
+                      <div class="mx-auto max-w-2xl px-8 py-8">
                         <SettingsForm onClose={() => setSettingsOpen(false)} />
                       </div>
                     </Show>
@@ -1288,7 +1422,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                         const proj = () => project();
                         const [nameVal, setNameVal] = createSignal(proj()?.name ?? "");
                         const [descVal, setDescVal] = createSignal(proj()?.description ?? "");
-                        const [imageVal, setImageVal] = createSignal(proj()?.sandbox_image ?? "");
                         const [saving, setSaving] = createSignal(false);
                         const [confirmDelete, setConfirmDelete] = createSignal(false);
                         const [statusMsg, setStatusMsg] = createSignal("");
@@ -1298,7 +1431,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                           if (p) {
                             setNameVal(p.name);
                             setDescVal(p.description ?? "");
-                            setImageVal(p.sandbox_image ?? "");
                           }
                         });
 
@@ -1306,8 +1438,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                           const p = proj();
                           if (!p) return false;
                           return nameVal() !== p.name
-                            || descVal() !== (p.description ?? "")
-                            || imageVal() !== (p.sandbox_image ?? "");
+                            || descVal() !== (p.description ?? "");
                         };
 
                         const handleSave = async () => {
@@ -1321,14 +1452,13 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                             await saveProjectSettings(p.id, {
                               name,
                               description: descVal().trim() || null,
-                              sandbox_image: imageVal().trim() || undefined,
                             });
                             const updated = await listProjects();
                             setProjects(updated);
                             setStatusMsg("Saved");
                             setTimeout(() => setStatusMsg(""), 2000);
                           } catch (e) {
-                            setStatusMsg("Failed to save");
+                            setStatusMsg("Couldn't save");
                             console.error("Failed to save project settings", e);
                           } finally {
                             setSaving(false);
@@ -1341,20 +1471,24 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                           try {
                             const currentProjects = projects();
                             const currentIndex = currentProjects.findIndex((candidate) => candidate.id === p.id);
+                            const remainingProjects = currentProjects.filter((candidate) => candidate.id !== p.id);
                             await deleteProject(p.id);
                             setProjectSettingsOpen(false);
-                            const updated = await listProjects();
-                            setProjects(updated);
 
-                            if (updated.length === 0) {
+                            if (remainingProjects.length === 0) {
+                              setProjects([]);
                               window.location.hash = "#new";
                               return;
                             }
 
                             const fallbackIndex = currentIndex < 0
                               ? 0
-                              : Math.min(currentIndex, updated.length - 1);
-                            window.location.hash = `#project/${updated[fallbackIndex].id}`;
+                              : Math.min(currentIndex, remainingProjects.length - 1);
+                            setProjects(remainingProjects);
+                            window.location.hash = `#project/${remainingProjects[fallbackIndex].id}`;
+                            void listProjects().then(setProjects).catch((error) => {
+                              console.error("Failed to refresh projects after delete", error);
+                            });
                           } catch (e) {
                             console.error("Failed to delete project", e);
                           }
@@ -1368,37 +1502,19 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                         };
 
                         return (
-                          <div class="mx-auto max-w-xl px-6 py-8">
-                            {/* ── Header ── */}
-                            <div class="mb-8 flex items-start justify-between">
-                              <div>
-                                <div class="flex items-center gap-3">
-                                  <div class="flex h-8 w-8 items-center justify-center border border-border bg-card">
-                                    <svg viewBox="0 0 16 16" class="h-3.5 w-3.5 text-muted-foreground" fill="none" stroke="currentColor" stroke-width="1.5">
-                                      <path d="M2 5V13H14V5" />
-                                      <path d="M2 5L7 2H9L14 5" />
-                                    </svg>
+                          <div class="mx-auto max-w-2xl px-8 py-8">
+                            <Show when={createdAt() || proj()?.description}>
+                              <div class="mb-6 space-y-1.5">
+                                <Show when={proj()?.description}>
+                                  <p class="max-w-md text-[13px] leading-[1.7] text-muted-foreground/70">{proj()?.description}</p>
+                                </Show>
+                                <Show when={createdAt()}>
+                                  <div class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/30">
+                                    Created {createdAt()}
                                   </div>
-                                  <div>
-                                    <h2 class="text-sm font-medium text-foreground">{proj()?.name ?? "Project"}</h2>
-                                    <div class="flex items-center gap-2 mt-0.5">
-                                      <span class="font-mono text-[10px] text-muted-foreground/50">ID {proj()?.id}</span>
-                                      <Show when={createdAt()}>
-                                        <span class="text-muted-foreground/25">·</span>
-                                        <span class="font-mono text-[10px] text-muted-foreground/50">Created {createdAt()}</span>
-                                      </Show>
-                                    </div>
-                                  </div>
-                                </div>
+                                </Show>
                               </div>
-                              <button
-                                type="button"
-                                class="text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
-                                onClick={() => setProjectSettingsOpen(false)}
-                              >
-                                Done
-                              </button>
-                            </div>
+                            </Show>
 
                             {/* ── General section ── */}
                             <div class="space-y-5">
@@ -1427,22 +1543,187 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                               </div>
                             </div>
 
-                            {/* ── Environment section ── */}
-                            <div class="mt-8 space-y-5">
-                              <div class="chassis-label mb-3">Environment</div>
+                            {/* ── Workspaces section ── */}
+                            {(() => {
+                              const [addingWs, setAddingWs] = createSignal(false);
+                              const [wsKind, setWsKind] = createSignal<"local" | "git">("local");
+                              const [wsValue, setWsValue] = createSignal("");
+                              const [wsLabel, setWsLabel] = createSignal("");
+                              const [wsSaving, setWsSaving] = createSignal(false);
+                              const [wsError, setWsError] = createSignal("");
 
-                              <div class="space-y-1.5">
-                                <label class="text-xs font-medium text-foreground">Sandbox Image</label>
-                                <input
-                                  type="text"
-                                  class="z-input w-full font-mono text-xs"
-                                  value={imageVal()}
-                                  onInput={(e) => setImageVal(e.currentTarget.value)}
-                                  placeholder="e.g. ubuntu:22.04"
-                                />
-                                <p class="text-[11px] text-muted-foreground/60">Docker image used for the project sandbox.</p>
-                              </div>
-                            </div>
+                              const workspaces = () => proj()?.workspaces ?? [];
+
+                              const handleAddWorkspace = async () => {
+                                const p = proj();
+                                if (!p) return;
+                                const val = wsValue().trim();
+                                if (!val) return;
+                                setWsSaving(true);
+                                setWsError("");
+                                try {
+                                  const ws: Omit<ProjectWorkspaceEntry, "id"> = {
+                                    kind: wsKind(),
+                                    label: wsLabel().trim() || val.split("/").filter(Boolean).pop() || val,
+                                    path: wsKind() === "local" ? val : null,
+                                    url: wsKind() === "git" ? val : null,
+                                    branch: null,
+                                  };
+                                  await addProjectWorkspace(p.id, ws);
+                                  const updated = await listProjects();
+                                  setProjects(updated);
+                                  setAddingWs(false);
+                                  setWsValue("");
+                                  setWsLabel("");
+                                } catch (e) {
+                                  setWsError(e instanceof Error ? e.message : "Failed to add workspace");
+                                } finally {
+                                  setWsSaving(false);
+                                }
+                              };
+
+                              const handleRemoveWorkspace = async (wsId: string) => {
+                                const p = proj();
+                                if (!p) return;
+                                try {
+                                  await removeProjectWorkspace(p.id, wsId);
+                                  const updated = await listProjects();
+                                  setProjects(updated);
+                                } catch (e) {
+                                  console.error("Failed to remove workspace", e);
+                                }
+                              };
+
+                              return (
+                                <div class="mt-10">
+                                  <div class="chassis-label mb-3">Workspaces</div>
+
+                                  <Show when={workspaces().length === 0 && !addingWs()}>
+                                    <div class="border border-dashed border-border px-4 py-6 text-center">
+                                      <p class="text-xs text-muted-foreground">No workspaces yet</p>
+                                      <p class="mt-1 text-[11px] text-muted-foreground/70">Attach a local directory or a git repository so agents know where to work.</p>
+                                      <button
+                                        type="button"
+                                        class="mt-3 text-xs text-brand transition-colors hover:text-foreground"
+                                        onClick={() => setAddingWs(true)}
+                                      >
+                                        Add workspace
+                                      </button>
+                                    </div>
+                                  </Show>
+
+                                  <Show when={workspaces().length > 0}>
+                                    <div class="space-y-1">
+                                      <For each={workspaces()}>
+                                        {(ws) => (
+                                          <div class="group flex items-center gap-3 border border-border px-3 py-2">
+                                            <span class="font-mono text-[10px] uppercase tracking-wider text-muted-foreground/70 w-8 shrink-0">{ws.kind}</span>
+                                            <div class="min-w-0 flex-1">
+                                              <div class="text-xs font-medium text-foreground truncate" title={ws.label}>{ws.label}</div>
+                                              <div class="font-mono text-[10px] text-muted-foreground truncate" title={ws.path ?? ws.url ?? ""}>{ws.path || ws.url}</div>
+                                            </div>
+                                            <button
+                                              type="button"
+                                              class="text-[10px] text-muted-foreground/60 opacity-0 transition-all group-hover:opacity-100 hover:text-signal-red"
+                                              onClick={() => void handleRemoveWorkspace(ws.id)}
+                                              aria-label={`Remove workspace ${ws.label}`}
+                                            >
+                                              remove
+                                            </button>
+                                          </div>
+                                        )}
+                                      </For>
+                                    </div>
+                                  </Show>
+
+                                  <Show when={addingWs()}>
+                                    <div class="mt-2 border border-border px-4 py-4 space-y-3">
+                                      <div class="flex gap-2">
+                                        <button
+                                          type="button"
+                                          class={cn(
+                                            "px-2.5 py-1 text-[11px] font-medium border transition-colors",
+                                            wsKind() === "local" ? "border-foreground/20 bg-foreground/5 text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                                          )}
+                                          onClick={() => setWsKind("local")}
+                                        >
+                                          Local directory
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class={cn(
+                                            "px-2.5 py-1 text-[11px] font-medium border transition-colors",
+                                            wsKind() === "git" ? "border-foreground/20 bg-foreground/5 text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                                          )}
+                                          onClick={() => setWsKind("git")}
+                                        >
+                                          Git repository
+                                        </button>
+                                      </div>
+
+                                      <div class="space-y-1.5">
+                                        <label class="text-[11px] font-medium text-foreground">
+                                          {wsKind() === "local" ? "Path" : "URL"}
+                                        </label>
+                                        <input
+                                          type="text"
+                                          class="z-input w-full text-xs"
+                                          placeholder={wsKind() === "local" ? "/home/sam/code/myapp" : "git@github.com:org/repo.git"}
+                                          value={wsValue()}
+                                          onInput={(e) => setWsValue(e.currentTarget.value)}
+                                          autofocus
+                                        />
+                                      </div>
+
+                                      <div class="space-y-1.5">
+                                        <label class="text-[11px] font-medium text-foreground">
+                                          Label <span class="text-muted-foreground/40">optional</span>
+                                        </label>
+                                        <input
+                                          type="text"
+                                          class="z-input w-full text-xs"
+                                          placeholder="Short name for this workspace"
+                                          value={wsLabel()}
+                                          onInput={(e) => setWsLabel(e.currentTarget.value)}
+                                        />
+                                      </div>
+
+                                      <Show when={wsError()}>
+                                        <p class="text-[11px] text-signal-red">{wsError()}</p>
+                                      </Show>
+
+                                      <div class="flex items-center gap-2 pt-1">
+                                        <button
+                                          type="button"
+                                          class="z-button-variant-default z-button-size-xs inline-flex items-center"
+                                          disabled={!wsValue().trim() || wsSaving()}
+                                          onClick={() => void handleAddWorkspace()}
+                                        >
+                                          {wsSaving() ? "Adding..." : "Add"}
+                                        </button>
+                                        <button
+                                          type="button"
+                                          class="text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+                                          onClick={() => { setAddingWs(false); setWsError(""); }}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </Show>
+
+                                  <Show when={workspaces().length > 0 && !addingWs()}>
+                                    <button
+                                      type="button"
+                                      class="mt-2 text-[11px] text-muted-foreground/50 transition-colors hover:text-foreground"
+                                      onClick={() => setAddingWs(true)}
+                                    >
+                                      + Add workspace
+                                    </button>
+                                  </Show>
+                                </div>
+                              );
+                            })()}
 
                             {/* ── Save bar ── */}
                             <div class={cn(
@@ -1489,7 +1770,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                 <div class="flex items-center justify-between">
                                   <div>
                                     <div class="text-xs font-medium text-foreground">Delete this project</div>
-                                    <p class="mt-0.5 text-[11px] text-muted-foreground/60">This action cannot be undone. All threads and history will be lost.</p>
+                                    <p class="mt-0.5 text-[11px] text-muted-foreground">Removes all threads, conversation history, and knowledge graph entries. Workspaces themselves stay untouched. This can't be undone.</p>
                                   </div>
                                   <Show
                                     when={!confirmDelete()}
@@ -1500,7 +1781,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                           class="z-button-variant-destructive z-button-size-sm inline-flex items-center"
                                           onClick={() => void handleDelete()}
                                         >
-                                          Confirm
+                                          Delete {proj()?.name ?? "project"}
                                         </button>
                                         <button
                                           type="button"
@@ -1517,7 +1798,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                       class="shrink-0 border border-signal-red/30 px-3 py-1.5 text-xs text-signal-red/70 transition-colors hover:bg-signal-red/10 hover:text-signal-red"
                                       onClick={() => setConfirmDelete(true)}
                                     >
-                                      Delete
+                                      Delete project
                                     </button>
                                   </Show>
                                 </div>
@@ -1530,144 +1811,32 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   </div>
                 }
               >
-                <div
-                  ref={transcriptRef}
-                  class="flex-1 overflow-y-auto chassis-scroll"
-                  role="log"
-                  aria-live="polite"
+                <ChatTranscript
+                  title={activeTitle()}
+                  threadId={props.threadId}
+                  librarianView={props.librarianView}
+                  loaded={props.threadId ? !!threadDetail() : !!project()}
+                  messages={activeMessages()}
+                  liveTurn={activeLiveTurn()}
+                  runtimeError={visibleRuntimeError()}
+                  scanning={scanning()}
+                  stickToBottom={stickToBottom()}
+                  onTranscriptRef={(element) => {
+                    transcriptRef = element;
+                  }}
                   onScroll={updateStickinessFromScroll}
-                >
-                  <div class="mx-auto flex max-w-4xl flex-col gap-4 px-5 py-6">
-                    <Show
-                      when={
-                        (props.threadId ? !!threadDetail() : !!project()) &&
-                        (activeMessages().length > 0 || !!activeLiveTurn())
-                      }
-                      fallback={
-                        <Show
-                          when={props.threadId ? !!threadDetail() : !!project()}
-                          fallback={
-                            <div class="flex flex-col items-center justify-center gap-3 py-24">
-                              <div class="flex items-center gap-2">
-                                <div class="h-2 w-2 rounded-full bg-muted-foreground/30 animate-pulse-dot" />
-                                <span class="text-xs text-muted-foreground font-mono">loading</span>
-                              </div>
-                            </div>
-                          }
-                        >
-                          <div class="flex flex-col items-center justify-center gap-5 py-24 text-center">
-                            <div class="flex h-14 w-14 items-center justify-center border border-border bg-card text-signal-amber shadow-sm">
-                              <span class="font-mono text-lg">&#9678;</span>
-                            </div>
-                            <div class="space-y-2">
-                              <h3 class="font-display text-2xl font-semibold tracking-tight text-foreground">
-                                {activeTitle()}
-                              </h3>
-                              <p class="max-w-xl text-sm leading-6 text-muted-foreground">
-                                {props.threadId
-                                  ? "Use this thread for focused execution."
-                                  : props.librarianView
-                                    ? "Scan the workspace, capture architecture, and keep the project knowledge graph current."
-                                    : "Direct the shepherd here, then spin work out into threads when it becomes concrete."}
-                              </p>
-                            </div>
-                            <Show when={props.librarianView}>
-                              <button
-                                type="button"
-                                class={cn(
-                                  "mt-1 inline-flex h-8 items-center gap-2 border border-border bg-card px-3 text-xs text-muted-foreground transition-colors hover:text-signal-amber",
-                                  scanning() && "text-signal-amber",
-                                )}
-                                disabled={scanning()}
-                                onClick={() => void handleKnowledgeScan()}
-                              >
-                                <svg viewBox="0 0 24 24" class={cn("h-3.5 w-3.5", scanning() && "animate-spin")} fill="none" stroke="currentColor" stroke-width="2">
-                                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                                  <path d="M21 3v6h-6" />
-                                </svg>
-                                {scanning() ? "Scanning…" : "Scan Workspace"}
-                              </button>
-                            </Show>
-                          </div>
-                        </Show>
-                      }
-                    >
-                      <Show when={visibleRuntimeError()}>
-                        {(banner) => (
-                          <div
-                            class="mb-3 flex items-start justify-between gap-3 border border-signal-red/30 bg-signal-red/10 px-4 py-3 text-sm text-signal-red"
-                            title={banner().raw}
-                          >
-                            <span>{banner().message}</span>
-                            <div class="flex shrink-0 items-center gap-3">
-                              <Show when={banner().action === "open-settings"}>
-                                <button
-                                  type="button"
-                                  class="text-[11px] font-medium text-signal-red transition-colors hover:text-signal-red/80"
-                                  onClick={() => setSettingsOpen(true)}
-                                >
-                                  Open Settings
-                                </button>
-                              </Show>
-                              <button
-                                type="button"
-                                class="text-signal-red/60 transition-colors hover:text-signal-red"
-                                onClick={() => setDismissedRuntimeErrorRaw(banner().raw)}
-                                aria-label="Dismiss runtime error"
-                                title="Dismiss"
-                              >
-                                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2">
-                                  <path d="M6 6l12 12" />
-                                  <path d="M18 6L6 18" />
-                                </svg>
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </Show>
+                  onScrollToBottom={() => {
+                    setStickToBottom(true);
+                    if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
+                  }}
+                  onKnowledgeScan={() => void handleKnowledgeScan()}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
+                  onSuggestion={useSuggestion}
+                />
 
-                      <For each={activeMessages()}>
-                        {(message) => (
-                          <ChatMessage
-                            role={message.role}
-                            chunksJson={message.chunks_json}
-                            timestamp={message.timestamp}
-                          />
-                        )}
-                      </For>
-
-                      <Show when={activeLiveTurn()}>
-                        {(turn) => (
-                          <ChatMessage
-                            role="assistant"
-                            chunksJson={turn().chunks_json}
-                            timestamp={turn().updated_at}
-                            liveStatus={turn().status}
-                          />
-                        )}
-                      </Show>
-                    </Show>
-                  </div>
-                </div>
-
-                <Show when={!stickToBottom()}>
-                  <button
-                    type="button"
-                    class="absolute bottom-20 right-6 z-10 flex h-8 w-8 items-center justify-center border border-border bg-card shadow-md text-muted-foreground transition-colors hover:text-foreground"
-                    onClick={() => {
-                      setStickToBottom(true);
-                      if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
-                    }}
-                    title="Scroll to bottom"
-                  >
-                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
-                  </button>
-                </Show>
-
-                <div class="relative shrink-0 border-t border-border bg-card">
-                  <div class="mx-auto max-w-4xl px-5 py-3">
+                <div class="relative shrink-0 border-t border-border/40 bg-card">
+                  <div class="mx-auto max-w-2xl px-3 pb-3 pt-2">
                     <ChatComposer
                       projectId={props.projectId}
                       threadId={props.threadId}
@@ -1761,23 +1930,42 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     <Show when={!compactViewport()}>
                       <button
                         type="button"
-                        class="inspector-tab-btn"
-                        style={{ "text-transform": "none", "letter-spacing": "0", "font-family": "inherit" }}
+                        class="flex h-8 w-8 items-center justify-center text-muted-foreground/70 transition-colors hover:text-foreground"
+                        title={inspectorFullscreen() ? "Exit fullscreen" : "Fullscreen"}
+                        aria-label={inspectorFullscreen() ? "Exit fullscreen" : "Fullscreen"}
                         onClick={() => setInspectorFullscreen((current) => !current)}
                       >
-                        {inspectorFullscreen() ? "exit" : "full"}
+                        <Show
+                          when={inspectorFullscreen()}
+                          fallback={
+                            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                              <path d="M4 9V4h5" />
+                              <path d="M20 9V4h-5" />
+                              <path d="M4 15v5h5" />
+                              <path d="M20 15v5h-5" />
+                            </svg>
+                          }
+                        >
+                          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M9 4v5H4" />
+                            <path d="M15 4v5h5" />
+                            <path d="M9 20v-5H4" />
+                            <path d="M15 20v-5h5" />
+                          </svg>
+                        </Show>
                       </button>
                     </Show>
                     <button
                       type="button"
-                      class="flex h-5 w-5 items-center justify-center text-muted-foreground/30 transition-colors hover:text-foreground"
+                      class="flex h-8 w-8 items-center justify-center text-muted-foreground/70 transition-colors hover:text-foreground"
                       onClick={() => {
                         setInspectorFullscreen(false);
                         setInspectorOpen(false);
                       }}
-                      aria-label="Close"
+                      title="Close panel"
+                      aria-label="Close panel"
                     >
-                      <svg viewBox="0 0 24 24" class="h-2.5 w-2.5" fill="none" stroke="currentColor" stroke-width="2">
+                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M6 6l12 12" />
                         <path d="M18 6L6 18" />
                       </svg>
@@ -1802,16 +1990,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                       <Show
                         when={focusHtml().trim()}
                         fallback={
-                          <div class="canvas-empty-state">
-                            <svg class="canvas-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                              <rect x="3" y="3" width="18" height="18" rx="0" />
-                              <path d="M3 9h18" />
-                              <path d="M9 21V9" />
-                            </svg>
-                            <div class="canvas-empty-title">No canvas content</div>
-                            <div class="canvas-empty-hint">
-                              Structured results from agent analysis will appear here — stats, code diffs, diagrams, and more.
+                          <div class="flex h-full flex-col items-start gap-5 p-6">
+                            <div class="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40 flex items-center gap-2">
+                              <span class="inline-block h-px w-6 bg-muted-foreground/30" />
+                              <span>Canvas</span>
                             </div>
+                            <h3 class="font-display text-2xl font-normal tracking-tight text-foreground">
+                              Nothing on the canvas yet
+                            </h3>
+                            <p class="max-w-xs text-[13px] leading-[1.7] text-muted-foreground">
+                              The canvas is your project's living document. As you work, the librarian writes structured notes here — findings, diffs, diagrams, decisions worth keeping.
+                            </p>
                           </div>
                         }
                       >
@@ -1842,12 +2031,13 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                       <button
                         type="button"
                         class={cn(
-                          "absolute bottom-3 right-3 flex h-7 items-center gap-1.5 bg-card/90 px-2.5 text-[11px] shadow-sm backdrop-blur transition-colors",
-                          scanning() ? "text-signal-amber" : "text-muted-foreground hover:text-signal-amber",
+                          "absolute bottom-3 right-3 flex h-8 items-center gap-1.5 border border-border bg-card px-3 font-mono text-[10px] uppercase tracking-wider transition-colors",
+                          scanning() ? "text-signal-amber" : "text-muted-foreground hover:border-brand/40 hover:text-foreground",
                         )}
                         disabled={scanning()}
                         onClick={() => void handleKnowledgeScan()}
-                        title="Full workspace scan"
+                        title="Run a full workspace scan to refresh the knowledge graph"
+                        aria-label="Run workspace scan"
                       >
                         <svg viewBox="0 0 24 24" class={cn("h-3 w-3", scanning() && "animate-spin")} fill="none" stroke="currentColor" stroke-width="2">
                           <path d="M21 12a9 9 0 1 1-2.64-6.36" />
@@ -1865,6 +2055,26 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
         {/* Terminal bottom panel */}
         <Show when={terminalOpen()}>
+          {/* Terminal resize handle */}
+          <div
+            class="terminal-resize-handle"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              const startY = event.clientY;
+              const startH = terminalHeight();
+              const onMove = (moveEvent: PointerEvent) => {
+                const next = startH + (startY - moveEvent.clientY);
+                setTerminalHeight(Math.max(120, Math.min(window.innerHeight * 0.6, next)));
+              };
+              const onUp = () => {
+                localStorage.setItem("hirsel_terminal_height", String(terminalHeight()));
+                window.removeEventListener("pointermove", onMove);
+                window.removeEventListener("pointerup", onUp);
+              };
+              window.addEventListener("pointermove", onMove);
+              window.addEventListener("pointerup", onUp);
+            }}
+          />
           <div
             class="shrink-0 border-t border-border"
             style={{ height: `${terminalHeight()}px` }}

@@ -1,0 +1,26 @@
+[package]
+name = "hirsel-cli"
+version = "0.4.0"
+description = "Hirsel CLI application"
+edition = "2021"
+license = "MIT"
+
+[[bin]]
+name = "hirsel"
+path = "src/main.rs"
+
+[[bin]]
+name = "hirsel-server"
+path = "src/bin/hirsel-server.rs"
+
+[build-dependencies]
+chrono = { workspace = true }
+
+[dependencies]
+hirsel-core = { path = "../hirsel-core" }
+clap = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+profiling = ["hirsel-core/profiling"]

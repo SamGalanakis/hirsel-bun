@@ -4,28 +4,37 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Hirsel</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32' fill='none'%3E%3Crect width='32' height='32' fill='%23291e10'/%3E%3Ccircle cx='16' cy='16' r='11' stroke='%23c9a554' stroke-width='1.6'/%3E%3Ccircle cx='16' cy='16' r='4' stroke='%23c9a554' stroke-width='1.6'/%3E%3Cline x1='16' y1='3' x2='16' y2='8' stroke='%23c9a554' stroke-width='1.6' stroke-linecap='round'/%3E%3Cline x1='16' y1='24' x2='16' y2='29' stroke='%23c9a554' stroke-width='1.6' stroke-linecap='round'/%3E%3Cline x1='3' y1='16' x2='8' y2='16' stroke='%23c9a554' stroke-width='1.6' stroke-linecap='round'/%3E%3Cline x1='24' y1='16' x2='29' y2='16' stroke='%23c9a554' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@300..700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Karla:ital,wght@0,300..800;1,300..800&family=Literata:ital,opsz,wght@0,7..72,200..900;1,7..72,200..900&family=Red+Hat+Mono:ital,wght@0,300..700;1,300..700&display=swap"
       rel="stylesheet"
     />
     <script>
       // Theme flash prevention — apply stored theme before first paint
       (function () {
-        var stored = localStorage.getItem("hirsel-theme");
         var modes = {
-          hirsel: "light",
-          "hirsel-dark": "dark",
-          midnight: "dark",
+          forge: "dark",
+          eclipse: "dark",
+          graphite: "dark",
+          miasma: "dark",
+          parchment: "light",
           bone: "light",
         };
+        // URL param override (useful for previews and screenshots)
+        var qs = new URLSearchParams(window.location.search);
+        var queryTheme = qs.get("theme");
+        if (queryTheme && queryTheme in modes) {
+          localStorage.setItem("hirsel-theme", queryTheme);
+        }
+        var stored = localStorage.getItem("hirsel-theme");
         var theme =
           stored && stored in modes
             ? stored
             : window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? "hirsel-dark"
-              : "hirsel";
+              ? "forge"
+              : "parchment";
         var mode = modes[theme];
         document.documentElement.dataset.theme = theme;
         document.documentElement.dataset.kbTheme = mode;

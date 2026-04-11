@@ -80,8 +80,20 @@ export async function loadMonaco(): Promise<MonacoNamespace> {
 }
 
 export function monacoThemeName(): string {
-  const theme = document.documentElement.getAttribute("data-theme") || "hirsel";
-  return theme.includes("dark") || theme === "midnight" ? "vs-dark" : "vs";
+  const theme = document.documentElement.getAttribute("data-theme") || "forge";
+  // Map each theme to the appropriate Monaco base. Dark themes → vs-dark.
+  switch (theme) {
+    case "forge":
+    case "eclipse":
+    case "graphite":
+    case "miasma":
+      return "vs-dark";
+    case "parchment":
+    case "bone":
+      return "vs";
+    default:
+      return "vs-dark";
+  }
 }
 
 export function monacoLanguageForPath(path: string): string {
