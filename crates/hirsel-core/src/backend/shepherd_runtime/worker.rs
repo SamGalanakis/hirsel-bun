@@ -4,11 +4,11 @@ use std::sync::Arc;
 use lash::tools::StandardShell;
 use lash::tools::UpdatePlanTool;
 use lash::{
-    default_context_strategy, default_execution_mode, EventSink, ExecutionMode, HostProfile,
-    InputItem, LashRuntime, PluginError, PluginFactory, PluginHost, PluginRegistrar,
-    PluginSessionContext, PluginSnapshotMeta, PromptContribution, RuntimeHostConfig,
-    RuntimeServices, SessionEvent, SessionPlugin, SessionPolicy, SessionStateEnvelope,
-    SnapshotReader, SnapshotWriter, ToolProvider, TurnInput,
+    default_execution_mode, EventSink, ExecutionMode, HostProfile, InputItem, LashRuntime,
+    PluginError, PluginFactory, PluginHost, PluginRegistrar, PluginSessionContext,
+    PluginSnapshotMeta, PromptContribution, RuntimeHostConfig, RuntimeServices, SessionEvent,
+    SessionPlugin, SessionPolicy, SessionStateEnvelope, SnapshotReader, SnapshotWriter,
+    ToolProvider, TurnInput,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -27,7 +27,10 @@ use crate::backend::lash_tools::{
     EmbeddedToolPreset,
 };
 use crate::backend::llm_provider;
+use crate::backend::prompts;
 use crate::backend::ShepherdChatMessage;
+
+const PLAN_TRACKER_GUIDANCE_FALLBACK: &str = "### `update_plan`\nUse `update_plan` for substantial multi-step work. Keep the plan short and concrete, maintain exactly one `in_progress` step, and mark steps completed as soon as they are done.";
 
 fn tool_title_kind(name: &str) -> (String, Option<String>) {
     match name {
@@ -36,7 +39,6 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         "rename_thread" => ("Rename Thread".to_string(), Some("edit".to_string())),
         "set_thread_status" => ("Thread Status".to_string(), Some("edit".to_string())),
         "archive_thread" => ("Archive Thread".to_string(), Some("execute".to_string())),
-        "promote_thread" => ("Promote Thread".to_string(), Some("execute".to_string())),
         "delete_thread" => ("Delete Thread".to_string(), Some("execute".to_string())),
         "send_thread_message" => ("Message Thread".to_string(), Some("execute".to_string())),
         "read_thread_updates" => ("Thread Updates".to_string(), Some("search".to_string())),
@@ -112,7 +114,8 @@ fn plan_tracker_prompt_contributions() -> Vec<PromptContribution> {
     vec![PromptContribution::guidance(
         "plan_tracker",
         "Plan tracker guidance",
-        "### `update_plan`\nUse `update_plan` for substantial multi-step work. Keep the plan short and concrete, maintain exactly one `in_progress` step, and mark steps completed as soon as they are done.",
+        &prompts::render_plan_tracker_guidance()
+            .unwrap_or_else(|_| PLAN_TRACKER_GUIDANCE_FALLBACK.to_string()),
     )]
 }
 
@@ -304,7 +307,6 @@ async fn create_runtime_from_history(
     };
     let (model, model_variant) = llm_provider::resolve_model_for_role(&settings, &provider, role);
     let execution_mode = default_execution_mode();
-    let context_strategy = default_context_strategy();
     let session_policy = SessionPolicy {
         model: model.clone(),
         provider,
@@ -312,7 +314,6 @@ async fn create_runtime_from_history(
         model_variant,
         session_id: Some(runtime_id.to_string()),
         execution_mode,
-        context_strategy,
         ..Default::default()
     };
     let host_config = RuntimeHostConfig {

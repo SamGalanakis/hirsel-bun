@@ -8,7 +8,7 @@ default-members = ["crates/hirsel-cli"]
 resolver = "2"
 
 [workspace.dependencies]
-lash = { git = "https://github.com/SamGalanakis/lash", rev = "b51956a9f4867f3502b151e324d1f64cc337bd54", package = "lash" }
+lash = { git = "https://github.com/SamGalanakis/lash", rev = "9a61a07d5290e7e0942e5f7ee24cc6b0faf35542", package = "lash" }
 axum = { version = "0.8", features = ["multipart", "ws"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 serde = { version = "1", features = ["derive"] }
@@ -24,6 +24,7 @@ scraper = "0.23"
 toml = "0.9"
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
+askama = "0.15.6"
 libc = "0.2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util", "io-std", "fs", "process", "signal", "macros"] }
 tokio-util = { version = "0.7", features = ["compat"] }
@@ -48,7 +49,6 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 tauri-build = { version = "2", features = [] }
-portable-pty = "0.9"
 
 [profile.profiling]
 inherits = "release"

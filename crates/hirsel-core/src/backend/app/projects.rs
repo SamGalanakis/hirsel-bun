@@ -21,10 +21,7 @@ pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapsh
 }
 
 #[tracing::instrument]
-pub async fn create_project(
-    name: String,
-    description: Option<String>,
-) -> Result<Project, String> {
+pub async fn create_project(name: String, description: Option<String>) -> Result<Project, String> {
     let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
 
     let mut project_name = name;

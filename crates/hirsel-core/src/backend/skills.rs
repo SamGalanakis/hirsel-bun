@@ -4,8 +4,9 @@ use std::path::{Component, Path, PathBuf};
 use lash::{collect_skill_mentions, SkillCatalog};
 use serde::Serialize;
 
-use crate::backend::ProjectStore;
+use crate::backend::prompts;
 use crate::backend::shepherd_runtime::types::{ShepherdMessageChunk, ShepherdScope};
+use crate::backend::ProjectStore;
 
 const MAX_FILE_REF_BYTES: usize = 120_000;
 const DEFAULT_FILE_REF_LINES: usize = 240;
@@ -161,7 +162,11 @@ async fn resolve_project_root(project_id: i64) -> Result<PathBuf, String> {
         .get_project(project_id)
         .await
         .map_err(|error| format!("failed to load project {}: {}", project_id, error))?;
-    if let Some(cwd) = project.shepherd_cwd.as_deref().filter(|p| !p.trim().is_empty()) {
+    if let Some(cwd) = project
+        .shepherd_cwd
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+    {
         let path = PathBuf::from(cwd);
         if path.is_dir() {
             return Ok(path);
@@ -263,10 +268,7 @@ fn render_skill_block(name: &str, path: &str) -> Result<String, String> {
     } else {
         parsed_name
     };
-    Ok(format!(
-        "<skill>\n<name>{}</name>\n<path>{}</path>\n{}\n</skill>",
-        canonical_name, path, instructions
-    ))
+    prompts::render_skill_block(&canonical_name, path, &instructions)
 }
 
 async fn render_file_ref_block(
@@ -277,31 +279,19 @@ async fn render_file_ref_block(
     line_end: Option<usize>,
 ) -> Result<String, String> {
     if matches!(scope, ShepherdScope::General) {
-        return Ok(format!(
-            "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<status>unavailable</status>\n</workspace-file>",
-            root_id, relative_path
-        ));
+        return prompts::render_workspace_file_status(root_id, relative_path, "unavailable");
     }
 
     if root_id != "main" {
-        return Ok(format!(
-            "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<status>unsupported</status>\n</workspace-file>",
-            root_id, relative_path
-        ));
+        return prompts::render_workspace_file_status(root_id, relative_path, "unsupported");
     }
 
     let Some(root) = scope_workspace_root(scope).await else {
-        return Ok(format!(
-            "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<status>unavailable</status>\n</workspace-file>",
-            root_id, relative_path
-        ));
+        return prompts::render_workspace_file_status(root_id, relative_path, "unavailable");
     };
     let target = resolve_relative_path(&root, relative_path)?;
     if !target.exists() || !target.is_file() {
-        return Ok(format!(
-            "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<status>missing</status>\n</workspace-file>",
-            root_id, relative_path
-        ));
+        return prompts::render_workspace_file_status(root_id, relative_path, "missing");
     }
 
     let bytes = std::fs::read(&target)
@@ -311,10 +301,7 @@ async fn render_file_ref_block(
         .unwrap_or("application/octet-stream");
     let is_text = !bytes.contains(&0) && std::str::from_utf8(&bytes).is_ok();
     if !is_text {
-        return Ok(format!(
-            "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<mime>{}</mime>\n<status>binary</status>\n</workspace-file>",
-            root_id, relative_path, mime
-        ));
+        return prompts::render_workspace_file_binary(root_id, relative_path, mime);
     }
 
     let mut content = String::from_utf8(bytes)
@@ -347,16 +334,15 @@ async fn render_file_ref_block(
         .and_then(|value| value.to_str())
         .unwrap_or("text");
 
-    Ok(format!(
-        "<workspace-file>\n<root-id>{}</root-id>\n<path>{}</path>\n<language>{}</language>\n<line-start>{}</line-start>\n<line-end>{}</line-end>\n<truncated>{}</truncated>\n<content>\n{}\n</content>\n</workspace-file>",
+    prompts::render_workspace_file_content(
         root_id,
         relative_path,
         language,
         start,
         capped_end.min(total_lines),
-        if truncated || capped_end < requested_end { "true" } else { "false" },
-        actual_slice
-    ))
+        truncated || capped_end < requested_end,
+        &actual_slice,
+    )
 }
 
 fn parse_line_suffix(raw: &str) -> (String, Option<usize>, Option<usize>) {

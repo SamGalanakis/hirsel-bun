@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use base64::Engine;
 use axum::body::{to_bytes, Body};
 use axum::extract::{Request, State};
 use axum::http::{Response, StatusCode};
 use axum::Router;
+use base64::Engine;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
@@ -67,7 +67,10 @@ async fn proxy_thread_http(
         .no_zstd()
         .build()
         .map_err(|e| format!("failed to build preview client: {e}"))?;
-    let url = format!("{scheme}://127.0.0.1:{}{}", info.port, request.path_and_query);
+    let url = format!(
+        "{scheme}://127.0.0.1:{}{}",
+        info.port, request.path_and_query
+    );
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|e| format!("invalid preview method '{}': {e}", request.method))?;
     let mut headers = reqwest::header::HeaderMap::new();
@@ -90,9 +93,13 @@ async fn proxy_thread_http(
     let resp_headers: Vec<(String, String)> = response
         .headers()
         .iter()
-        .filter_map(|(name, value)| Some((name.as_str().to_string(), value.to_str().ok()?.to_string())))
+        .filter_map(|(name, value)| {
+            Some((name.as_str().to_string(), value.to_str().ok()?.to_string()))
+        })
         .collect();
-    let resp_body = response.bytes().await
+    let resp_body = response
+        .bytes()
+        .await
         .map_err(|e| format!("failed to read preview response body: {e}"))?;
     Ok(ProxyHttpResponse {
         status,
@@ -144,7 +151,8 @@ async fn handle_preview_request(
 
     match proxy_thread_http(&state.info, request).await {
         Ok(response) => {
-            let body = match base64::engine::general_purpose::STANDARD.decode(&response.body_base64) {
+            let body = match base64::engine::general_purpose::STANDARD.decode(&response.body_base64)
+            {
                 Ok(body) => body,
                 Err(error) => {
                     return text_response(StatusCode::BAD_GATEWAY, error.to_string());

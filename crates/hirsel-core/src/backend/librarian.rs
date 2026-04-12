@@ -12,11 +12,13 @@ use crate::backend::db::librarian_db;
 use crate::backend::documents::{self, DocumentValidationError};
 use crate::backend::knowledge_graph::KnowledgeGraphTextRow;
 use crate::backend::live_updates::{self, LiveUpdateKind};
+use crate::backend::prompts;
 use crate::backend::shepherd_runtime::{ShepherdMessageChunk, ShepherdScope};
 use crate::backend::text_patch::{apply_text_patch, is_safe_patch_field_name};
 use crate::backend::tool_results::edit_result_with;
 
-const GRAPH_MUTATION_KEYWORDS: &[&str] = &["CREATE", "UPSERT", "UPDATE", "DELETE", "RELATE", "INSERT"];
+const GRAPH_MUTATION_KEYWORDS: &[&str] =
+    &["CREATE", "UPSERT", "UPDATE", "DELETE", "RELATE", "INSERT"];
 const GRAPH_TEXT_FIELDS: &[&str] = &["content"];
 const CANVAS_TAGS_REQUIRING_NODE_ATTR: &[&str] = &[
     "hirsel-node-ref",
@@ -29,9 +31,9 @@ const CANVAS_TAGS_REQUIRING_NODE_ATTR: &[&str] = &[
 
 pub(crate) const LIBRARIAN_SURREALQL_GUIDE: &str = r#"## Knowledge Graph Querying
 
-Use `graph_surql(query, params?)` for graph reads and writes. `$project_id` is always bound automatically. `project_id`, `updated_at`, and `created_at` are auto-set by the schema — you do not need to include them in writes, but you may for clarity.
+Use `graph_surql(query, params?)` for graph reads and writes. `$project_id` is always bound automatically.
 
-Use `patch_canvas_document(patch)` for canvas updates. Database permissions block direct `document:canvas` edits through `graph_surql` and `edit_graph_node_text`.
+Use `patch_canvas_document(patch)` for canvas updates.
 
 Allowed tables:
 - `kg_node`
@@ -43,11 +45,11 @@ Canonical node record IDs:
 - `type::record('kg_node', [$project_id, 'document', 'canvas'])`
 
 Node shape:
-- `project_id` (auto), `kind`, `node_id`, `label`, `content`, `source`, `metadata`, `updated_at` (auto)
+- `kind`, `node_id`, `label`, `content`, `source`, `metadata`, `updated_at` (auto)
 - `content` is the single text field for all node kinds. For documents, it holds HTML. For everything else, plain text.
 
 Edge shape:
-- `project_id` (auto), `relation`, `metadata`, `created_at` (auto)
+- `relation`, `metadata`, `created_at` (auto)
 
 Preferred patterns:
 - Lookup/list: `SELECT * FROM kg_node WHERE kind = $kind AND ...`
@@ -56,7 +58,8 @@ Preferred patterns:
 - Multi-step updates: `BEGIN TRANSACTION; ... COMMIT TRANSACTION;`
 - Abort a bad transaction: `THROW 'reason'`
 
-Note: The canvas document node cannot be created, updated, or deleted through graph queries.
+Use `UPSERT` when a node may already exist.
+
 Canvas references must use `node="kind:id"` attributes. Do not emit separate `kind=` / `id=` attributes or `path=` links.
 
 For incremental refinement of a long `content` field, use `edit_graph_node_text(kind, id, field, patch)` instead of rewriting the whole node."#;
@@ -139,13 +142,9 @@ pub async fn queue_background_sync(
     assistant_chunks: &[ShepherdMessageChunk],
 ) -> Result<(), String> {
     let source_label = sync_source_label(source_scope);
-    let prompt = format!(
-        "Shepherd sync from {source_label}\n\n\
-         User:\n{user_message}\n\n\
-         Assistant:\n{assistant_message}",
-        user_message = format_sync_chunks(user_chunks),
-        assistant_message = format_sync_chunks(assistant_chunks),
-    );
+    let user_message = format_sync_chunks(user_chunks);
+    let assistant_message = format_sync_chunks(assistant_chunks);
+    let prompt = prompts::render_librarian_sync(&source_label, &user_message, &assistant_message)?;
 
     crate::backend::shepherd_runtime::commands::enqueue_librarian_automated_message(
         project_id,
@@ -202,7 +201,8 @@ pub async fn graph_surql(project_id: i64, args: &Value) -> ToolResult {
         let msg = format_graph_errors(errors);
         tracing::warn!(project_id, error = %msg, "graph_surql statement errors");
         return ToolResult::err(json!({
-            "error": msg
+            "error": msg,
+            "hint": graph_error_hint(&msg),
         }));
     }
 
@@ -211,6 +211,9 @@ pub async fn graph_surql(project_id: i64, args: &Value) -> ToolResult {
         let rows: Vec<Value> = response.take(index).unwrap_or_default();
         results.push(json!({
             "index": index,
+            "row_count": rows.len(),
+            "record_ids": extract_record_ids(&rows),
+            "graph_preview": graph_preview(&rows),
             "value": rows,
         }));
     }
@@ -399,9 +402,7 @@ fn validate_canvas_markup_contract(html: &str) -> Result<(), String> {
             let attrs = node.value();
             let node_attr = attrs.attr("node").map(str::trim).unwrap_or("");
             if node_attr.is_empty() {
-                return Err(format!(
-                    "<{tag_name}> requires node=\"kind:id\""
-                ));
+                return Err(format!("<{tag_name}> requires node=\"kind:id\""));
             }
             let Some((kind, node_id)) = node_attr.split_once(':') else {
                 return Err(format!("<{tag_name}> node attribute must be kind:id"));
@@ -415,7 +416,9 @@ fn validate_canvas_markup_contract(html: &str) -> Result<(), String> {
                 ));
             }
             if *tag_name == "hirsel-doc-link" && attrs.attr("path").is_some() {
-                return Err("<hirsel-doc-link> must not use path=; use node=\"kind:id\"".to_string());
+                return Err(
+                    "<hirsel-doc-link> must not use path=; use node=\"kind:id\"".to_string()
+                );
             }
         }
     }
@@ -451,4 +454,63 @@ fn format_graph_errors(errors: std::collections::HashMap<usize, surrealdb::Error
         .map(|(index, error)| format!("statement {index}: {error}"))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn graph_error_hint(message: &str) -> Option<&'static str> {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("already exists") {
+        Some("Use UPSERT when creating a node that may already exist.")
+    } else if lower.contains("not enough permissions") || lower.contains("iam error") {
+        Some("This query tried to access or mutate graph records outside the Librarian's allowed graph scope.")
+    } else if lower.contains("canvas") {
+        Some("Use patch_canvas_document(patch) for canvas changes.")
+    } else {
+        None
+    }
+}
+
+fn extract_record_ids(rows: &[Value]) -> Vec<Value> {
+    rows.iter()
+        .filter_map(|row| row.get("id").cloned())
+        .collect()
+}
+
+fn graph_preview(rows: &[Value]) -> Vec<Value> {
+    rows.iter().filter_map(graph_preview_row).take(10).collect()
+}
+
+fn graph_preview_row(row: &Value) -> Option<Value> {
+    let object = row.as_object()?;
+    if let (Some(kind), Some(node_id)) = (
+        object.get("kind").and_then(Value::as_str),
+        object.get("node_id").and_then(Value::as_str),
+    ) {
+        let mut preview = Map::new();
+        preview.insert("type".to_string(), json!("kg_node"));
+        preview.insert("kind".to_string(), json!(kind));
+        preview.insert("node_id".to_string(), json!(node_id));
+        if let Some(label) = object.get("label").and_then(Value::as_str) {
+            preview.insert("label".to_string(), json!(label));
+        }
+        if let Some(id) = object.get("id") {
+            preview.insert("id".to_string(), id.clone());
+        }
+        return Some(Value::Object(preview));
+    }
+
+    if let (Some(relation), Some(in_record), Some(out_record)) = (
+        object.get("relation").and_then(Value::as_str),
+        object.get("in").or_else(|| object.get("in_record")),
+        object.get("out"),
+    ) {
+        return Some(json!({
+            "type": "kg_edge",
+            "relation": relation,
+            "in": in_record,
+            "out": out_record,
+            "id": object.get("id").cloned(),
+        }));
+    }
+
+    None
 }

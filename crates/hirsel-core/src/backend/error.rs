@@ -153,7 +153,7 @@ pub enum HirselError {
     // =========================================================================
     // State/Database variants
     // =========================================================================
-        #[error("Database error: {0}")]
+    #[error("Database error: {0}")]
     Database(#[from] surrealdb::Error),
 
     #[error("State error: {0}")]
@@ -311,8 +311,6 @@ impl From<crate::backend::config::ConfigError> for HirselError {
         }
     }
 }
-
-
 
 // =============================================================================
 // Result type alias

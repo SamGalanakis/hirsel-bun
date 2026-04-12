@@ -249,9 +249,7 @@ pub async fn get_workspace_snapshot(
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     let librarian_history = if query.librarian.unwrap_or(false) {
         shepherd_runtime::get_shepherd_history(
-            shepherd_runtime::ShepherdScope::Librarian {
-                project_id,
-                },
+            shepherd_runtime::ShepherdScope::Librarian { project_id },
             200,
         )
         .await
@@ -299,9 +297,7 @@ pub async fn get_librarian_history(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let limit = query.limit.unwrap_or(100).clamp(1, 500);
     let history = shepherd_runtime::get_shepherd_history(
-        shepherd_runtime::ShepherdScope::Librarian {
-            project_id,
-        },
+        shepherd_runtime::ShepherdScope::Librarian { project_id },
         limit,
     )
     .await
@@ -315,9 +311,7 @@ pub async fn send_librarian_message(
     Json(body): Json<ChatSendBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     let response = shepherd_runtime::send_scope_message(
-        shepherd_runtime::ShepherdScope::Librarian {
-            project_id,
-        },
+        shepherd_runtime::ShepherdScope::Librarian { project_id },
         Some(body.content),
         None,
         None,
@@ -346,12 +340,15 @@ pub async fn get_knowledge_graph(
     let db = global_db().await;
 
     let mut result = db
-        .query(
-            "SELECT * FROM kg_node WHERE id[0] = $project_id ORDER BY updated_at DESC LIMIT 200",
-        )
+        .query("SELECT * FROM kg_node WHERE id[0] = $project_id ORDER BY updated_at DESC LIMIT 200")
         .bind(("project_id", project_id))
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("graph query failed: {}", e)))?;
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("graph query failed: {}", e),
+            )
+        })?;
 
     let nodes: Vec<KnowledgeGraphNodeRow> = result.take(0).map_err(|e| {
         (

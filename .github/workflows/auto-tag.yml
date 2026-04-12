@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'src-tauri/Cargo.toml'
+      - 'crates/hirsel-cli/Cargo.toml'
 
 permissions:
   contents: write
@@ -22,18 +22,18 @@ jobs:
       - name: Get current version
         id: current
         run: |
-          version=$(grep '^version' src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          version=$(grep '^version' crates/hirsel-cli/Cargo.toml | head -1 | cut -d'"' -f2)
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "Current version: $version"
 
       - name: Get previous version
         id: previous
         run: |
-          git checkout HEAD~1 -- src-tauri/Cargo.toml 2>/dev/null || echo "No previous version"
-          version=$(grep '^version' src-tauri/Cargo.toml | head -1 | cut -d'"' -f2)
+          git checkout HEAD~1 -- crates/hirsel-cli/Cargo.toml 2>/dev/null || echo "No previous version"
+          version=$(grep '^version' crates/hirsel-cli/Cargo.toml | head -1 | cut -d'"' -f2)
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "Previous version: $version"
-          git checkout HEAD -- src-tauri/Cargo.toml
+          git checkout HEAD -- crates/hirsel-cli/Cargo.toml
 
       - name: Check if tag exists
         id: check_tag

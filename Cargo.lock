@@ -263,6 +263,58 @@ dependencies = [
 ]
 
 [[package]]
+name = "askama"
+version = "0.15.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b8246bcbf8eb97abef10c2d92166449680d41d55c0fc6978a91dec2e3619608"
+dependencies = [
+ "askama_macros",
+ "itoa",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "askama_derive"
+version = "0.15.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9670bc84a28bb3da91821ef74226949ab63f1265aff7c751634f1dd0e6f97c"
+dependencies = [
+ "askama_parser",
+ "basic-toml",
+ "memchr",
+ "proc-macro2",
+ "quote",
+ "rustc-hash",
+ "serde",
+ "serde_derive",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "askama_macros"
+version = "0.15.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f0756b45480437dded0565dfc568af62ccce146fb6cfe902e808ba86e445f44f"
+dependencies = [
+ "askama_derive",
+]
+
+[[package]]
+name = "askama_parser"
+version = "0.15.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d0af3691ba3af77949c0b5a3925444b85cb58a0184cc7fec16c68ba2e7be868"
+dependencies = [
+ "rustc-hash",
+ "serde",
+ "serde_derive",
+ "unicode-ident",
+ "winnow 1.0.0",
+]
+
+[[package]]
 name = "async-broadcast"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -561,6 +613,15 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
+
+[[package]]
+name = "basic-toml"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba62675e8242a4c4e806d12f11d136e626e6c8361d6b829310732241652a178a"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bcrypt"
@@ -1523,7 +1584,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1806,7 +1867,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2798,6 +2859,7 @@ version = "0.4.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "askama",
  "async-stream",
  "async-trait",
  "axum",
@@ -3511,8 +3573,8 @@ dependencies = [
 
 [[package]]
 name = "lash"
-version = "0.2.44"
-source = "git+https://github.com/SamGalanakis/lash?rev=b51956a9f4867f3502b151e324d1f64cc337bd54#b51956a9f4867f3502b151e324d1f64cc337bd54"
+version = "0.2.46"
+source = "git+https://github.com/SamGalanakis/lash?rev=9a61a07d5290e7e0942e5f7ee24cc6b0faf35542#9a61a07d5290e7e0942e5f7ee24cc6b0faf35542"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -3541,18 +3603,19 @@ dependencies = [
 
 [[package]]
 name = "lash-sansio"
-version = "0.2.44"
-source = "git+https://github.com/SamGalanakis/lash?rev=b51956a9f4867f3502b151e324d1f64cc337bd54#b51956a9f4867f3502b151e324d1f64cc337bd54"
+version = "0.2.46"
+source = "git+https://github.com/SamGalanakis/lash?rev=9a61a07d5290e7e0942e5f7ee24cc6b0faf35542#9a61a07d5290e7e0942e5f7ee24cc6b0faf35542"
 dependencies = [
  "base64 0.22.1",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
 name = "lashlang"
-version = "0.2.44"
-source = "git+https://github.com/SamGalanakis/lash?rev=b51956a9f4867f3502b151e324d1f64cc337bd54#b51956a9f4867f3502b151e324d1f64cc337bd54"
+version = "0.2.46"
+source = "git+https://github.com/SamGalanakis/lash?rev=9a61a07d5290e7e0942e5f7ee24cc6b0faf35542#9a61a07d5290e7e0942e5f7ee24cc6b0faf35542"
 dependencies = [
  "compact_str",
  "rayon",
@@ -4035,7 +4098,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5727,7 +5790,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5784,7 +5847,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5978,7 +6041,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5b55fb86dfd3a2f5f76ea78310a88f96c4ea21a3031f8d212443d56123fd0521"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7205,7 +7268,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8359,7 +8422,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

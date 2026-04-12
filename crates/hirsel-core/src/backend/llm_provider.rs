@@ -191,11 +191,11 @@ pub async fn resolve_provider(settings: &LlmSettings) -> Result<Provider, String
         };
     }
 
-        let store = CredentialStore::open()
+    let store = CredentialStore::open()
         .await
         .map_err(|e| format!("failed to open credential store: {}", e))?;
 
-        match settings.provider {
+    match settings.provider {
         LlmProvider::Codex => {
             let codex = load_codex_oauth(&store).await?;
             Ok(Provider::Codex {

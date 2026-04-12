@@ -38,7 +38,7 @@ jobs:
       - name: Get version and branch
         id: info
         run: |
-          VERSION=$(grep '^version' src-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          VERSION=$(grep '^version' crates/hirsel-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           # Get branch name, use 'release' for tags
@@ -157,7 +157,7 @@ jobs:
       - name: Get version and branch
         id: info
         run: |
-          VERSION=$(grep '^version' src-tauri/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          VERSION=$(grep '^version' crates/hirsel-cli/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then

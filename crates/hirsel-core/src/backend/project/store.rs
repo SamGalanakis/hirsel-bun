@@ -222,6 +222,36 @@ impl ProjectStore {
         Ok(record.into_project())
     }
 
+    /// Insert or replace a workspace on a project by workspace ID.
+    pub async fn upsert_workspace(
+        &self,
+        project_id: i64,
+        workspace: ProjectWorkspaceEntry,
+    ) -> ProjectResult<Project> {
+        let db = self.db().await;
+        let mut record: ProjectRecord = db
+            .select((PROJECT_TABLE, project_id))
+            .await?
+            .ok_or_else(|| ProjectError::NotFound(project_id.to_string()))?;
+
+        if let Some(existing) = record
+            .workspaces
+            .iter_mut()
+            .find(|entry| entry.id == workspace.id)
+        {
+            *existing = workspace;
+        } else {
+            record.workspaces.push(workspace);
+        }
+        record.updated_at = utc_now();
+        let _: Option<ProjectRecord> = db
+            .upsert((PROJECT_TABLE, project_id))
+            .content(record.clone())
+            .await?;
+        live_updates::publish_project(project_id, LiveUpdateKind::ProjectChanged);
+        Ok(record.into_project())
+    }
+
     /// Update the shepherd's current working directory.
     pub async fn update_shepherd_cwd(
         &self,

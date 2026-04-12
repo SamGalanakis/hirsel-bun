@@ -116,7 +116,9 @@ impl From<KnowledgeGraphEdgeRow> for ApiKnowledgeGraphEdge {
         let in_record = value
             .in_record
             .unwrap_or_else(|| RecordId::new("kg_node", "missing"));
-        let out = value.out.unwrap_or_else(|| RecordId::new("kg_node", "missing"));
+        let out = value
+            .out
+            .unwrap_or_else(|| RecordId::new("kg_node", "missing"));
         Self {
             id: record_id_to_api(value.id),
             relation: value.relation,

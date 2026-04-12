@@ -155,7 +155,11 @@ async fn resolve_project_cwd(project_id: i64) -> Result<PathBuf, String> {
         .get_project(project_id)
         .await
         .map_err(|error| format!("failed to load project {}: {}", project_id, error))?;
-    if let Some(cwd) = project.shepherd_cwd.as_deref().filter(|p| !p.trim().is_empty()) {
+    if let Some(cwd) = project
+        .shepherd_cwd
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+    {
         let path = PathBuf::from(cwd);
         if path.is_dir() {
             return Ok(path);

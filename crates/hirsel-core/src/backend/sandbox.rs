@@ -86,8 +86,14 @@ fn current_worker_source_fingerprint() -> Result<String, String> {
         repo_root.join("deploy").join("worker.Dockerfile"),
         repo_root.join("Cargo.toml"),
         repo_root.join("Cargo.lock"),
-        repo_root.join("crates").join("hirsel-core").join("Cargo.toml"),
-        repo_root.join("crates").join("hirsel-cli").join("Cargo.toml"),
+        repo_root
+            .join("crates")
+            .join("hirsel-core")
+            .join("Cargo.toml"),
+        repo_root
+            .join("crates")
+            .join("hirsel-cli")
+            .join("Cargo.toml"),
         repo_root.join("crates").join("hirsel-cli").join("build.rs"),
         repo_root.join("src-tauri").join("Cargo.toml"),
     ];
@@ -276,7 +282,8 @@ pub fn ensure_docker_available() -> Result<(), String> {
 pub fn humanize_docker_error(message: &str) -> String {
     let lower = message.to_ascii_lowercase();
     if lower.contains("permission denied") {
-        return "docker is installed but your user cannot access it (permission denied)".to_string();
+        return "docker is installed but your user cannot access it (permission denied)"
+            .to_string();
     }
     if lower.contains("cannot connect to the docker daemon")
         || lower.contains("is the docker daemon running")

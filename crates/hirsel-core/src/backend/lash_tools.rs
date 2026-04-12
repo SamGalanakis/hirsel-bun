@@ -9,6 +9,8 @@ use lash::{
     ToolProvider,
 };
 
+use crate::backend::prompts;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EmbeddedToolPreset {
     General,
@@ -22,11 +24,13 @@ pub(crate) struct EmbeddedCustomToolPlugin {
     pub(crate) provider: Arc<dyn ToolProvider>,
 }
 
+const SHELL_GUIDANCE_FALLBACK: &str = "### Command Execution\nUse `exec_command` for one-shot commands and for starting long-lived processes. If it returns `session_id`, continue that same process with `write_stdin`; otherwise the command already exited. For services or background daemons, prefer startup patterns that survive after the tool call returns, then verify readiness from a fresh command before concluding.\n\n### Git Safety\nDo not revert user changes you did not make. Avoid destructive git commands unless explicitly requested.";
+
 fn shell_prompt_contributions() -> Vec<PromptContribution> {
     vec![PromptContribution::guidance(
         "embedded_shell_tools",
         "Shell tool guidance",
-        "### Command Execution\nUse `exec_command` for one-shot commands and for starting long-lived processes. If it returns `session_id`, continue that same process with `write_stdin`; otherwise the command already exited. For services or background daemons, prefer startup patterns that survive after the tool call returns, then verify readiness from a fresh command before concluding.\n\n### Git Safety\nDo not revert user changes you did not make. Avoid destructive git commands unless explicitly requested.",
+        &prompts::render_shell_guidance().unwrap_or_else(|_| SHELL_GUIDANCE_FALLBACK.to_string()),
     )]
 }
 

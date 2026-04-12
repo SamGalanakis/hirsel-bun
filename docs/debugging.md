@@ -10,7 +10,7 @@ Common locations:
 |-----|----------|----------|
 | Server log | `~/.hirsel/logs/server/server.log.YYYY-MM-DD` | HTTP routes, project loading, queue processing, SSE/UI activity |
 | GUI shell log | `~/.hirsel/logs/gui/gui.log.YYYY-MM-DD` | Thin desktop wrapper startup and local shell issues |
-| Scope log | `~/.hirsel/logs/scope/scope.log.YYYY-MM-DD` | Hidden shepherd/thread scope runtime launched inside coding containers |
+| Scope log | `~/.hirsel/logs/scope/scope.log.YYYY-MM-DD` | Hidden shepherd/thread scope runtime activity |
 | Profiling traces | `~/.hirsel/profiling/<timestamp>/` | Optional Perfetto-compatible trace output |
 
 ## Common Checks
@@ -31,8 +31,6 @@ curl http://127.0.0.1:8080/health -H 'x-api-key: replace-me'
 # Inspect project workspaces and thread checkouts
 find ~/.hirsel/workspaces -maxdepth 3 -type d | sort
 
-# Check whether Docker is reachable from the backend host
-docker info >/dev/null && echo ok
 ```
 
 ## Server Startup
@@ -73,24 +71,23 @@ Then it loads the backend-served UI. If the wrapper opens but the project UI doe
 3. backend health
 4. server logs
 
-## Docker + Nix Session Failures
-
-Normal coding threads require:
-
-- Docker available to the backend host
-- a project `flake.nix` in the central checkout
+## Scope Session Failures
 
 Useful checks:
+
+- the central checkout exists
+- the expected thread checkout exists
+- the scope log shows the real failure instead of only the UI symptom
 
 ```bash
 # Inspect the central checkout
 find ~/.hirsel/workspaces -path '*/work/central' -type d
 
-# Confirm whether the current project checkout has a flake
-find ~/.hirsel/workspaces -path '*/work/central/flake.nix' -type f
+# Inspect thread checkouts
+find ~/.hirsel/workspaces -path '*/work/thread-*' -type d
 ```
 
-If a project has no `flake.nix`, shepherd can still answer directly and can bootstrap the flake from the shepherd session, but thread scopes will fail until that file exists.
+If a thread turn fails, compare the thread's workspace path and recent scope log entries before assuming the problem is in the UI.
 
 ## Rust Logging
 
@@ -101,7 +98,7 @@ RUST_LOG=hirsel=debug just dev
 # Focus on the backend UI / HTTP path
 RUST_LOG=hirsel_lib::backend::server=debug,hirsel_lib::backend::webui=debug just dev
 
-# Focus on shepherd queueing and container launch
+# Focus on shepherd queueing and scope launch
 RUST_LOG=hirsel_lib::backend::shepherd_runtime=debug,hirsel_lib::backend::sandbox=debug just dev
 ```
 

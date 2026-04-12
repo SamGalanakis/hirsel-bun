@@ -94,8 +94,18 @@ function rootLabelById(rootMap: Map<string, WorkspaceRoot>, rootId: string): str
     summary: null,
     threadId: null,
     branch: null,
+    path: null,
     readOnly: false,
   });
+}
+
+function formatWorkspacePath(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const home = (globalThis as { __hirselHome?: string }).__hirselHome ?? "";
+  if (home && raw.startsWith(home)) {
+    return "~" + raw.slice(home.length);
+  }
+  return raw;
 }
 
 function rowPadding(depth: number): string {
@@ -935,18 +945,45 @@ const WorkspaceBrowser: Component<WorkspaceBrowserProps> = (props) => {
                             <span class="shrink-0 text-signal-blue/70">{iconBranch()}</span>
                           </Show>
                           <div class="min-w-0 flex-1">
-                            <span class={cn(
-                              "block truncate text-xs",
-                              isRemote ? "text-signal-blue/70" : isThread ? "text-muted-foreground" : "font-medium",
-                            )}>
-                              {rootLabel(root)}
-                            </span>
-                            <Show when={root.summary}>
+                            <div class="flex items-baseline gap-1.5">
                               <span class={cn(
-                                "block truncate text-[10px]",
-                                isRemote ? "font-mono text-signal-blue/40" : "text-muted-foreground/50",
+                                "min-w-0 flex-1 truncate text-xs",
+                                isRemote ? "text-signal-blue/70" : isThread ? "text-muted-foreground" : "font-medium",
                               )}>
-                                {root.summary}
+                                {rootLabel(root)}
+                              </span>
+                              <Show when={!isThread && root.branch}>
+                                <span
+                                  class="shrink-0 font-mono text-[9px] text-signal-blue/70"
+                                  title={`Git branch: ${root.branch}`}
+                                >
+                                  {root.branch}
+                                </span>
+                              </Show>
+                            </div>
+                            <Show
+                              when={!isThread && !isRemote && root.path}
+                              fallback={
+                                <Show when={isThread && root.summary}>
+                                  <span class="block truncate text-[10px] text-muted-foreground/50">
+                                    {root.summary}
+                                  </span>
+                                </Show>
+                              }
+                            >
+                              <span
+                                class="block font-mono text-[10px] text-muted-foreground/55"
+                                style={{
+                                  direction: "rtl",
+                                  "text-align": "left",
+                                  "unicode-bidi": "plaintext",
+                                  "text-overflow": "ellipsis",
+                                  "white-space": "nowrap",
+                                  overflow: "hidden",
+                                }}
+                                title={root.path ?? undefined}
+                              >
+                                {formatWorkspacePath(root.path)}
                               </span>
                             </Show>
                           </div>

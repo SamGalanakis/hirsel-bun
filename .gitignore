@@ -8,7 +8,8 @@ references/
 .hirsel-dev/
 .hirsel-remote-dev/
 .playwright-mcp/
-
+.claude
+.lash
 # Environment and secrets
 .env
 .env.*
@@ -16,7 +17,9 @@ references/
 .envrc
 *.pem
 *.key
-
+*.log
+*.env
+*.txt
 # OS files
 .DS_Store
 Thumbs.db
@@ -42,6 +45,17 @@ __pycache__/
 
 # Rust/Cargo build output
 target/
+dist/
+node_modules/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.log
+.lash/
+.hirsel-dev/
+webui/dist/
+webui/node_modules/
 **/target/
 result
 

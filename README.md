@@ -1,8 +1,7 @@
 # Hirsel
 
-Backend-first coding orchestration: talk to shepherd, let threads carry the parallel work.
 
-Local dev:
+A simple IDE.
 
 ```bash
 just dev

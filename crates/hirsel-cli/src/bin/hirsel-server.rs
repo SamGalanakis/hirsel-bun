@@ -44,7 +44,9 @@ fn main() {
     hirsel_core::init_process_tracing("server");
 
     let runtime = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
-    if let Err(error) = runtime.block_on(async { hirsel_core::backend::server::start_server(cli.port).await }) {
+    if let Err(error) =
+        runtime.block_on(async { hirsel_core::backend::server::start_server(cli.port).await })
+    {
         eprintln!("Error: {}", error);
         std::process::exit(1);
     }

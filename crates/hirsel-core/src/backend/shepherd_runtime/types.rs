@@ -16,8 +16,12 @@ pub fn scope_key(scope: &ShepherdScope) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum WorkerStreamEvent {
-    TextDelta { content: String },
-    DurableSnapshot { state_json: String },
+    TextDelta {
+        content: String,
+    },
+    DurableSnapshot {
+        state_json: String,
+    },
     Tool {
         id: String,
         title: String,
@@ -29,8 +33,13 @@ pub enum WorkerStreamEvent {
         #[serde(default)]
         output: Option<String>,
     },
-    Message { text: String, kind: String },
-    Error { message: String },
+    Message {
+        text: String,
+        kind: String,
+    },
+    Error {
+        message: String,
+    },
 }
 
 // ── Preview forwarding ──

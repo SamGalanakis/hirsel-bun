@@ -166,11 +166,11 @@
     <div class="hero">
       <div class="eyebrow">Current Architecture</div>
       <h1>One project, one shepherd, many visible threads.</h1>
-      <p>Hirsel is now backend-first. The desktop app is a thin shell that stores backend connection details and loads the backend-served Datastar UI. The durable product model is <code>project + shepherd + canvas + threads</code>, with coding work executed in Docker containers that enter the repo through <code>nix develop</code>.</p>
+      <p>Hirsel is now backend-first. The desktop app is a thin shell that stores backend connection details and loads the backend-served Datastar UI. The durable product model is <code>project + shepherd + canvas + threads</code>, with coding work executed as queued scope turns against project workspaces.</p>
       <div class="pillrow">
         <div class="pill">Backend-served Datastar UI</div>
         <div class="pill">Thin Tauri shell</div>
-        <div class="pill">Docker + Nix scope runtime</div>
+        <div class="pill">Queued scope runtime</div>
         <div class="pill">Central checkout</div>
         <div class="pill">Visible thread cards</div>
       </div>
@@ -189,7 +189,7 @@ flowchart LR
     Threads[Visible thread records]
     Runtime[Central checkout]
     Scope[Hidden scope runtime]
-    Container[Docker container]
+    Session[Scope session]
     Checkout[Thread checkout]
 
     User --> Shell
@@ -201,12 +201,12 @@ flowchart LR
     Shepherd --> Runtime
     Shepherd --> Scope
     Threads --> Checkout
-    Scope --> Container
-    Container --> Runtime
-    Container --> Checkout
+    Scope --> Session
+    Session --> Runtime
+    Session --> Checkout
       </div>
       <div class="callout">
-        <p><span class="ok">Important:</span> threads are durable product objects, but their coding turns are not in-process. Each queued shepherd or thread turn launches the hidden <code>hirsel __shepherd-scope-runtime</code> inside a Docker container.</p>
+        <p><span class="ok">Important:</span> threads are durable product objects, but their coding turns are not in-process. Each queued shepherd or thread turn runs through the hidden <code>hirsel __shepherd-scope-runtime</code> for that scope.</p>
       </div>
     </section>
 
@@ -227,7 +227,7 @@ flowchart LR
         <p>The only agent the user talks to directly.</p>
         <ul>
           <li>Answers simple questions directly</li>
-          <li>Creates, renames, pauses, archives, and messages threads</li>
+          <li>Creates, renames, updates, archives, deletes, and messages threads</li>
           <li>Owns integration decisions in the central checkout</li>
         </ul>
       </div>
@@ -263,13 +263,13 @@ flowchart LR
           <tr>
             <td><code>canvas</code></td>
             <td>Yes</td>
-            <td><code>project_focus_views</code></td>
+            <td><code>document:canvas</code></td>
             <td>Shared HTML artifact shown in the main project view</td>
           </tr>
           <tr>
             <td><code>retained context</code></td>
             <td>Yes</td>
-            <td><code>project_retained_contexts</code></td>
+            <td><code>project_retained_context</code></td>
             <td>Compact markdown memory for the project</td>
           </tr>
           <tr>
@@ -306,12 +306,12 @@ flowchart LR
           <p>Each visible thread gets its own checkout under the same project workspace, usually at <code>.../work/thread-&lt;slug&gt;-&lt;id&gt;</code>. The checkout path and checkout name are stored on the thread record.</p>
         </div>
         <div class="card">
-          <h3>Container Runtime</h3>
-          <p>When a queued turn runs, the backend launches a Docker container, mounts <code>/work</code>, <code>/hirsel</code>, session home, and the hidden <code>hirsel</code> binary, then enters the repo through <code>nix develop</code>.</p>
+          <h3>Scope Runtime</h3>
+          <p>When a queued turn runs, the backend starts the hidden scope runtime for that shepherd or thread scope against the appropriate workspace.</p>
         </div>
         <div class="card">
-          <h3>Flake Bootstrapping</h3>
-          <p>Project scope may bootstrap a temporary shell if the project has no <code>flake.nix</code> yet. Thread scope is stricter: normal coding threads require the project flake to exist first.</p>
+          <h3>Scope State</h3>
+          <p>Each scope keeps durable session state and a workspace path so shepherd and threads can resume work against the correct checkout.</p>
         </div>
       </div>
     </section>
@@ -376,15 +376,11 @@ flowchart LR
           </tr>
           <tr>
             <td><code>~/.hirsel/agent-sessions/</code></td>
-            <td>Per-scope home directories mounted into coding containers</td>
+            <td>Per-scope home directories and runtime state</td>
           </tr>
           <tr>
             <td><code>~/.hirsel/logs/server</code>, <code>.../gui</code>, <code>.../scope</code></td>
             <td>Rotated tracing logs</td>
-          </tr>
-          <tr>
-            <td><code>~/.hirsel/bootstrap-flake/flake.nix</code></td>
-            <td>Temporary bootstrap shell used only before a project defines its own flake</td>
           </tr>
         </tbody>
       </table>
@@ -439,10 +435,10 @@ flowchart LR
     <section>
       <h2>Current Constraints</h2>
       <ul>
-        <li>Docker is a hard requirement for coding turns.</li>
-        <li>Normal thread execution requires a project <code>flake.nix</code>.</li>
-        <li>The deploy image serves the backend UI, but full coding execution still expects the backend process to have Docker available on its host.</li>
-        <li>The biggest remaining code hotspots are still <code>web_routes.rs</code> and <code>webui.rs</code>, which own too many concerns each.</li>
+        <li>Coding turns are queued scope executions rather than continuously running workers.</li>
+        <li>Shepherd owns the central checkout; isolated work should live in visible thread workspaces.</li>
+        <li>Thread titles, statuses, and summaries are part of the user-facing product surface and should stay understandable.</li>
+        <li>Backend route composition and project UI composition still own too many concerns.</li>
       </ul>
     </section>
   </div>

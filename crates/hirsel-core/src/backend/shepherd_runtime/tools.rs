@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::backend::project::ProjectStore;
 use crate::backend::text_patch::TEXT_PATCH_INSTRUCTIONS;
 use crate::backend::tool_results::edit_result_with;
+use crate::backend::ProjectWorkspaceEntry;
 use crate::backend::{ShepherdChatMessage, ShepherdThread, ShepherdThreadStore};
 use globset::{Glob, GlobSetBuilder};
 use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
@@ -80,7 +81,7 @@ impl ToolContext {
             .ok_or_else(|| "project_id is required outside the shepherd session".to_string())
     }
 
-        fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    fn string_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
         args.get(key)
             .and_then(|value| value.as_str())
             .ok_or_else(|| format!("{} is required", key))
@@ -343,6 +344,79 @@ impl ToolContext {
         }))
     }
 
+    async fn list_project_workspaces(&self, project_id: i64) -> ToolResult {
+        let store = match ProjectStore::open().await {
+            Ok(store) => store,
+            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+        };
+        match store.get_project(project_id).await {
+            Ok(project) => ToolResult::ok(json!({
+                "project_id": project_id,
+                "workspaces": project.workspaces,
+                "shepherd_cwd": project.shepherd_cwd,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
+    async fn upsert_project_workspace(&self, project_id: i64, args: &Value) -> ToolResult {
+        let id = match Self::trimmed_string(args, "id") {
+            Some(value) => value.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: id"),
+        };
+        let kind = match Self::trimmed_string(args, "kind") {
+            Some(value) => value.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: kind"),
+        };
+        let label = match Self::trimmed_string(args, "label") {
+            Some(value) => value.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: label"),
+        };
+        let path = Self::trimmed_string(args, "path").map(ToOwned::to_owned);
+        let url = Self::trimmed_string(args, "url").map(ToOwned::to_owned);
+        let branch = Self::trimmed_string(args, "branch").map(ToOwned::to_owned);
+
+        let store = match ProjectStore::open().await {
+            Ok(store) => store,
+            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+        };
+        let workspace = ProjectWorkspaceEntry {
+            id,
+            kind,
+            label,
+            path,
+            url,
+            branch,
+        };
+        match store.upsert_workspace(project_id, workspace).await {
+            Ok(project) => ToolResult::ok(json!({
+                "project_id": project_id,
+                "workspaces": project.workspaces,
+                "shepherd_cwd": project.shepherd_cwd,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
+    async fn remove_project_workspace(&self, project_id: i64, args: &Value) -> ToolResult {
+        let id = match Self::trimmed_string(args, "id") {
+            Some(value) => value,
+            None => return ToolResult::err_fmt("Missing required parameter: id"),
+        };
+        let store = match ProjectStore::open().await {
+            Ok(store) => store,
+            Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
+        };
+        match store.remove_workspace(project_id, id).await {
+            Ok(project) => ToolResult::ok(json!({
+                "project_id": project_id,
+                "workspaces": project.workspaces,
+                "shepherd_cwd": project.shepherd_cwd,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
     async fn glob_workspace(&self, args: &Value) -> ToolResult {
         let pattern = match Self::trimmed_string(args, "pattern") {
             Some(value) => value.to_string(),
@@ -382,7 +456,10 @@ impl ToolContext {
         };
 
         let mut items = Vec::new();
-        for entry in WalkDir::new(&base).into_iter().filter_map(|entry| entry.ok()) {
+        for entry in WalkDir::new(&base)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+        {
             if entry.path() == base {
                 continue;
             }
@@ -410,7 +487,7 @@ impl ToolContext {
         }))
     }
 
-        fn normalize_thread_status(status: &str) -> Option<&'static str> {
+    fn normalize_thread_status(status: &str) -> Option<&'static str> {
         match status.trim().to_ascii_lowercase().as_str() {
             "running" | "active" => Some("running"),
             "waiting" | "paused" => Some("waiting"),
@@ -422,18 +499,18 @@ impl ToolContext {
         }
     }
 
-        fn latest_thread_plan(messages: &[ShepherdChatMessage]) -> Option<Value> {
+    fn latest_thread_plan(messages: &[ShepherdChatMessage]) -> Option<Value> {
         crate::backend::plans::extract_latest_plan(messages)
             .and_then(|plan| serde_json::to_value(plan).ok())
     }
 
-        async fn thread_store(&self) -> Result<ShepherdThreadStore, ToolResult> {
+    async fn thread_store(&self) -> Result<ShepherdThreadStore, ToolResult> {
         ShepherdThreadStore::open()
             .await
             .map_err(|error| ToolResult::err(json!({ "error": error.to_string() })))
     }
 
-        async fn resolve_thread(
+    async fn resolve_thread(
         &self,
         project_id: i64,
         args: &Value,
@@ -463,7 +540,7 @@ impl ToolContext {
         }
     }
 
-        async fn list_threads_tool(&self, project_id: i64) -> ToolResult {
+    async fn list_threads_tool(&self, project_id: i64) -> ToolResult {
         let store = match self.thread_store().await {
             Ok(store) => store,
             Err(error) => return error,
@@ -474,7 +551,7 @@ impl ToolContext {
         }
     }
 
-        async fn create_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn create_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let title = match Self::trimmed_string(args, "title") {
             Some(title) => title,
             None => return ToolResult::err_fmt("Missing required parameter: title"),
@@ -506,7 +583,7 @@ impl ToolContext {
         }))
     }
 
-        async fn rename_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn rename_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
@@ -531,7 +608,7 @@ impl ToolContext {
         }
     }
 
-        async fn set_thread_status_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn set_thread_status_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
@@ -558,7 +635,7 @@ impl ToolContext {
         }
     }
 
-        async fn archive_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn archive_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
@@ -569,7 +646,7 @@ impl ToolContext {
         }
     }
 
-        async fn delete_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn delete_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
@@ -580,7 +657,7 @@ impl ToolContext {
         }
     }
 
-        async fn send_thread_message_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn send_thread_message_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
@@ -622,7 +699,7 @@ impl ToolContext {
         }
     }
 
-        async fn read_thread_updates_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn read_thread_updates_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
@@ -645,7 +722,7 @@ impl ToolContext {
         }))
     }
 
-        async fn forward_port_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn forward_port_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread = match self.resolve_thread(project_id, args).await {
             Ok(thread) => thread,
             Err(error) => return error,
@@ -671,7 +748,7 @@ impl ToolContext {
         }
     }
 
-        async fn list_port_forwards_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn list_port_forwards_tool(&self, project_id: i64, args: &Value) -> ToolResult {
         let thread_id = if args.get("thread_id").is_some() || args.get("title").is_some() {
             match self.resolve_thread(project_id, args).await {
                 Ok(thread) => Some(thread.id),
@@ -686,7 +763,7 @@ impl ToolContext {
         }
     }
 
-        async fn close_port_forward_tool(&self, _project_id: i64, args: &Value) -> ToolResult {
+    async fn close_port_forward_tool(&self, _project_id: i64, args: &Value) -> ToolResult {
         let Some(forward_id) = Self::trimmed_string(args, "forward_id") else {
             return ToolResult::err_fmt("Missing required parameter: forward_id");
         };
@@ -703,7 +780,7 @@ impl ToolContext {
         }
     }
 
-        async fn read_project_retained_context(&self, project_id: i64) -> ToolResult {
+    async fn read_project_retained_context(&self, project_id: i64) -> ToolResult {
         let store = match ProjectStore::open().await {
             Ok(store) => store,
             Err(error) => return ToolResult::err(json!({ "error": error.to_string() })),
@@ -720,7 +797,7 @@ impl ToolContext {
         }
     }
 
-        async fn update_project_retained_context(&self, project_id: i64, args: &Value) -> ToolResult {
+    async fn update_project_retained_context(&self, project_id: i64, args: &Value) -> ToolResult {
         let markdown = match Self::string_arg(args, "markdown") {
             Ok(value) => value,
             Err(error) => return ToolResult::err(json!({ "error": error })),
@@ -763,8 +840,6 @@ impl ToolContext {
     }
 }
 
-
-
 async fn execute_librarian_tool(
     common: &ToolContext,
     project_id: i64,
@@ -776,6 +851,9 @@ async fn execute_librarian_tool(
         "glob" => common.glob_workspace(args).await,
         "read_file" => common.read_workspace_file(args).await,
         "grep" => common.grep_workspace(args).await,
+        "list_project_workspaces" => common.list_project_workspaces(project_id).await,
+        "upsert_project_workspace" => common.upsert_project_workspace(project_id, args).await,
+        "remove_project_workspace" => common.remove_project_workspace(project_id, args).await,
         "graph_surql" => crate::backend::librarian::graph_surql(project_id, args).await,
         "edit_graph_node_text" => {
             crate::backend::librarian::edit_graph_node_text(project_id, args).await
@@ -895,6 +973,40 @@ impl ToolProvider for LibrarianToolProvider {
                 injected: true,
             },
             tool_definition! {
+                name: "list_project_workspaces".to_string(),
+                description: "List the project's attached workspaces and shepherd cwd.".to_string(),
+                params: vec![],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "upsert_project_workspace".to_string(),
+                description: "Insert or replace one attached workspace entry on the project by stable workspace id.".to_string(),
+                params: vec![
+                    ToolParam::typed("id", "str"),
+                    ToolParam::typed("kind", "str"),
+                    ToolParam::typed("label", "str"),
+                    ToolParam::optional("path", "str"),
+                    ToolParam::optional("url", "str"),
+                    ToolParam::optional("branch", "str"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "remove_project_workspace".to_string(),
+                description: "Remove one attached workspace entry from the project by stable workspace id.".to_string(),
+                params: vec![ToolParam::typed("id", "str")],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
                 name: "graph_surql".to_string(),
                 description: "Run an arbitrary SurrealQL query against the project knowledge graph. `$project_id` is bound automatically. Project scoping and graph write restrictions are enforced by SurrealDB permissions.".to_string(),
                 params: vec![
@@ -981,7 +1093,7 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "create_thread".to_string(),
-                description: "Create a new execution thread with its own container and workspace.".to_string(),
+                description: "Create a new execution thread with its own workspace.".to_string(),
                 params: vec![
                     ToolParam::typed("title", "str"),
                     ToolParam::optional("objective", "str"),
@@ -1078,7 +1190,7 @@ impl ToolProvider for ShepherdToolProvider {
             },
             tool_definition! {
                 name: "forward_port".to_string(),
-                description: "Expose an HTTP or HTTPS port from a thread container to the user and to shepherd. Labels are required.".to_string(),
+                description: "Expose an HTTP or HTTPS port from a thread workspace to the user and to shepherd. Labels are required.".to_string(),
                 params: vec![
                     ToolParam::optional("thread_id", "str"),
                     ToolParam::optional("title", "str"),
@@ -1194,7 +1306,6 @@ impl ToolProvider for ShepherdToolProvider {
             Ok(project_id) => project_id,
             Err(error) => return ToolResult::err(json!({ "error": error })),
         };
-
 
         execute_shepherd_tool(&self.common, project_id, name, args).await
     }

@@ -135,6 +135,7 @@ export interface WorkspaceRoot {
   summary: string | null;
   threadId: string | null;
   branch: string | null;
+  path: string | null;
   readOnly: boolean;
 }
 

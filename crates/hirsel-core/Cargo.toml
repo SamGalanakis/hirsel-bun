@@ -28,6 +28,7 @@ scraper = { workspace = true }
 toml = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+askama = { workspace = true }
 libc = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }

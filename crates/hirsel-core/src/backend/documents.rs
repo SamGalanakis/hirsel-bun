@@ -90,7 +90,9 @@ fn graph_record_value(project_id: i64, kind: &str, node_id: &str) -> Value {
 
 fn record_project_id(record_id: &surrealdb::types::RecordId) -> Option<i64> {
     match &record_id.key {
-        RecordIdKey::Array(items) => items.first().and_then(|value| value.clone().into_json_value().as_i64()),
+        RecordIdKey::Array(items) => items
+            .first()
+            .and_then(|value| value.clone().into_json_value().as_i64()),
         _ => None,
     }
 }
@@ -318,12 +320,10 @@ async fn replace_document_reference_edges(
     let db = db().await;
     let from = graph_record_value(project_id, DOCUMENT_KIND, document_node_id);
 
-    db.query(
-        "DELETE kg_edge WHERE out = $from AND relation IN ['references', 'documents'];",
-    )
-    .bind(("from", from.clone()))
-    .await
-    .map_err(|error| format!("failed to clear document reference edges: {error}"))?;
+    db.query("DELETE kg_edge WHERE out = $from AND relation IN ['references', 'documents'];")
+        .bind(("from", from.clone()))
+        .await
+        .map_err(|error| format!("failed to clear document reference edges: {error}"))?;
 
     for reference in refs {
         let to = graph_record_value(project_id, &reference.kind, &reference.node_id);

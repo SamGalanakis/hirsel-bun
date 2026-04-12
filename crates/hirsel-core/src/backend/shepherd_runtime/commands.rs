@@ -400,14 +400,11 @@ async fn merge_scope_state(scope: &ShepherdScope, state_json: &str) -> Result<()
         if incoming.last_prompt_usage.is_none() {
             incoming.last_prompt_usage = existing.last_prompt_usage;
         }
-        if incoming.task_state.is_none() {
-            incoming.task_state = existing.task_state;
+        if incoming.session_graph.nodes.is_empty() {
+            incoming.session_graph = existing.session_graph;
         }
-        if incoming.replay_manifest.is_none() {
-            incoming.replay_manifest = existing.replay_manifest;
-        }
-        if incoming.plugin_snapshot.is_none() {
-            incoming.plugin_snapshot = existing.plugin_snapshot;
+        if incoming.execution_state_snapshot.is_none() {
+            incoming.execution_state_snapshot = existing.execution_state_snapshot;
         }
     }
 
@@ -578,8 +575,9 @@ async fn run_scope_turn_task(
                 Err(error)
             } else {
                 clear_live_turn(&scope).await?;
-                store.set_status(&key, "idle", None).await
-                    .map_err(|e| format!("failed to mark session idle after tool-only turn: {e}"))?;
+                store.set_status(&key, "idle", None).await.map_err(|e| {
+                    format!("failed to mark session idle after tool-only turn: {e}")
+                })?;
                 let assistant_chunks_json = chunks_to_json(&assistant_chunks)?;
                 save_message(&scope, "assistant", &assistant_chunks_json).await?;
                 let summary = completed_summary_from_chunks(&assistant_chunks);
@@ -753,9 +751,7 @@ pub(crate) async fn enqueue_librarian_automated_message(
     prompt: String,
     preview_text: String,
 ) -> Result<(), String> {
-    let scope = ShepherdScope::Librarian {
-        project_id,
-    };
+    let scope = ShepherdScope::Librarian { project_id };
     let options = ShepherdChatMessageOptions::shepherd_sync(preview_text);
     let _ = dispatch_scope_message_local(
         scope,
@@ -870,7 +866,9 @@ pub async fn create_thread(
 
 pub async fn stop_scope_activity(scope: ShepherdScope) -> Result<(), String> {
     let key = scope_key(&scope);
-    let store = ShepherdSessionStore::open().await.map_err(|e| format!("{e}"))?;
+    let store = ShepherdSessionStore::open()
+        .await
+        .map_err(|e| format!("{e}"))?;
     let _ = store.delete_session(&key).await;
     Ok(())
 }
@@ -932,7 +930,9 @@ async fn archive_thread_local(project_id: i64, thread_id: &str) -> Result<(), St
     }
     close_thread_preview_forwards(project_id, thread_id).await;
     let session_key = scope_key(&thread_scope(&thread));
-    let session_store = ShepherdSessionStore::open().await.map_err(|e| e.to_string())?;
+    let session_store = ShepherdSessionStore::open()
+        .await
+        .map_err(|e| e.to_string())?;
     let _ = session_store.delete_session(&session_key).await;
     store
         .archive_thread(thread_id)
@@ -956,7 +956,9 @@ async fn delete_thread_local(project_id: i64, thread_id: &str) -> Result<(), Str
     }
     close_thread_preview_forwards(project_id, thread_id).await;
     let session_key = scope_key(&thread_scope(&thread));
-    let session_store = ShepherdSessionStore::open().await.map_err(|e| e.to_string())?;
+    let session_store = ShepherdSessionStore::open()
+        .await
+        .map_err(|e| e.to_string())?;
     let _ = session_store.delete_session(&session_key).await;
     if let Ok(chat_store) = ShepherdChatStore::open().await {
         let _ = chat_store

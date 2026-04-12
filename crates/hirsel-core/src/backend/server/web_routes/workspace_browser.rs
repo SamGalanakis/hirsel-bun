@@ -36,6 +36,7 @@ pub struct ApiWorkspaceRoot {
     summary: Option<String>,
     thread_id: Option<String>,
     branch: Option<String>,
+    path: Option<String>,
     read_only: bool,
 }
 
@@ -272,7 +273,11 @@ async fn resolve_project_main_path(project_id: i64) -> Result<PathBuf, String> {
         .get_project(project_id)
         .await
         .map_err(|error| format!("failed to load project {}: {}", project_id, error))?;
-    if let Some(cwd) = project.shepherd_cwd.as_deref().filter(|p| !p.trim().is_empty()) {
+    if let Some(cwd) = project
+        .shepherd_cwd
+        .as_deref()
+        .filter(|p| !p.trim().is_empty())
+    {
         let path = PathBuf::from(cwd);
         if path.is_dir() {
             return Ok(path);
@@ -286,7 +291,10 @@ async fn resolve_project_main_path(project_id: i64) -> Result<PathBuf, String> {
             }
         }
     }
-    Err(format!("project {} has no usable workspace path", project_id))
+    Err(format!(
+        "project {} has no usable workspace path",
+        project_id
+    ))
 }
 
 async fn resolve_root_path(project_id: i64, root_id: &str) -> Result<PathBuf, String> {
@@ -958,32 +966,36 @@ async fn list_roots_for_project(project_id: i64) -> Result<Vec<ApiWorkspaceRoot>
 
     let mut roots = Vec::new();
 
-    // Add workspace entries from the project
+    // Add workspace entries from the project. Both local directories and
+    // cloned git workspaces with a resolved path become browsable roots.
     for ws in &project.workspaces {
-        if ws.kind == "local" {
-            let current_branch = ws
-                .path
-                .as_deref()
-                .filter(|p| !p.trim().is_empty())
-                .and_then(|p| {
-                    let path = FsPath::new(p);
-                    if path.is_dir() {
-                        git_current_branch_from_dir(path)
-                    } else {
-                        None
-                    }
-                });
-            roots.push(ApiWorkspaceRoot {
-                id: "main".to_string(),
-                kind: "main".to_string(),
-                label: ws.label.clone(),
-                status: "ready".to_string(),
-                summary: current_branch.as_deref().map(|b| b.to_string()),
-                thread_id: None,
-                branch: current_branch,
-                read_only: false,
-            });
+        let trimmed_path = ws.path.as_deref().map(str::trim).filter(|p| !p.is_empty());
+        let is_local = ws.kind == "local";
+        let is_cloned_git = ws.kind == "git" && trimmed_path.is_some();
+        if !is_local && !is_cloned_git {
+            continue;
         }
+        let current_branch = trimmed_path
+            .and_then(|p| {
+                let path = FsPath::new(p);
+                if path.is_dir() {
+                    git_current_branch_from_dir(path)
+                } else {
+                    None
+                }
+            })
+            .or_else(|| ws.branch.clone());
+        roots.push(ApiWorkspaceRoot {
+            id: "main".to_string(),
+            kind: "main".to_string(),
+            label: ws.label.clone(),
+            status: "ready".to_string(),
+            summary: current_branch.as_deref().map(|b| b.to_string()),
+            thread_id: None,
+            branch: current_branch,
+            path: trimmed_path.map(str::to_string),
+            read_only: false,
+        });
     }
 
     // If no local workspace was found, still add a placeholder main root
@@ -996,6 +1008,7 @@ async fn list_roots_for_project(project_id: i64) -> Result<Vec<ApiWorkspaceRoot>
             summary: None,
             thread_id: None,
             branch: None,
+            path: None,
             read_only: true,
         });
     }
@@ -1012,6 +1025,7 @@ async fn list_roots_for_project(project_id: i64) -> Result<Vec<ApiWorkspaceRoot>
         },
         thread_id: Some(thread.id),
         branch: None,
+        path: None,
         read_only: false,
     }));
 

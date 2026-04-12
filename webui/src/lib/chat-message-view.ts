@@ -102,6 +102,10 @@ const PREVIEW_TOOLS = new Set([
 ]);
 
 const TOOL_LABELS: Record<string, string> = {
+  graph_surql: "Knowledge Graph Query",
+  KnowledgeGraphQuery: "Knowledge Graph Query",
+  edit_graph_node_text: "Knowledge Graph Text Patch",
+  patch_canvas_document: "Canvas Patch",
   list_threads: "List threads",
   create_thread: "Create thread",
   rename_thread: "Rename thread",
@@ -165,6 +169,16 @@ export function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name.replace(/_/g, " ");
 }
 
+function toolHasTerminalOutput(tool: ToolChunk): boolean {
+  const output = parseToolOutput(tool);
+  if (!output || typeof output !== "object") return false;
+  if (typeof output.error === "string" && output.error.trim()) return true;
+  if (typeof output.message === "string" && output.message.trim()) return true;
+  if (typeof output.statement_count === "number") return true;
+  if (Array.isArray(output.results)) return true;
+  return false;
+}
+
 export function getToolDisplayKind(name: string): ToolDisplayKind {
   if (EXPLORATION_TOOLS.has(name)) return "exploration";
   if (name === "update_plan" || name === "Plan Update") return "plan";
@@ -223,8 +237,13 @@ export function buildBlocks(chunks: ChatChunk[], live = false): RenderBlock[] {
   // When a message is in history (not live), tools stuck in "running" were
   // interrupted — normalize them so the UI doesn't show a perpetual spinner.
   const normalizeTool = (tool: ToolChunk): ToolChunk => {
-    if (live) return tool;
     const s = tool.status.toLowerCase();
+    if (s === "running" || s === "active" || s === "queued" || s === "starting") {
+      if (toolHasTerminalOutput(tool)) {
+        return { ...tool, status: "done" };
+      }
+    }
+    if (live) return tool;
     if (s === "running" || s === "active") {
       return { ...tool, status: "done" };
     }

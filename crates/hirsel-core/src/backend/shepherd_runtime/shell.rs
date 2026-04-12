@@ -10,7 +10,9 @@ use tokio::sync::Mutex;
 
 #[derive(Clone)]
 enum RoutedShellSession {
-    Local { inner_session_id: i64 },
+    Local {
+        inner_session_id: i64,
+    },
     Thread {
         thread_id: String,
         inner_session_id: i64,
@@ -144,12 +146,20 @@ impl ShepherdShellToolProvider {
                 thread_id, project_id
             ));
         }
-        let workspace_path = match thread.cwd.as_deref().filter(|p: &&str| !p.trim().is_empty()) {
+        let workspace_path = match thread
+            .cwd
+            .as_deref()
+            .filter(|p: &&str| !p.trim().is_empty())
+        {
             Some(path) => PathBuf::from(path),
-            None => return ToolResult::err_fmt(format!("thread {} has no workspace path", thread_id)),
+            None => {
+                return ToolResult::err_fmt(format!("thread {} has no workspace path", thread_id))
+            }
         };
         let shell = Arc::new(StandardShell::new().with_cwd(workspace_path));
-        let result = shell.execute_streaming("exec_command", args, progress).await;
+        let result = shell
+            .execute_streaming("exec_command", args, progress)
+            .await;
         self.broker_result(
             result,
             RoutedShellSession::Thread {
@@ -187,7 +197,8 @@ impl ShepherdShellToolProvider {
             Ok(project_id) => project_id,
             Err(error) => return error,
         };
-        self.exec_thread(project_id, thread_id, args, progress).await
+        self.exec_thread(project_id, thread_id, args, progress)
+            .await
     }
 
     async fn write_local(

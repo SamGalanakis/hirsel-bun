@@ -15,6 +15,7 @@ pub mod live_updates;
 pub mod llm_provider;
 pub(crate) mod plans;
 pub mod project;
+pub(crate) mod prompts;
 pub mod sandbox;
 pub mod server;
 pub mod shepherd_chat;

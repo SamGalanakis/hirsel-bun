@@ -34,7 +34,7 @@ struct CredentialRecord {
 /// Errors that can occur during credential operations.
 #[derive(Debug, Error)]
 pub enum CredentialError {
-        #[error("Database error: {0}")]
+    #[error("Database error: {0}")]
     Database(#[from] surrealdb::Error),
 
     #[error("Encryption error: {0}")]
