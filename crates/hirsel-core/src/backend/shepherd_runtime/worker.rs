@@ -27,10 +27,7 @@ use crate::backend::lash_tools::{
     EmbeddedToolPreset,
 };
 use crate::backend::llm_provider;
-use crate::backend::prompts;
 use crate::backend::ShepherdChatMessage;
-
-const PLAN_TRACKER_GUIDANCE_FALLBACK: &str = "### `update_plan`\nUse `update_plan` for substantial multi-step work. Keep the plan short and concrete, maintain exactly one `in_progress` step, and mark steps completed as soon as they are done.";
 
 fn tool_title_kind(name: &str) -> (String, Option<String>) {
     match name {
@@ -64,6 +61,7 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
             Some("edit".to_string()),
         ),
         "patch_canvas_document" => ("Canvas Patch".to_string(), Some("edit".to_string())),
+        "search_context" => ("Knowledge Search".to_string(), Some("search".to_string())),
         "update_plan" => ("Plan Update".to_string(), Some("edit".to_string())),
         _ => (name.to_string(), None),
     }
@@ -113,9 +111,8 @@ fn result_summary_from_chunks(chunks: &[ShepherdMessageChunk]) -> String {
 fn plan_tracker_prompt_contributions() -> Vec<PromptContribution> {
     vec![PromptContribution::guidance(
         "plan_tracker",
-        "Plan tracker guidance",
-        &prompts::render_plan_tracker_guidance()
-            .unwrap_or_else(|_| PLAN_TRACKER_GUIDANCE_FALLBACK.to_string()),
+        "`update_plan`",
+        "Use `update_plan` to keep an up-to-date, step-by-step plan for substantial multi-step work. Keep each step concise. Maintain exactly one `in_progress` step at a time. Mark steps completed as soon as they are done. Do not pad plans with filler or obvious steps.",
     )]
 }
 
@@ -210,7 +207,9 @@ async fn build_runtime_services(
         }),
     };
     let (tool_preset, custom_tool_plugin) = match scope {
-        ShepherdScope::General => (EmbeddedToolPreset::General, None),
+        ShepherdScope::General | ShepherdScope::Thread { .. } => {
+            (EmbeddedToolPreset::General, None)
+        }
         ShepherdScope::Shepherd { .. } => (
             EmbeddedToolPreset::Shepherd,
             Some(EmbeddedCustomToolPlugin {
@@ -220,9 +219,11 @@ async fn build_runtime_services(
                     default_project_id,
                     workspace_root.clone(),
                 )) as Arc<dyn ToolProvider>,
+                prompt_contributions: Some(
+                    super::tools::shepherd_prompt_contributions as fn() -> Vec<PromptContribution>,
+                ),
             }),
         ),
-        ShepherdScope::Thread { .. } => (EmbeddedToolPreset::Thread, None),
         ShepherdScope::Librarian { .. } => (
             EmbeddedToolPreset::Librarian,
             Some(EmbeddedCustomToolPlugin {
@@ -232,6 +233,9 @@ async fn build_runtime_services(
                     default_project_id,
                     workspace_root.clone(),
                 )) as Arc<dyn ToolProvider>,
+                prompt_contributions: Some(
+                    super::tools::librarian_prompt_contributions as fn() -> Vec<PromptContribution>,
+                ),
             }),
         ),
     };
@@ -243,6 +247,16 @@ async fn build_runtime_services(
     );
     if matches!(scope, ShepherdScope::Shepherd { .. }) {
         plugin_factories.push(Arc::new(EmbeddedPlanTrackerPluginFactory));
+    }
+    if matches!(
+        scope,
+        ShepherdScope::Shepherd { .. } | ShepherdScope::Thread { .. }
+    ) {
+        if let Some(project_id) = default_project_id {
+            plugin_factories.push(super::search_context::search_context_plugin_factory(
+                project_id,
+            ));
+        }
     }
     let plugin_host = PluginHost::new(plugin_factories).with_dynamic_tools();
     let root_plugins = plugin_host

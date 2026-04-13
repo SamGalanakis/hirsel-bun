@@ -11,7 +11,6 @@ fn render_template<T: Template>(label: &str, template: &T) -> Result<String, Str
 struct LibrarianScopeGuidanceTemplate<'a> {
     project_id: i64,
     workspace_root: &'a str,
-    surrealql_guide: &'a str,
 }
 
 #[derive(Template)]
@@ -24,20 +23,18 @@ struct ThreadScopeGuidanceTemplate<'a> {
 }
 
 #[derive(Template)]
+#[template(path = "prompts/general_scope_guidance.txt", escape = "none")]
+struct GeneralScopeGuidanceTemplate<'a> {
+    workspace_root: &'a str,
+}
+
+#[derive(Template)]
 #[template(path = "prompts/shepherd_scope_guidance.txt", escape = "none")]
 struct ShepherdScopeGuidanceTemplate<'a> {
     scope_label: &'a str,
     focus_line: &'a str,
     workspace_root: &'a str,
 }
-
-#[derive(Template)]
-#[template(path = "prompts/shell_guidance.txt", escape = "none")]
-struct ShellGuidanceTemplate;
-
-#[derive(Template)]
-#[template(path = "prompts/plan_tracker_guidance.txt", escape = "none")]
-struct PlanTrackerGuidanceTemplate;
 
 #[derive(Template)]
 #[template(path = "prompts/skill_block.txt", escape = "none")]
@@ -86,14 +83,12 @@ struct LibrarianSyncTemplate<'a> {
 pub(crate) fn render_librarian_scope_guidance(
     project_id: i64,
     workspace_root: &str,
-    surrealql_guide: &str,
 ) -> Result<String, String> {
     render_template(
         "librarian scope guidance template",
         &LibrarianScopeGuidanceTemplate {
             project_id,
             workspace_root,
-            surrealql_guide,
         },
     )
 }
@@ -115,6 +110,13 @@ pub(crate) fn render_thread_scope_guidance(
     )
 }
 
+pub(crate) fn render_general_scope_guidance(workspace_root: &str) -> Result<String, String> {
+    render_template(
+        "general scope guidance template",
+        &GeneralScopeGuidanceTemplate { workspace_root },
+    )
+}
+
 pub(crate) fn render_shepherd_scope_guidance(
     scope_label: &str,
     focus_line: &str,
@@ -127,17 +129,6 @@ pub(crate) fn render_shepherd_scope_guidance(
             focus_line,
             workspace_root,
         },
-    )
-}
-
-pub(crate) fn render_shell_guidance() -> Result<String, String> {
-    render_template("shell guidance template", &ShellGuidanceTemplate)
-}
-
-pub(crate) fn render_plan_tracker_guidance() -> Result<String, String> {
-    render_template(
-        "plan tracker guidance template",
-        &PlanTrackerGuidanceTemplate,
     )
 }
 

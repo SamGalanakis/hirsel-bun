@@ -18,6 +18,8 @@ struct LlmSettingsRecord {
     librarian_model_variant: Option<String>,
     thread_model: Option<String>,
     thread_model_variant: Option<String>,
+    search_model: Option<String>,
+    search_model_variant: Option<String>,
     updated_at: String,
 }
 
@@ -88,6 +90,7 @@ impl LlmSettings {
             crate::backend::llm_provider::RuntimeModelRole::Shepherd => roles.shepherd.as_ref(),
             crate::backend::llm_provider::RuntimeModelRole::Librarian => roles.librarian.as_ref(),
             crate::backend::llm_provider::RuntimeModelRole::Thread => roles.thread.as_ref(),
+            crate::backend::llm_provider::RuntimeModelRole::Search => roles.search.as_ref(),
         }
     }
 }
@@ -104,6 +107,8 @@ impl LlmSettingsRecord {
                 self.librarian_model_variant,
                 self.thread_model,
                 self.thread_model_variant,
+                self.search_model,
+                self.search_model_variant,
             ),
         }
     }
@@ -121,6 +126,10 @@ impl LlmSettingsRecord {
             .role_models
             .as_ref()
             .and_then(|roles| roles.thread.as_ref());
+        let search = settings
+            .role_models
+            .as_ref()
+            .and_then(|roles| roles.search.as_ref());
         Self {
             provider: encode_provider(settings.provider).to_string(),
             openrouter_base_url: settings.openrouter_base_url.clone(),
@@ -130,6 +139,8 @@ impl LlmSettingsRecord {
             librarian_model_variant: librarian.and_then(|cfg| cfg.model_variant.clone()),
             thread_model: thread.and_then(|cfg| cfg.model.clone()),
             thread_model_variant: thread.and_then(|cfg| cfg.model_variant.clone()),
+            search_model: search.and_then(|cfg| cfg.model.clone()),
+            search_model_variant: search.and_then(|cfg| cfg.model_variant.clone()),
             updated_at: utc_now(),
         }
     }
@@ -142,17 +153,21 @@ fn assemble_role_models(
     librarian_model_variant: Option<String>,
     thread_model: Option<String>,
     thread_model_variant: Option<String>,
+    search_model: Option<String>,
+    search_model_variant: Option<String>,
 ) -> Option<RoleModelOverrides> {
     let shepherd = normalize_role_config(shepherd_model, shepherd_model_variant);
     let librarian = normalize_role_config(librarian_model, librarian_model_variant);
     let thread = normalize_role_config(thread_model, thread_model_variant);
-    if shepherd.is_none() && librarian.is_none() && thread.is_none() {
+    let search = normalize_role_config(search_model, search_model_variant);
+    if shepherd.is_none() && librarian.is_none() && thread.is_none() && search.is_none() {
         None
     } else {
         Some(RoleModelOverrides {
             shepherd,
             librarian,
             thread,
+            search,
         })
     }
 }

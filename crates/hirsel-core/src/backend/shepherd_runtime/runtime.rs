@@ -4,7 +4,6 @@ use lash::{PromptOverrideMode, PromptSectionName, PromptSectionOverride};
 
 use super::history::{chunk_image_count, chunk_text};
 use super::types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
-use crate::backend::librarian::LIBRARIAN_SURREALQL_GUIDE;
 use crate::backend::prompts;
 use crate::backend::ProjectStore;
 
@@ -31,24 +30,24 @@ async fn build_scope_guidance(
         None => "Focus item: none".to_string(),
     };
     let workspace_root = cwd.display().to_string();
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M %Z").to_string();
 
     let scope_header = match scope {
-        ShepherdScope::Librarian { project_id, .. } => prompts::render_librarian_scope_guidance(
-            *project_id,
-            &workspace_root,
-            LIBRARIAN_SURREALQL_GUIDE,
-        )?,
+        ShepherdScope::Librarian { project_id, .. } => {
+            prompts::render_librarian_scope_guidance(*project_id, &workspace_root)?
+        }
         ShepherdScope::Thread {
             thread_id, title, ..
         } => prompts::render_thread_scope_guidance(title, thread_id, &focus_line, &workspace_root)?,
-        _ => prompts::render_shepherd_scope_guidance(
+        ShepherdScope::General => prompts::render_general_scope_guidance(&workspace_root)?,
+        ShepherdScope::Shepherd { .. } => prompts::render_shepherd_scope_guidance(
             &scope_label(scope),
             &focus_line,
             &workspace_root,
         )?,
     };
 
-    Ok(scope_header)
+    Ok(format!("Current time: {now}\n\n{scope_header}"))
 }
 
 pub(super) async fn shepherd_prompt_overrides(
@@ -90,10 +89,6 @@ pub(super) async fn build_user_turn_text(
             }
         }
     };
-
-    if matches!(scope, ShepherdScope::Librarian { .. }) {
-        return Ok(base_text);
-    }
 
     Ok(base_text)
 }

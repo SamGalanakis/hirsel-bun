@@ -3,6 +3,7 @@ mod history;
 mod preview;
 mod queries;
 mod runtime;
+mod search_context;
 mod session;
 mod shell;
 mod tools;

@@ -6,7 +6,7 @@ use crate::backend::tool_results::edit_result_with;
 use crate::backend::ProjectWorkspaceEntry;
 use crate::backend::{ShepherdChatMessage, ShepherdThread, ShepherdThreadStore};
 use globset::{Glob, GlobSetBuilder};
-use lash::{ToolDefinition, ToolParam, ToolProvider, ToolResult};
+use lash::{PromptContribution, ToolDefinition, ToolParam, ToolProvider, ToolResult};
 use serde_json::Map;
 use serde_json::{json, Value};
 use walkdir::WalkDir;
@@ -858,9 +858,6 @@ async fn execute_librarian_tool(
         "edit_graph_node_text" => {
             crate::backend::librarian::edit_graph_node_text(project_id, args).await
         }
-        "patch_canvas_document" => {
-            crate::backend::librarian::patch_canvas_document(project_id, args).await
-        }
         _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
     }
 }
@@ -892,6 +889,9 @@ async fn execute_shepherd_tool(
         "ls" => common.list_workspace(args).await,
         "read_file" => common.read_workspace_file(args).await,
         "grep" => common.grep_workspace(args).await,
+        "patch_canvas_document" => {
+            crate::backend::librarian::patch_canvas_document(project_id, args).await
+        }
         _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
     }
 }
@@ -1021,27 +1021,13 @@ impl ToolProvider for LibrarianToolProvider {
             tool_definition! {
                 name: "edit_graph_node_text".to_string(),
                 description: format!(
-                    "Patch the `content` field on an existing knowledge-graph node. Project scoping is enforced by SurrealDB permissions; use `patch_canvas_document` for the canvas document.\n\n{}",
+                    "Patch the `content` field on an existing knowledge-graph node. Project scoping is enforced by SurrealDB permissions.\n\n{}",
                     TEXT_PATCH_INSTRUCTIONS
                 ),
                 params: vec![
                     ToolParam::typed("kind", "str"),
                     ToolParam::typed("id", "str"),
                     ToolParam::typed("field", "str"),
-                    ToolParam::typed("patch", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
-            tool_definition! {
-                name: "patch_canvas_document".to_string(),
-                description: format!(
-                    "Patch the existing project canvas document in place using a validated line patch. Graph-backed references must use node=\"kind:id\".\n\n{}",
-                    TEXT_PATCH_INSTRUCTIONS
-                ),
-                params: vec![
                     ToolParam::typed("patch", "str"),
                 ],
                 returns: "dict".to_string(),
@@ -1296,6 +1282,20 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
+            tool_definition! {
+                name: "patch_canvas_document".to_string(),
+                description: format!(
+                    "Patch the project canvas document in place using a validated line patch. Graph-backed references must use node=\"kind:id\".\n\n{}",
+                    TEXT_PATCH_INSTRUCTIONS
+                ),
+                params: vec![
+                    ToolParam::typed("patch", "str"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
         ]);
 
         definitions
@@ -1309,4 +1309,106 @@ impl ToolProvider for ShepherdToolProvider {
 
         execute_shepherd_tool(&self.common, project_id, name, args).await
     }
+}
+
+// ═══════════════════════════════════════
+// Plugin prompt contributions
+// ═══════════════════════════════════════
+
+pub(super) fn shepherd_prompt_contributions() -> Vec<PromptContribution> {
+    vec![
+        PromptContribution::guidance(
+            "thread_management",
+            "Thread Management",
+            "Use a thread when isolation, parallel progress, or a separate workspace clearly helps. Reuse an existing thread for the same line of work; otherwise create a new one. When you create or update thread titles, statuses, or summaries, keep them short and user-understandable.",
+        ),
+        PromptContribution::guidance(
+            "retained_context",
+            "Retained Context",
+            "Use `read_project_retained_context` and `update_project_retained_context` to persist project-level notes, summaries, or decisions across sessions. Keep retained context concise and up to date.",
+        ),
+        PromptContribution::guidance(
+            "canvas_rules",
+            "Canvas",
+            concat!(
+                "The canvas is an ephemeral project-scoped document that can reference the knowledge graph.\n",
+                "Use `patch_canvas_document(patch)` to update it with plans, diagrams, or working state for the user.\n",
+                "Reference graph nodes with tags like `<hirsel-node-ref node=\"feature:auth\">` instead of copying content.\n",
+                "Always use a single `node=\"kind:id\"` attribute. Do not emit separate `kind=` / `id=` attributes.\n",
+                "Keep the canvas concise and remove stale sections.",
+            ),
+        ),
+    ]
+}
+
+pub(super) fn librarian_prompt_contributions() -> Vec<PromptContribution> {
+    vec![
+        PromptContribution::guidance(
+            "knowledge_graph_schema",
+            "Knowledge Graph Schema",
+            concat!(
+                "## Node kinds\n\n",
+                "| Kind | Purpose | ID convention | Example |\n",
+                "|------|---------|---------------|---------|\n",
+                "| `component` | Architectural building blocks | stable slug | `auth`, `api-gateway`, `db-layer` |\n",
+                "| `entity` | Domain model objects | singular slug | `user`, `workspace`, `project` |\n",
+                "| `convention` | How things should be done | topic slug | `naming`, `error-handling`, `testing` |\n",
+                "| `decision` | Why things are the way they are | descriptive slug | `chose-surrealdb`, `monorepo-structure` |\n",
+                "| `fact` | Project-specific truths, quirks, gotchas | descriptive slug | `ci-needs-docker`, `deploy-to-fly`, `port-8484` |\n",
+                "| `goal` | Active objectives or milestones | slug | `v1-launch`, `reduce-cold-start` |\n",
+                "| `document` | Canvas and other project documents | slug | `canvas` |\n\n",
+                "## Node fields\n\n",
+                "- `kind`, `node_id`: identity (part of the record ID)\n",
+                "- `label`: short human-readable title\n",
+                "- `content`: the substance — write content that is **useful to a future agent that knows nothing about the project**\n",
+                "- `tags`: flat string array for cross-cutting labels (e.g. `[\"auth\", \"security\"]`)\n",
+                "- `source`: who produced this (`user`, `shepherd`, `librarian`)\n",
+                "- `metadata`: optional JSON for kind-specific structured data\n\n",
+                "## Edge relations\n\n",
+                "- `part_of`: structural containment (child → parent)\n",
+                "- `depends_on`: runtime or build dependency\n",
+                "- `implements`: component/entity that realizes a goal\n",
+                "- `relates_to`: soft association\n\n",
+            ),
+        ),
+        PromptContribution::guidance(
+            "knowledge_graph_quality",
+            "Knowledge Graph Quality",
+            concat!(
+                "## What to persist\n\n",
+                "Good graph content answers: \"What would a new agent need to know to work on this project effectively?\"\n\n",
+                "- Architecture: components, how they connect, what each does\n",
+                "- Domain model: key entities, their relationships, business rules\n",
+                "- Conventions: naming, file layout, error handling patterns, testing approach\n",
+                "- Decisions: technology choices, tradeoffs, rationale (not just \"we use X\" but \"we use X because Y\")\n",
+                "- Facts: CI/CD quirks, deployment details, environment setup, external service dependencies\n",
+                "- Goals: what the team is working toward, priorities\n\n",
+                "## Content quality\n\n",
+                "Bad: `label: \"Auth\"` content: `\"Handles authentication\"`\n",
+                "Good: `label: \"Auth system\"` content: `\"JWT-based auth with RS256. Tokens expire 24h, refresh via /api/auth/refresh. Key pair in env HIRSEL_JWT_*. Login flow in src/auth/. Rate-limited to 5 attempts/min per IP.\"`\n\n",
+                "## Principles\n\n",
+                "- Prefer fewer, richer nodes over many thin ones\n",
+                "- Update existing nodes with new information rather than creating duplicates\n",
+                "- Use `UPSERT` — always\n",
+                "- Use `tags` for cross-cutting concerns rather than creating edges for every association\n",
+                "- Set `source` to indicate provenance (`user` for explicit user input, `shepherd` for extracted from conversation)\n",
+                "- Query narrowly before updates to check what already exists\n",
+            ),
+        ),
+        PromptContribution::guidance(
+            "surrealql_guide",
+            "SurrealQL Reference",
+            crate::backend::librarian::LIBRARIAN_SURREALQL_GUIDE,
+        ),
+        PromptContribution::guidance(
+            "workspace_management",
+            "Workspace Management",
+            "Keep the workspace list current when one is attached, removed, renamed, moved, or its branch/url changes. Use `list_project_workspaces`, `upsert_project_workspace`, and `remove_project_workspace` to maintain workspace metadata.",
+        ),
+        PromptContribution::guidance(
+            "graph_text_editing",
+            "Graph Text Editing",
+            "Use `edit_graph_node_text(kind, id, field=\"content\", patch)` for incremental refinement of long `content` fields instead of rewriting the whole node.",
+        ),
+    ]
 }

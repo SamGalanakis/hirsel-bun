@@ -94,18 +94,12 @@ impl ProjectStore {
             .content(record.clone())
             .await?;
 
-        // Seed the canvas document node.
+        // Seed the canvas document.
         let _ = db
             .query(
-                "UPSERT type::record('kg_node', [$pid, 'document', 'canvas']) MERGE {
-                    project_id: $pid,
-                    kind: 'document',
-                    node_id: 'canvas',
-                    label: 'Canvas',
-                    content: '<hirsel-callout title=\"New Project\" tone=\"info\">Use the shepherd to explore your project. The Librarian will keep this canvas updated as you work.</hirsel-callout>',
+                "UPSERT type::record('project_canvas', $pid) MERGE {
+                    html: '<hirsel-callout title=\"New Project\" tone=\"info\">Use the shepherd to explore your project. The Librarian will keep this canvas updated as you work.</hirsel-callout>',
                     source: 'system',
-                    metadata: {},
-                    updated_at: time::now()
                 }",
             )
             .bind(("pid", id))
@@ -287,9 +281,9 @@ impl ProjectStore {
             let _ = thread_store.delete_project_threads(id).await;
         }
 
-        // Clean up knowledge graph data
+        // Clean up knowledge graph and canvas data
         let _ = db
-            .query("DELETE FROM kg_edge WHERE `in`[0] = $pid AND out[0] = $pid; DELETE FROM kg_node WHERE id[0] = $pid; DELETE FROM kg_doc_edge_queue WHERE project_id = $pid;")
+            .query("DELETE FROM kg_edge WHERE `in`[0] = $pid AND out[0] = $pid; DELETE FROM kg_node WHERE id[0] = $pid; DELETE type::record('project_canvas', $pid);")
             .bind(("pid", id))
             .await;
 

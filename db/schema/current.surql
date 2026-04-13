@@ -119,10 +119,15 @@ DEFINE ACCESS IF NOT EXISTS librarian ON DATABASE TYPE RECORD
 DEFINE TABLE OVERWRITE kg_node SCHEMALESS
   PERMISSIONS
     FOR select WHERE id[0] = $auth.project_id
-    FOR create WHERE NOT (kind = 'document' AND node_id = 'canvas')
-    FOR update WHERE id[0] = $auth.project_id AND NOT (kind = 'document' AND node_id = 'canvas')
-    FOR delete WHERE id[0] = $auth.project_id AND NOT (kind = 'document' AND node_id = 'canvas');
+    FOR create FULL
+    FOR update WHERE id[0] = $auth.project_id
+    FOR delete WHERE id[0] = $auth.project_id;
 DEFINE FIELD OVERWRITE updated_at ON TABLE kg_node VALUE time::now();
+DEFINE FIELD IF NOT EXISTS tags ON TABLE kg_node TYPE option<array<string>> DEFAULT [];
+
+DEFINE ANALYZER IF NOT EXISTS kg_text_analyzer TOKENIZERS blank, class, punct FILTERS snowball(english), lowercase;
+DEFINE INDEX IF NOT EXISTS kg_node_label_search ON TABLE kg_node COLUMNS label FULLTEXT ANALYZER kg_text_analyzer BM25;
+DEFINE INDEX IF NOT EXISTS kg_node_content_search ON TABLE kg_node COLUMNS content FULLTEXT ANALYZER kg_text_analyzer BM25;
 
 -- Knowledge graph edge table with librarian permissions
 DEFINE TABLE OVERWRITE kg_edge TYPE RELATION SCHEMALESS
@@ -133,14 +138,6 @@ DEFINE TABLE OVERWRITE kg_edge TYPE RELATION SCHEMALESS
     FOR delete WHERE `in`[0] = $auth.project_id AND out[0] = $auth.project_id;
 DEFINE FIELD OVERWRITE created_at ON TABLE kg_edge DEFAULT time::now();
 
-DEFINE TABLE IF NOT EXISTS kg_doc_edge_queue SCHEMALESS;
-
-DEFINE EVENT IF NOT EXISTS doc_content_changed ON TABLE kg_node
-    WHEN $after.kind = 'document'
-      AND ($event = "CREATE" OR $before.content != $after.content)
-    THEN (
-        UPSERT type::record('kg_doc_edge_queue', [$after.project_id, $after.node_id])
-            SET project_id = $after.project_id,
-                node_id = $after.node_id,
-                queued_at = time::now()
-    );
+-- Canvas document (ephemeral, project-scoped, not part of the knowledge graph)
+DEFINE TABLE IF NOT EXISTS project_canvas SCHEMALESS;
+DEFINE FIELD OVERWRITE updated_at ON TABLE project_canvas VALUE time::now();

@@ -19,7 +19,7 @@ pub(crate) struct KnowledgeGraphNodeRow {
     #[serde(default)]
     pub content: Option<String>,
     #[serde(default)]
-    pub confidence: Option<String>,
+    pub tags: Option<Vec<String>>,
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
@@ -49,13 +49,6 @@ pub(crate) struct KnowledgeGraphTextRow {
     pub content: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, SurrealValue)]
-pub(crate) struct DocumentEdgeQueueRow {
-    pub id: RecordId,
-    pub project_id: i64,
-    pub node_id: String,
-}
-
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ApiKnowledgeGraphRecordId {
     #[serde(rename = "tb")]
@@ -71,7 +64,7 @@ pub(crate) struct ApiKnowledgeGraphNode {
     pub label: String,
     pub summary: Option<String>,
     pub content: Option<String>,
-    pub confidence: Option<String>,
+    pub tags: Option<Vec<String>>,
     pub source: Option<String>,
     pub metadata: JsonMap<String, JsonValue>,
     pub updated_at: String,
@@ -103,7 +96,7 @@ impl From<KnowledgeGraphNodeRow> for ApiKnowledgeGraphNode {
             label: value.label,
             summary: value.summary,
             content: value.content,
-            confidence: value.confidence,
+            tags: value.tags,
             source: value.source,
             metadata: surreal_btreemap_to_json_map(value.metadata.unwrap_or_default()),
             updated_at: surreal_datetime_value_to_string(value.updated_at),

@@ -59,6 +59,8 @@ pub struct RoleModelOverridesResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub librarian: Option<RoleModelConfigResponse>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search: Option<RoleModelConfigResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread: Option<RoleModelConfigResponse>,
 }
 
@@ -97,6 +99,10 @@ impl From<config::LlmConfig> for LlmConfigResponse {
                     model: cfg.model,
                     model_variant: cfg.model_variant,
                 }),
+                search: roles.search.map(|cfg| RoleModelConfigResponse {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
             }),
             agent_models: value.agent_models.map(|am| AgentModelOverridesResponse {
                 low: am.low,
@@ -124,6 +130,10 @@ impl From<LlmConfigResponse> for config::LlmConfig {
                     model_variant: cfg.model_variant,
                 }),
                 thread: roles.thread.map(|cfg| config::RoleModelConfig {
+                    model: cfg.model,
+                    model_variant: cfg.model_variant,
+                }),
+                search: roles.search.map(|cfg| config::RoleModelConfig {
                     model: cfg.model,
                     model_variant: cfg.model_variant,
                 }),

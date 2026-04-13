@@ -263,6 +263,7 @@ fn role_model_response(settings: &LlmSettings, role: RuntimeModelRole) -> ApiRol
         RuntimeModelRole::Shepherd => overrides.and_then(|value| value.shepherd.as_ref()),
         RuntimeModelRole::Librarian => overrides.and_then(|value| value.librarian.as_ref()),
         RuntimeModelRole::Thread => overrides.and_then(|value| value.thread.as_ref()),
+        RuntimeModelRole::Search => overrides.and_then(|value| value.search.as_ref()),
     };
     let (effective_model, effective_model_variant) =
         llm_provider::resolve_model_for_role(settings, &provider, role);
@@ -391,6 +392,7 @@ pub async fn save_role_models(
         shepherd: normalize_role_model_input(body.shepherd),
         librarian: normalize_role_model_input(body.librarian),
         thread: normalize_role_model_input(body.thread),
+        search: None,
     };
     let provider = llm_provider::provider_metadata(&settings);
 
@@ -403,6 +405,7 @@ pub async fn save_role_models(
             RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),
             RuntimeModelRole::Librarian => role_models.librarian.as_ref(),
             RuntimeModelRole::Thread => role_models.thread.as_ref(),
+            RuntimeModelRole::Search => role_models.search.as_ref(),
         };
         let Some(role_cfg) = role_cfg else {
             continue;
@@ -432,6 +435,7 @@ pub async fn save_role_models(
             RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),
             RuntimeModelRole::Librarian => role_models.librarian.as_ref(),
             RuntimeModelRole::Thread => role_models.thread.as_ref(),
+            RuntimeModelRole::Search => role_models.search.as_ref(),
         };
         let Some(role_cfg) = role_cfg else {
             continue;

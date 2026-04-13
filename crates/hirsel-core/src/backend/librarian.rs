@@ -2,8 +2,7 @@
 //!
 //! The Librarian is authenticated as a SurrealDB record-user whose table
 //! permissions restrict it to `kg_node` and `kg_edge` rows belonging to its
-//! project. The canvas document node (`document:canvas`) is additionally
-//! protected from deletion by the `kg_node` PERMISSIONS clause.
+//! project.
 
 use lash::ToolResult;
 use serde_json::{json, Map, Value};
@@ -29,40 +28,23 @@ const CANVAS_TAGS_REQUIRING_NODE_ATTR: &[&str] = &[
     "hirsel-doc-embed",
 ];
 
-pub(crate) const LIBRARIAN_SURREALQL_GUIDE: &str = r#"## Knowledge Graph Querying
+pub(crate) const LIBRARIAN_SURREALQL_GUIDE: &str = r#"## SurrealQL Reference
 
-Use `graph_surql(query, params?)` for graph reads and writes. `$project_id` is always bound automatically.
+Use `graph_surql(query, params?)` for graph reads and writes. `$project_id` is bound automatically.
 
-Use `patch_canvas_document(patch)` for canvas updates.
+Tables: `kg_node`, `kg_edge`.
 
-Allowed tables:
-- `kg_node`
-- `kg_edge`
+Node record IDs: `type::record('kg_node', [$project_id, $kind, $node_id])`
 
-Canonical node record IDs:
-- `type::record('kg_node', [$project_id, 'artifact', 'src/auth.rs'])`
-- `type::record('kg_node', [$project_id, 'feature', 'auth'])`
-- `type::record('kg_node', [$project_id, 'document', 'canvas'])`
+Node fields: `kind`, `node_id`, `label`, `content`, `tags`, `source`, `metadata`, `updated_at` (auto).
 
-Node shape:
-- `kind`, `node_id`, `label`, `content`, `source`, `metadata`, `updated_at` (auto)
-- `content` is the single text field for all node kinds. For documents, it holds HTML. For everything else, plain text.
+Edge fields: `relation`, `metadata`, `created_at` (auto).
 
-Edge shape:
-- `relation`, `metadata`, `created_at` (auto)
-
-Preferred patterns:
-- Lookup/list: `SELECT * FROM kg_node WHERE kind = $kind AND ...`
-- Upsert node: `UPSERT type::record('kg_node', [$project_id, $kind, $node_id]) MERGE { kind: $kind, node_id: $node_id, label: '...', content: '...', source: 'shepherd', metadata: {} }`
-- Relate nodes: `RELATE $from->kg_edge->$to SET relation = 'part_of', metadata = {}`
-- Multi-step updates: `BEGIN TRANSACTION; ... COMMIT TRANSACTION;`
-- Abort a bad transaction: `THROW 'reason'`
-
-Use `UPSERT` when a node may already exist.
-
-Canvas references must use `node="kind:id"` attributes. Do not emit separate `kind=` / `id=` attributes or `path=` links.
-
-For incremental refinement of a long `content` field, use `edit_graph_node_text(kind, id, field, patch)` instead of rewriting the whole node."#;
+Patterns:
+- `UPSERT type::record('kg_node', [$project_id, $kind, $node_id]) MERGE { kind: $kind, node_id: $node_id, label: '...', content: '...', tags: ['...'], source: '...' }`
+- `RELATE $from->kg_edge->$to SET relation = '...', metadata = {}`
+- `SELECT * FROM kg_node WHERE kind = $kind AND ...`
+- Use `UPSERT` when a node may already exist."#;
 
 // ── Librarian Sync Messages ──
 
@@ -369,7 +351,7 @@ pub async fn patch_canvas_document(project_id: i64, args: &Value) -> ToolResult 
         tokio::runtime::Handle::current().block_on(documents::upsert_canvas_document(
             project_id,
             &patched_html,
-            Some("librarian"),
+            Some("shepherd"),
         ))
     });
 
@@ -441,7 +423,7 @@ fn is_allowed_graph_text_field(field: &str) -> bool {
     GRAPH_TEXT_FIELDS.contains(&field)
 }
 
-fn query_might_mutate_graph(query: &str) -> bool {
+pub(crate) fn query_might_mutate_graph(query: &str) -> bool {
     let upper = query.to_uppercase();
     GRAPH_MUTATION_KEYWORDS
         .iter()

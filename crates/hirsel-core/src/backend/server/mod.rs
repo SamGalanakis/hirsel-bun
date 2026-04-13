@@ -79,8 +79,6 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         .await
         .map_err(|error| anyhow::anyhow!("Failed to scrub stale shepherd state: {}", error))?;
 
-    crate::backend::documents::spawn_doc_edge_worker();
-
     // Resolve SPA directory
     let webui_dir = resolve_webui_dist();
     let index_html = webui_dir.join("index.html");

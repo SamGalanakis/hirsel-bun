@@ -9,29 +9,17 @@ use lash::{
     ToolProvider,
 };
 
-use crate::backend::prompts;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum EmbeddedToolPreset {
     General,
     Shepherd,
-    Thread,
     Librarian,
 }
 
 pub(crate) struct EmbeddedCustomToolPlugin {
     pub(crate) id: &'static str,
     pub(crate) provider: Arc<dyn ToolProvider>,
-}
-
-const SHELL_GUIDANCE_FALLBACK: &str = "### Command Execution\nUse `exec_command` for one-shot commands and for starting long-lived processes. If it returns `session_id`, continue that same process with `write_stdin`; otherwise the command already exited. For services or background daemons, prefer startup patterns that survive after the tool call returns, then verify readiness from a fresh command before concluding.\n\n### Git Safety\nDo not revert user changes you did not make. Avoid destructive git commands unless explicitly requested.";
-
-fn shell_prompt_contributions() -> Vec<PromptContribution> {
-    vec![PromptContribution::guidance(
-        "embedded_shell_tools",
-        "Shell tool guidance",
-        &prompts::render_shell_guidance().unwrap_or_else(|_| SHELL_GUIDANCE_FALLBACK.to_string()),
-    )]
+    pub(crate) prompt_contributions: Option<fn() -> Vec<PromptContribution>>,
 }
 
 fn builtin_projection_plugin_factory() -> Arc<dyn PluginFactory> {
@@ -41,11 +29,7 @@ fn builtin_projection_plugin_factory() -> Arc<dyn PluginFactory> {
 fn shell_plugin_factory(shell_tool_provider: Arc<dyn ToolProvider>) -> Arc<dyn PluginFactory> {
     Arc::new(StaticPluginFactory::new(
         "shell",
-        PluginSpec::new()
-            .with_tool_provider(shell_tool_provider)
-            .with_prompt_contributor(Arc::new(move |_ctx| {
-                Box::pin(async move { Ok(shell_prompt_contributions()) })
-            })),
+        PluginSpec::new().with_tool_provider(shell_tool_provider),
     )) as Arc<dyn PluginFactory>
 }
 
@@ -84,10 +68,14 @@ fn ls_plugin_factory() -> Arc<dyn PluginFactory> {
 }
 
 fn custom_tool_plugin_factory(custom_plugin: EmbeddedCustomToolPlugin) -> Arc<dyn PluginFactory> {
-    Arc::new(StaticPluginFactory::new(
-        custom_plugin.id,
-        PluginSpec::new().with_tool_provider(custom_plugin.provider),
-    )) as Arc<dyn PluginFactory>
+    let mut spec = PluginSpec::new().with_tool_provider(custom_plugin.provider);
+    if let Some(make_contributions) = custom_plugin.prompt_contributions {
+        spec = spec.with_prompt_contributor(Arc::new(move |_ctx| {
+            let contributions = make_contributions();
+            Box::pin(async move { Ok(contributions) })
+        }));
+    }
+    Arc::new(StaticPluginFactory::new(custom_plugin.id, spec)) as Arc<dyn PluginFactory>
 }
 
 fn append_web_plugins(factories: &mut Vec<Arc<dyn PluginFactory>>, tavily_api_key: Option<String>) {
@@ -107,25 +95,7 @@ fn append_web_plugins(factories: &mut Vec<Arc<dyn PluginFactory>>, tavily_api_ke
     }
 }
 
-fn general_tool_plugin_factories(
-    shell_tool_provider: Arc<dyn ToolProvider>,
-    tavily_api_key: Option<String>,
-) -> Vec<Arc<dyn PluginFactory>> {
-    let instruction_source: Arc<dyn InstructionSource> = Arc::new(FsInstructionSource::new());
-    let mut factories = vec![
-        builtin_projection_plugin_factory(),
-        shell_plugin_factory(shell_tool_provider),
-        apply_patch_plugin_factory(),
-        read_file_plugin_factory(Some(instruction_source)),
-        glob_plugin_factory(),
-        grep_plugin_factory(),
-        ls_plugin_factory(),
-    ];
-    append_web_plugins(&mut factories, tavily_api_key);
-    factories
-}
-
-fn thread_tool_plugin_factories(
+fn standard_tool_plugin_factories(
     shell_tool_provider: Arc<dyn ToolProvider>,
     tavily_api_key: Option<String>,
 ) -> Vec<Arc<dyn PluginFactory>> {
@@ -176,10 +146,7 @@ pub(crate) fn embedded_tool_plugin_factories(
 ) -> Vec<Arc<dyn PluginFactory>> {
     match preset {
         EmbeddedToolPreset::General => {
-            general_tool_plugin_factories(shell_tool_provider, tavily_api_key)
-        }
-        EmbeddedToolPreset::Thread => {
-            thread_tool_plugin_factories(shell_tool_provider, tavily_api_key)
+            standard_tool_plugin_factories(shell_tool_provider, tavily_api_key)
         }
         EmbeddedToolPreset::Shepherd => shepherd_tool_plugin_factories(
             shell_tool_provider,

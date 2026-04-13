@@ -12,6 +12,7 @@ pub enum RuntimeModelRole {
     Shepherd,
     Librarian,
     Thread,
+    Search,
 }
 
 async fn load_codex_oauth(
