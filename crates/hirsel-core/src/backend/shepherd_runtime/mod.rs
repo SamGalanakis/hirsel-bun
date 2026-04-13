@@ -5,6 +5,7 @@ mod queries;
 mod runtime;
 mod search_context;
 mod session;
+mod task_tools;
 mod shell;
 mod tools;
 pub mod types;

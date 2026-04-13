@@ -65,6 +65,12 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         "highlight_thread" => ("Highlight Thread".to_string(), Some("execute".to_string())),
         "dismiss_highlight" => ("Dismiss Highlight".to_string(), Some("execute".to_string())),
         "search_threads" => ("Search Threads".to_string(), Some("search".to_string())),
+        "list_tasks" => ("List Tasks".to_string(), Some("search".to_string())),
+        "create_task" => ("Create Task".to_string(), Some("execute".to_string())),
+        "update_task" => ("Update Task".to_string(), Some("edit".to_string())),
+        "focus_task" => ("Focus Task".to_string(), Some("execute".to_string())),
+        "unfocus_task" => ("Unfocus Task".to_string(), Some("execute".to_string())),
+        "patch_task_content" => ("Patch Task".to_string(), Some("edit".to_string())),
         "update_plan" => ("Plan Update".to_string(), Some("edit".to_string())),
         _ => (name.to_string(), None),
     }
@@ -258,6 +264,14 @@ async fn build_runtime_services(
         if let Some(project_id) = default_project_id {
             plugin_factories.push(super::search_context::search_context_plugin_factory(
                 project_id,
+            ));
+
+            let thread_id = match scope {
+                ShepherdScope::Thread { thread_id, .. } => Some(thread_id.clone()),
+                _ => None,
+            };
+            plugin_factories.push(super::task_tools::task_tool_plugin_factory(
+                project_id, thread_id,
             ));
         }
     }
