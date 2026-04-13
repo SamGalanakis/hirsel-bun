@@ -169,7 +169,16 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   const handleSurfacePointerDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
-    if (target.closest("[data-node-id]")) return; // let node handle
+    // Don't start panning if click started on a node, toolbar, or any interactive UI
+    if (
+      target.closest("[data-node-id]") ||
+      target.closest(".canvas-toolbar") ||
+      target.closest(".canvas-view-dropdown") ||
+      target.closest(".canvas-filter-dropdown") ||
+      target.closest(".canvas-zoom-indicator")
+    ) {
+      return;
+    }
     setIsPanning(true);
     containerRef?.setPointerCapture(e.pointerId);
     const startX = e.clientX;
