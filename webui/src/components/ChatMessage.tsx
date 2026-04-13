@@ -108,6 +108,8 @@ function toolKindLabel(tool: ToolChunk): string {
       return "Fetch";
     case "thread":
       return "Threads";
+    case "task":
+      return "Task";
     case "preview":
       return "Preview";
     case "plan":
@@ -173,6 +175,13 @@ function toolKindIcon(tool: ToolChunk): JSX.Element {
           <path d="M3 4V8" />
           <path d="M4 3H7C7.5 3 8 3.5 8 4V5.5" />
           <path d="M4 9H7C7.5 9 8 8.5 8 8V6.5" />
+        </svg>
+      );
+    case "task":
+      return (
+        <svg {...props}>
+          <rect x="1" y="1" width="10" height="10" rx="1" />
+          <path d="M3.5 5.5L5 7L8.5 3.5" />
         </svg>
       );
     case "preview":
@@ -259,6 +268,11 @@ function toolSummary(tool: ToolChunk): string {
     case "thread":
       return snippetText(
         input?.thread_id ?? input?.title ?? input?.name ?? output?.thread_id ?? toolLabel(tool.title),
+        120,
+      );
+    case "task":
+      return snippetText(
+        input?.task_id ?? input?.title ?? input?.summary ?? output?.task_id ?? toolLabel(tool.title),
         120,
       );
     case "preview": {

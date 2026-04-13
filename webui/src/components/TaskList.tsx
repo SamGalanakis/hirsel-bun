@@ -149,6 +149,7 @@ const TaskList: Component<TaskListProps> = (props) => {
             type="text"
             class="flex-1 bg-transparent text-foreground text-sm placeholder:text-muted-foreground/25 outline-none border-none"
             placeholder="Add a task..."
+            aria-label="Add a new task"
             value={newTitle()}
             onInput={(e) => setNewTitle(e.currentTarget.value)}
             onKeyDown={handleCreateKeyDown}
@@ -243,14 +244,14 @@ const TaskList: Component<TaskListProps> = (props) => {
 
                       {/* Content preview */}
                       <Show when={!isExpanded() && contentPreview(task)}>
-                        <div class="text-[11px] text-muted-foreground/35 truncate mt-0.5">
+                        <div class="text-[12px] text-muted-foreground/45 truncate mt-0.5">
                           {contentPreview(task)}
                         </div>
                       </Show>
                     </div>
 
                     {/* Actions (visible on hover) */}
-                    <div class="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div class="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       <button
                         class="p-1 text-muted-foreground/30 hover:text-destructive transition-colors"
                         onClick={() => void handleDelete(task.id)}

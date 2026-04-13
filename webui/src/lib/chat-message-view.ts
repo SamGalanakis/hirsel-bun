@@ -47,6 +47,7 @@ export type ToolDisplayKind =
   | "web-search"
   | "fetch"
   | "thread"
+  | "task"
   | "canvas"
   | "context"
   | "preview"
@@ -81,6 +82,23 @@ const THREAD_TOOLS = new Set([
   "Delete Thread",
   "Message Thread",
   "Thread Updates",
+]);
+
+const TASK_TOOLS = new Set([
+  "list_tasks",
+  "create_task",
+  "update_task",
+  "focus_task",
+  "unfocus_task",
+  "patch_task_content",
+  "submit_completion",
+  "List Tasks",
+  "Create Task",
+  "Update Task",
+  "Focus Task",
+  "Unfocus Task",
+  "Patch Task",
+  "Submit Completion",
 ]);
 
 const CANVAS_TOOLS = new Set<string>([]);
@@ -121,6 +139,13 @@ const TOOL_LABELS: Record<string, string> = {
   grep: "Search",
   glob: "Glob",
   ls: "List",
+  list_tasks: "List tasks",
+  create_task: "Create task",
+  update_task: "Update task",
+  focus_task: "Focus task",
+  unfocus_task: "Unfocus task",
+  patch_task_content: "Patch task",
+  submit_completion: "Submit completion",
 };
 
 export function parseToolInput(tool: ToolChunk): any {
@@ -187,6 +212,7 @@ export function getToolDisplayKind(name: string): ToolDisplayKind {
   if (name === "search_web") return "web-search";
   if (name === "fetch_url") return "fetch";
   if (THREAD_TOOLS.has(name)) return "thread";
+  if (TASK_TOOLS.has(name)) return "task";
   if (CANVAS_TOOLS.has(name)) return "canvas";
   if (CONTEXT_TOOLS.has(name)) return "context";
   if (PREVIEW_TOOLS.has(name)) return "preview";

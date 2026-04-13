@@ -635,10 +635,14 @@
   font-family: var(--font-mono);
   font-size: 0.82em;
   padding: 1px 6px;
-  background: oklch(var(--brand) / 0.08);
-  border: 1px solid oklch(var(--brand) / 0.2);
+  background: oklch(var(--brand) / 0.12);
+  border: 1px solid oklch(var(--brand) / 0.25);
   color: oklch(var(--brand));
   cursor: default;
+  transition: background 0.15s;
+}
+.task-node-ref:hover {
+  background: oklch(var(--brand) / 0.18);
 }
 .task-mermaid-container {
   margin: 1rem 0;
@@ -2202,6 +2206,7 @@ body, #root {
   display: flex;
   align-items: center;
   gap: 0.45rem;
+  transition: color 0.15s, background 0.15s, border-color 0.2s;
   padding: 0 0.8rem;
   border: none;
   border-bottom: 1px solid transparent;
