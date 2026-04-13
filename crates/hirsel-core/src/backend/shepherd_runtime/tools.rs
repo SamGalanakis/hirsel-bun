@@ -838,6 +838,88 @@ impl ToolContext {
             Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
         }
     }
+    async fn highlight_thread_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let thread = match self.resolve_thread(project_id, args).await {
+            Ok(thread) => thread,
+            Err(error) => return error,
+        };
+        let message = match Self::trimmed_string(args, "message") {
+            Some(msg) => msg,
+            None => return ToolResult::err_fmt("Missing required parameter: message"),
+        };
+        let store = match self.thread_store().await {
+            Ok(store) => store,
+            Err(error) => return error,
+        };
+        match store.set_highlight(&thread.id, Some(message)).await {
+            Ok(()) => ToolResult::ok(json!({
+                "thread_id": thread.id,
+                "highlight": message,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
+    async fn dismiss_highlight_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let thread = match self.resolve_thread(project_id, args).await {
+            Ok(thread) => thread,
+            Err(error) => return error,
+        };
+        let store = match self.thread_store().await {
+            Ok(store) => store,
+            Err(error) => return error,
+        };
+        match store.set_highlight(&thread.id, None).await {
+            Ok(()) => ToolResult::ok(json!({
+                "thread_id": thread.id,
+                "highlight": null,
+            })),
+            Err(error) => ToolResult::err(json!({ "error": error.to_string() })),
+        }
+    }
+
+    async fn search_threads_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let query = match Self::trimmed_string(args, "query") {
+            Some(q) => q.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: query"),
+        };
+        let thread_id_filter = Self::trimmed_string(args, "thread_id").map(ToOwned::to_owned);
+        let limit = Self::arg_i64(args, "limit").unwrap_or(20).clamp(1, 100) as usize;
+
+        let db = crate::backend::db::global_db().await;
+        let prefix = if let Some(tid) = &thread_id_filter {
+            format!("__thread__:{tid}")
+        } else {
+            format!("thread:{project_id}:")
+        };
+
+        // Search preview_text and chunks_json for the query string
+        let mut response = match db
+            .query(
+                "SELECT id, scope_key, role, preview_text, created_at \
+                 FROM shepherd_chat_message \
+                 WHERE scope_key CONTAINS $prefix \
+                   AND (preview_text CONTAINS $query OR chunks_json CONTAINS $query) \
+                 ORDER BY created_at DESC \
+                 LIMIT $limit",
+            )
+            .bind(("prefix", prefix))
+            .bind(("query", query.clone()))
+            .bind(("limit", limit as i64))
+            .await
+        {
+            Ok(r) => r,
+            Err(error) => {
+                return ToolResult::err(json!({ "error": format!("Search failed: {error}") }));
+            }
+        };
+
+        let rows: Vec<Value> = response.take(0).unwrap_or_default();
+        ToolResult::ok(json!({
+            "query": query,
+            "matches": rows,
+        }))
+    }
 }
 
 async fn execute_librarian_tool(
@@ -892,6 +974,9 @@ async fn execute_shepherd_tool(
         "patch_canvas_document" => {
             crate::backend::librarian::patch_canvas_document(project_id, args).await
         }
+        "highlight_thread" => common.highlight_thread_tool(project_id, args).await,
+        "dismiss_highlight" => common.dismiss_highlight_tool(project_id, args).await,
+        "search_threads" => common.search_threads_tool(project_id, args).await,
         _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
     }
 }
@@ -1283,6 +1368,47 @@ impl ToolProvider for ShepherdToolProvider {
                 injected: true,
             },
             tool_definition! {
+                name: "highlight_thread".to_string(),
+                description: "Draw the user's attention to a thread that needs input or review. Sets a visible highlight on the thread card.".to_string(),
+                params: vec![
+                    ToolParam::optional("thread_id", "str"),
+                    ToolParam::optional("title", "str"),
+                    ToolParam::typed("message", "str"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "dismiss_highlight".to_string(),
+                description: "Remove a highlight from a thread.".to_string(),
+                params: vec![
+                    ToolParam::optional("thread_id", "str"),
+                    ToolParam::optional("title", "str"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "search_threads".to_string(),
+                description: "Search across all thread conversations for the project. Returns matching messages with thread context.".to_string(),
+                params: vec![
+                    ToolParam::typed("query", "str"),
+                    ToolParam::optional("thread_id", "str"),
+                    ToolParam::optional("limit", "int"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
                 name: "patch_canvas_document".to_string(),
                 description: format!(
                     "Patch the project canvas document in place using a validated line patch. Graph-backed references must use node=\"kind:id\".\n\n{}",
@@ -1318,9 +1444,30 @@ impl ToolProvider for ShepherdToolProvider {
 pub(super) fn shepherd_prompt_contributions() -> Vec<PromptContribution> {
     vec![
         PromptContribution::guidance(
+            "event_processing",
+            "Event Processing",
+            concat!(
+                "You receive two kinds of input:\n",
+                "- **User messages**: respond conversationally and take action.\n",
+                "- **Event batches**: thread completions, blocks, failures, and state changes.\n\n",
+                "For event batches without a user message, decide what needs attention:\n",
+                "- Completed threads: update the canvas with results, summarize for the user if significant.\n",
+                "- Blocked threads: use `highlight_thread` to surface the blocking question.\n",
+                "- Failed threads: diagnose and either retry or alert the user.\n",
+                "- If nothing requires user attention, update the canvas silently and produce no chat output.\n",
+            ),
+        ),
+        PromptContribution::guidance(
             "thread_management",
             "Thread Management",
-            "Use a thread when isolation, parallel progress, or a separate workspace clearly helps. Reuse an existing thread for the same line of work; otherwise create a new one. When you create or update thread titles, statuses, or summaries, keep them short and user-understandable.",
+            concat!(
+                "Use a thread when isolation, parallel progress, or a separate workspace clearly helps. ",
+                "Reuse an existing thread for the same line of work; otherwise create a new one. ",
+                "Keep titles, statuses, and summaries short and user-understandable.\n\n",
+                "Use `highlight_thread(message)` to draw the user's attention to threads needing input or review. ",
+                "Use `dismiss_highlight` when the thread no longer needs attention.\n\n",
+                "Use `search_threads(query)` to find relevant conversations across all project threads.",
+            ),
         ),
         PromptContribution::guidance(
             "retained_context",

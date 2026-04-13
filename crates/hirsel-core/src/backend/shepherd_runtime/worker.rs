@@ -62,6 +62,9 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         ),
         "patch_canvas_document" => ("Canvas Patch".to_string(), Some("edit".to_string())),
         "search_context" => ("Knowledge Search".to_string(), Some("search".to_string())),
+        "highlight_thread" => ("Highlight Thread".to_string(), Some("execute".to_string())),
+        "dismiss_highlight" => ("Dismiss Highlight".to_string(), Some("execute".to_string())),
+        "search_threads" => ("Search Threads".to_string(), Some("search".to_string())),
         "update_plan" => ("Plan Update".to_string(), Some("edit".to_string())),
         _ => (name.to_string(), None),
     }
@@ -542,8 +545,7 @@ pub async fn run_scope_turn(
     }));
 
     if assistant_chunks.is_empty() {
-        tracing::warn!(scope = ?scope, "model turn completed without visible output");
-        return Err("Model returned no usable output.".to_string());
+        tracing::debug!(scope = ?scope, "model turn completed without visible output");
     }
 
     let state_json = serde_json::to_string(&runtime.export_state())

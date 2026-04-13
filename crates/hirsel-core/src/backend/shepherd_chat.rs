@@ -93,6 +93,7 @@ pub struct ShepherdChatStore;
 
 pub const MESSAGE_KIND_CHAT: &str = "chat";
 pub const MESSAGE_KIND_SHEPHERD_SYNC: &str = "shepherd_sync";
+pub const MESSAGE_KIND_EVENT_BATCH: &str = "event_batch";
 
 #[derive(Debug, Clone)]
 pub struct ShepherdChatMessageOptions {
@@ -115,6 +116,14 @@ impl ShepherdChatMessageOptions {
     pub fn shepherd_sync(preview_text: impl Into<String>) -> Self {
         Self {
             message_kind: MESSAGE_KIND_SHEPHERD_SYNC.to_string(),
+            preview_text: Some(preview_text.into()),
+            collapsed_by_default: true,
+        }
+    }
+
+    pub fn event_batch(preview_text: impl Into<String>) -> Self {
+        Self {
+            message_kind: MESSAGE_KIND_EVENT_BATCH.to_string(),
             preview_text: Some(preview_text.into()),
             collapsed_by_default: true,
         }

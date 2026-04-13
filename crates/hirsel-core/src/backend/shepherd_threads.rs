@@ -20,6 +20,8 @@ struct ShepherdThreadRecord {
     updated_at: String,
     last_activity_at: String,
     archived_at: Option<String>,
+    #[serde(default)]
+    highlight: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +38,8 @@ pub struct ShepherdThread {
     pub updated_at: String,
     pub last_activity_at: String,
     pub archived_at: Option<String>,
+    #[serde(default)]
+    pub highlight: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -90,6 +94,7 @@ impl ShepherdThreadStore {
             updated_at: now.clone(),
             last_activity_at: now,
             archived_at: None,
+            highlight: None,
         };
 
         let _: Option<ShepherdThreadRecord> = db
@@ -223,6 +228,27 @@ impl ShepherdThreadStore {
         Ok(())
     }
 
+    pub async fn set_highlight(
+        &self,
+        thread_id: &str,
+        highlight: Option<&str>,
+    ) -> ShepherdThreadResult<()> {
+        let db = self.db().await;
+        if let Some(mut record) = self.load_thread_record(thread_id).await? {
+            record.highlight = highlight.map(ToOwned::to_owned);
+            let _: Option<ShepherdThreadRecord> = db
+                .upsert((SHEPHERD_THREAD_TABLE, thread_id))
+                .content(record.clone())
+                .await?;
+            live_updates::publish_thread(
+                record.project_id,
+                record.thread_id.clone(),
+                LiveUpdateKind::ThreadChanged,
+            );
+        }
+        Ok(())
+    }
+
     pub async fn archive_thread(&self, thread_id: &str) -> ShepherdThreadResult<()> {
         let db = self.db().await;
         if let Some(mut record) = self.load_thread_record(thread_id).await? {
@@ -294,6 +320,7 @@ impl ShepherdThreadRecord {
             updated_at: self.updated_at,
             last_activity_at: self.last_activity_at,
             archived_at: self.archived_at,
+            highlight: self.highlight,
         }
     }
 }

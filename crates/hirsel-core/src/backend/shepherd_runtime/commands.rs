@@ -650,10 +650,46 @@ fn spawn_scope_turn(
                             "failed to enqueue librarian background sync"
                         );
                     }
+
+                    // Insert shepherd event for thread turn completions
+                    if let ShepherdScope::Thread {
+                        thread_id, title, ..
+                    } = &scope
+                    {
+                        let summary = completed_summary_from_chunks(&outcome.assistant_chunks);
+                        let _ = crate::backend::shepherd_events::insert_event(
+                            project_id,
+                            "thread_completed",
+                            serde_json::json!({
+                                "thread_id": thread_id,
+                                "thread_title": title,
+                                "summary": summary,
+                            }),
+                        )
+                        .await;
+                    }
                 }
             }
-            Err(error) => {
+            Err(ref error) => {
                 tracing::warn!(%error, scope = %scope_key(&scope), "shepherd scope turn failed");
+                if let ShepherdScope::Thread {
+                    project_id,
+                    thread_id,
+                    title,
+                    ..
+                } = &scope
+                {
+                    let _ = crate::backend::shepherd_events::insert_event(
+                        *project_id,
+                        "thread_failed",
+                        serde_json::json!({
+                            "thread_id": thread_id,
+                            "thread_title": title,
+                            "error": error,
+                        }),
+                    )
+                    .await;
+                }
             }
         }
 
@@ -681,7 +717,7 @@ fn dispatch_queued_turn(key: &str) {
 // Core dispatch
 // ---------------------------------------------------------------------------
 
-async fn dispatch_scope_message_local(
+pub(crate) async fn dispatch_scope_message_local(
     scope: ShepherdScope,
     user_chunks: Vec<ShepherdMessageChunk>,
     focus: Option<ShepherdTaskFocus>,

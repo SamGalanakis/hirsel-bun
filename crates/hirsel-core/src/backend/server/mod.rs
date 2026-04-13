@@ -61,6 +61,59 @@ fn resolve_webui_dist() -> PathBuf {
     PathBuf::from("webui/dist")
 }
 
+fn spawn_shepherd_event_consumer() {
+    tokio::spawn(async {
+        use std::collections::HashMap;
+        use std::time::Instant;
+
+        let mut receiver = crate::backend::live_updates::subscribe();
+        let mut debounce: HashMap<i64, Instant> = HashMap::new();
+        let debounce_secs = 5;
+
+        loop {
+            // Check for new events (non-blocking with timeout)
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                receiver.recv(),
+            )
+            .await
+            {
+                Ok(Ok(event)) => {
+                    let dominated_by_thread = matches!(
+                        event.kind,
+                        crate::backend::live_updates::LiveUpdateKind::ThreadChanged
+                            | crate::backend::live_updates::LiveUpdateKind::ThreadActivityChanged
+                    );
+                    if dominated_by_thread {
+                        debounce.insert(event.project_id, Instant::now());
+                    }
+                }
+                Ok(Err(_)) => {
+                    // Broadcast lagged — resubscribe
+                    receiver = crate::backend::live_updates::subscribe();
+                }
+                Err(_) => {
+                    // Timeout — check debounce timers
+                }
+            }
+
+            // Fire expired debounce timers
+            let now = Instant::now();
+            let expired: Vec<i64> = debounce
+                .iter()
+                .filter(|(_, instant)| now.duration_since(**instant).as_secs() >= debounce_secs)
+                .map(|(pid, _)| *pid)
+                .collect();
+            for project_id in expired {
+                debounce.remove(&project_id);
+                let _ =
+                    crate::backend::shepherd_events::dispatch_shepherd_event_batch(project_id)
+                        .await;
+            }
+        }
+    });
+}
+
 fn spawn_librarian_lint_worker() {
     tokio::spawn(async {
         // Initial delay before first lint pass
@@ -96,6 +149,7 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         .await
         .map_err(|error| anyhow::anyhow!("Failed to scrub stale shepherd state: {}", error))?;
 
+    spawn_shepherd_event_consumer();
     spawn_librarian_lint_worker();
 
     // Resolve SPA directory

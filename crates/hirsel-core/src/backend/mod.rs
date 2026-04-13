@@ -19,6 +19,7 @@ pub(crate) mod prompts;
 pub mod sandbox;
 pub mod server;
 pub mod shepherd_chat;
+pub mod shepherd_events;
 pub mod shepherd_runtime;
 pub mod shepherd_threads;
 pub mod skills;

@@ -103,10 +103,23 @@ pub async fn send_thread_message(
     Path((project_id, thread_id)): Path<(i64, String)>,
     Json(body): Json<ChatSendBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Capture preview before content is consumed
+    let event_preview: String = body.content.chars().take(120).collect();
     let chunks =
         crate::backend::skills::enrich_chat_message_chunks(project_id, body.content, false)
             .await
             .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
+    // Notify shepherd that user messaged a thread directly
+    let _ = crate::backend::shepherd_events::insert_event(
+        project_id,
+        "user_thread_message",
+        serde_json::json!({
+            "thread_id": thread_id,
+            "content": event_preview,
+        }),
+    )
+    .await;
+
     let response =
         shepherd_runtime::send_thread_message(project_id, &thread_id, None, Some(chunks))
             .await

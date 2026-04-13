@@ -81,6 +81,7 @@ DEFINE FIELD IF NOT EXISTS created_at ON TABLE shepherd_thread TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON TABLE shepherd_thread TYPE string;
 DEFINE FIELD IF NOT EXISTS last_activity_at ON TABLE shepherd_thread TYPE string;
 DEFINE FIELD IF NOT EXISTS archived_at ON TABLE shepherd_thread TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS highlight ON TABLE shepherd_thread TYPE option<string>;
 DEFINE INDEX IF NOT EXISTS shepherd_thread_project_idx ON TABLE shepherd_thread FIELDS project_id;
 DEFINE INDEX IF NOT EXISTS shepherd_thread_title_idx ON TABLE shepherd_thread FIELDS project_id, title_lower;
 
@@ -141,3 +142,7 @@ DEFINE FIELD OVERWRITE created_at ON TABLE kg_edge DEFAULT time::now();
 -- Canvas document (ephemeral, project-scoped, not part of the knowledge graph)
 DEFINE TABLE IF NOT EXISTS project_canvas SCHEMALESS;
 DEFINE FIELD OVERWRITE updated_at ON TABLE project_canvas VALUE time::now();
+
+-- Shepherd event queue (batched input for event-driven shepherd turns)
+DEFINE TABLE IF NOT EXISTS shepherd_event SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS created_at ON TABLE shepherd_event DEFAULT time::now();
