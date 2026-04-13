@@ -86,6 +86,33 @@ impl ToolProvider for ReadOnlyGraphToolProvider {
 }
 
 impl ReadOnlyGraphToolProvider {
+    fn bump_read_timestamps(&self, rows: &[Value]) {
+        let mut node_keys: Vec<Value> = Vec::new();
+        for row in rows {
+            if let (Some(kind), Some(node_id)) = (
+                row.get("kind").and_then(|v| v.as_str()),
+                row.get("node_id").and_then(|v| v.as_str()),
+            ) {
+                node_keys.push(json!([self.project_id, kind, node_id]));
+            }
+        }
+        if node_keys.is_empty() {
+            return;
+        }
+        let project_id = self.project_id;
+        tokio::spawn(async move {
+            let Ok(db) = librarian_db(project_id).await else {
+                return;
+            };
+            for key in node_keys {
+                let _ = db
+                    .query("UPDATE type::record('kg_node', $key) SET read_by_search_context = time::now()")
+                    .bind(("key", key))
+                    .await;
+            }
+        });
+    }
+
     async fn graph_query(&self, args: &Value) -> ToolResult {
         let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
             return ToolResult::err(json!({ "error": "query is required" }));
@@ -145,6 +172,16 @@ impl ReadOnlyGraphToolProvider {
             }));
         }
 
+        // Best-effort: bump read_by_search_context on returned nodes
+        let all_rows: Vec<Value> = results
+            .iter()
+            .filter_map(|r| r.get("value"))
+            .filter_map(|v| v.as_array())
+            .flatten()
+            .cloned()
+            .collect();
+        self.bump_read_timestamps(&all_rows);
+
         ToolResult::ok(json!({
             "statement_count": statement_count,
             "results": results,
@@ -182,6 +219,7 @@ impl ReadOnlyGraphToolProvider {
         };
 
         let rows: Vec<Value> = response.take(0).unwrap_or_default();
+        self.bump_read_timestamps(&rows);
         ToolResult::ok(json!({
             "query": query,
             "results": rows,
@@ -198,7 +236,9 @@ The graph contains nodes with kinds: component, entity, convention, decision, fa
 Each node has: kind, node_id, label, content, tags (array), source, metadata.
 Edges have: relation (part_of, depends_on, implements, relates_to).
 
-Use `search_graph_text` for broad discovery, then `graph_query` for targeted lookups.
+Start by reading the project index to understand what is in the graph:
+  graph_query: SELECT content FROM type::record('kg_node', [$project_id, 'document', 'index'])
+Then use `search_graph_text` for broad discovery and `graph_query` for targeted lookups.
 Cite relevant nodes as [kind:id] in your answer. Be concise and factual.
 If no relevant information exists in the graph, say so.";
 

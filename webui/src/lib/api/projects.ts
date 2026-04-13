@@ -22,10 +22,7 @@ export async function getProject(projectId: number): Promise<Project> {
   return parseJson<Project>(res);
 }
 
-export async function createProject(data: {
-  name: string;
-  description?: string;
-}): Promise<Project> {
+export async function createProject(data: { name: string }): Promise<Project> {
   const res = await apiFetch("/projects", {
     method: "POST",
     body: JSON.stringify(data),
@@ -40,10 +37,7 @@ export async function deleteProject(projectId: number): Promise<void> {
 
 export async function saveProjectSettings(
   projectId: number,
-  data: {
-    name: string;
-    description?: string | null;
-  },
+  data: { name: string },
 ): Promise<Project> {
   const res = await apiFetch(`/projects/${projectId}/settings`, {
     method: "POST",

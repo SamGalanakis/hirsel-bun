@@ -26,6 +26,8 @@ pub(crate) struct KnowledgeGraphNodeRow {
     pub metadata: Option<BTreeMap<String, surrealdb::types::Value>>,
     #[serde(default)]
     pub updated_at: Option<surrealdb::types::Value>,
+    #[serde(default)]
+    pub read_by_search_context: Option<surrealdb::types::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, SurrealValue)]
@@ -68,6 +70,8 @@ pub(crate) struct ApiKnowledgeGraphNode {
     pub source: Option<String>,
     pub metadata: JsonMap<String, JsonValue>,
     pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub read_by_search_context: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -100,6 +104,10 @@ impl From<KnowledgeGraphNodeRow> for ApiKnowledgeGraphNode {
             source: value.source,
             metadata: surreal_btreemap_to_json_map(value.metadata.unwrap_or_default()),
             updated_at: surreal_datetime_value_to_string(value.updated_at),
+            read_by_search_context: {
+                let s = surreal_datetime_value_to_string(value.read_by_search_context);
+                if s.is_empty() { None } else { Some(s) }
+            },
         }
     }
 }

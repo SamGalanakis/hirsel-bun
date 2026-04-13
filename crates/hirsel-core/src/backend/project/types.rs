@@ -27,8 +27,6 @@ pub struct Project {
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
     pub icon: Option<String>,
     #[serde(default)]
     pub workspaces: Vec<ProjectWorkspaceEntry>,
@@ -57,8 +55,6 @@ pub struct ProjectSurfaceSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct CreateProjectRequest {
     pub name: String,
-    #[serde(default)]
-    pub description: Option<String>,
 }
 
 /// Request to update a project
@@ -67,6 +63,4 @@ pub struct CreateProjectRequest {
 pub struct UpdateProjectRequest {
     #[serde(default)]
     pub name: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
 }

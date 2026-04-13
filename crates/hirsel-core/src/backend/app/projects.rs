@@ -21,7 +21,7 @@ pub async fn get_project_surface(project_id: i64) -> Result<ProjectSurfaceSnapsh
 }
 
 #[tracing::instrument]
-pub async fn create_project(name: String, description: Option<String>) -> Result<Project, String> {
+pub async fn create_project(name: String) -> Result<Project, String> {
     let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
 
     let mut project_name = name;
@@ -42,7 +42,6 @@ pub async fn create_project(name: String, description: Option<String>) -> Result
 
     let req = CreateProjectRequest {
         name: project_name,
-        description,
     };
     let store2 = ProjectStore::open().await.map_err(|e| e.to_string())?;
     let project = store2
@@ -63,7 +62,6 @@ pub async fn create_project(name: String, description: Option<String>) -> Result
 pub async fn update_project_settings(
     project_id: i64,
     name: String,
-    description: Option<String>,
 ) -> Result<Project, String> {
     let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
     store
@@ -71,7 +69,6 @@ pub async fn update_project_settings(
             project_id,
             &UpdateProjectRequest {
                 name: Some(name),
-                description,
             },
         )
         .await

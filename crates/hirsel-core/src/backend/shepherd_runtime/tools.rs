@@ -1401,6 +1401,17 @@ pub(super) fn librarian_prompt_contributions() -> Vec<PromptContribution> {
             crate::backend::librarian::LIBRARIAN_SURREALQL_GUIDE,
         ),
         PromptContribution::guidance(
+            "index_maintenance",
+            "Project Index",
+            concat!(
+                "The `document:index` node is the project map. Keep it current after syncs that add or change nodes.\n",
+                "Structure it by kind (Components, Entities, Conventions, Decisions, Facts, Goals) with inline ",
+                "references like [component:auth] for each catalogued node. It should serve as a springboard — ",
+                "reading the index should tell a new agent what exists and where to look deeper.\n",
+                "You may introduce custom node kinds per project. Document any custom kinds in the index.",
+            ),
+        ),
+        PromptContribution::guidance(
             "workspace_management",
             "Workspace Management",
             "Keep the workspace list current when one is attached, removed, renamed, moved, or its branch/url changes. Use `list_project_workspaces`, `upsert_project_workspace`, and `remove_project_workspace` to maintain workspace metadata.",

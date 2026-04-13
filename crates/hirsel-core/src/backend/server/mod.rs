@@ -61,6 +61,23 @@ fn resolve_webui_dist() -> PathBuf {
     PathBuf::from("webui/dist")
 }
 
+fn spawn_librarian_lint_worker() {
+    tokio::spawn(async {
+        // Initial delay before first lint pass
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        loop {
+            if let Ok(store) = crate::backend::project::ProjectStore::open().await {
+                if let Ok(projects) = store.list_projects().await {
+                    for project in projects {
+                        let _ = crate::backend::librarian::enqueue_librarian_lint(project.id).await;
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
+        }
+    });
+}
+
 /// Start the HTTP server
 pub async fn start_server(port: u16) -> anyhow::Result<()> {
     let api_key = resolve_http_api_key();
@@ -78,6 +95,8 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     crate::backend::shepherd_runtime::scrub_stale_startup_state()
         .await
         .map_err(|error| anyhow::anyhow!("Failed to scrub stale shepherd state: {}", error))?;
+
+    spawn_librarian_lint_worker();
 
     // Resolve SPA directory
     let webui_dir = resolve_webui_dist();

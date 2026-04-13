@@ -136,6 +136,29 @@ pub async fn queue_background_sync(
     .await
 }
 
+// ── Graph Lint ──
+
+const LINT_PROMPT: &str = "\
+Review the knowledge graph for health:
+- Orphan nodes: nodes with no edges and no tags, not referenced by document:index
+- Stale nodes: read_by_search_context is recent but updated_at is old (high-value, going stale)
+- Unused nodes: read_by_search_context is null and updated_at is old (nobody needs this)
+- Missing nodes: concepts mentioned in existing node content that lack their own node
+- Weak content: nodes with labels but trivial/empty content
+- Index drift: document:index that doesn't reflect the current set of nodes
+
+Fix what you can. For structural issues, update the graph directly.
+Report a brief summary of what you found and changed.";
+
+pub async fn enqueue_librarian_lint(project_id: i64) -> Result<(), String> {
+    crate::backend::shepherd_runtime::commands::enqueue_librarian_automated_message(
+        project_id,
+        LINT_PROMPT.to_string(),
+        "Knowledge graph lint".to_string(),
+    )
+    .await
+}
+
 // ── Graph Operations ──
 
 pub async fn graph_surql(project_id: i64, args: &Value) -> ToolResult {

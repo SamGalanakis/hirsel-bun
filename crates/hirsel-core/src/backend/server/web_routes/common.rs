@@ -9,7 +9,6 @@ use crate::backend::{ShepherdChatMessage, ShepherdThread};
 pub struct ApiProject {
     pub id: i64,
     pub name: String,
-    pub description: Option<String>,
     pub created_at: String,
     pub workspaces: Vec<ProjectWorkspaceEntry>,
     pub shepherd_cwd: Option<String>,
@@ -96,7 +95,6 @@ pub fn to_api_project(project: &Project) -> ApiProject {
     ApiProject {
         id: project.id,
         name: project.name.clone(),
-        description: project.description.clone(),
         created_at: project.created_at.clone(),
         workspaces: project.workspaces.clone(),
         shepherd_cwd: project.shepherd_cwd.clone(),

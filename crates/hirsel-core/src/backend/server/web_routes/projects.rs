@@ -58,13 +58,11 @@ pub struct ChatSendBody {
 #[derive(Deserialize)]
 pub struct CreateProjectBody {
     name: String,
-    description: Option<String>,
 }
 
 #[derive(Deserialize)]
 pub struct SaveProjectSettingsBody {
     name: String,
-    description: Option<String>,
 }
 
 pub async fn list_projects() -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -412,7 +410,7 @@ pub async fn stop_project_chat(
 pub async fn create_project_api(
     Json(body): Json<CreateProjectBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let project = app::create_project(body.name, body.description)
+    let project = app::create_project(body.name)
         .await
         .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
 
@@ -436,7 +434,7 @@ pub async fn save_project_settings(
     Path(project_id): Path<i64>,
     Json(body): Json<SaveProjectSettingsBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let project = app::update_project_settings(project_id, body.name, body.description)
+    let project = app::update_project_settings(project_id, body.name)
         .await
         .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
 

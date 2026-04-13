@@ -7,7 +7,6 @@ import { ApiError } from "@/lib/api/core";
 
 const NewProjectPage: Component = () => {
   const [name, setName] = createSignal("");
-  const [description, setDescription] = createSignal("");
   const [error, setError] = createSignal("");
   const [saving, setSaving] = createSignal(false);
   const [hasProjects, setHasProjects] = createSignal(false);
@@ -27,10 +26,7 @@ const NewProjectPage: Component = () => {
     setError("");
     setSaving(true);
     try {
-      const project = await createProject({
-        name: trimmedName,
-        description: description().trim() || undefined,
-      });
+      const project = await createProject({ name: trimmedName });
       window.location.hash = `#project/${project.id}`;
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
@@ -118,21 +114,6 @@ const NewProjectPage: Component = () => {
                 value={name()}
                 onInput={(e) => setName(e.currentTarget.value)}
                 autofocus
-              />
-            </div>
-
-            <div class="space-y-2">
-              <Label for="description" class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/60">
-                Description
-                <span class="ml-2 normal-case tracking-normal text-muted-foreground/30">optional</span>
-              </Label>
-              <textarea
-                id="description"
-                class="z-input w-full resize-y text-sm leading-relaxed"
-                style="min-height: 72px; max-height: 180px;"
-                placeholder="A few sentences about what you're building or exploring."
-                value={description()}
-                onInput={(e) => setDescription(e.currentTarget.value)}
               />
             </div>
 

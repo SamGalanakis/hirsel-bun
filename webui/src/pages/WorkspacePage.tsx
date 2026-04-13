@@ -1421,7 +1421,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                       {(() => {
                         const proj = () => project();
                         const [nameVal, setNameVal] = createSignal(proj()?.name ?? "");
-                        const [descVal, setDescVal] = createSignal(proj()?.description ?? "");
                         const [saving, setSaving] = createSignal(false);
                         const [confirmDelete, setConfirmDelete] = createSignal(false);
                         const [statusMsg, setStatusMsg] = createSignal("");
@@ -1430,15 +1429,13 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                           const p = proj();
                           if (p) {
                             setNameVal(p.name);
-                            setDescVal(p.description ?? "");
                           }
                         });
 
                         const isDirty = () => {
                           const p = proj();
                           if (!p) return false;
-                          return nameVal() !== p.name
-                            || descVal() !== (p.description ?? "");
+                          return nameVal() !== p.name;
                         };
 
                         const handleSave = async () => {
@@ -1449,10 +1446,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                           setSaving(true);
                           setStatusMsg("");
                           try {
-                            await saveProjectSettings(p.id, {
-                              name,
-                              description: descVal().trim() || null,
-                            });
+                            await saveProjectSettings(p.id, { name });
                             const updated = await listProjects();
                             setProjects(updated);
                             setStatusMsg("Saved");
@@ -1503,16 +1497,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
                         return (
                           <div class="mx-auto max-w-2xl px-8 py-8">
-                            <Show when={createdAt() || proj()?.description}>
-                              <div class="mb-6 space-y-1.5">
-                                <Show when={proj()?.description}>
-                                  <p class="max-w-md text-[13px] leading-[1.7] text-muted-foreground/70">{proj()?.description}</p>
-                                </Show>
-                                <Show when={createdAt()}>
-                                  <div class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/30">
-                                    Created {createdAt()}
-                                  </div>
-                                </Show>
+                            <Show when={createdAt()}>
+                              <div class="mb-6">
+                                <div class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/30">
+                                  Created {createdAt()}
+                                </div>
                               </div>
                             </Show>
 

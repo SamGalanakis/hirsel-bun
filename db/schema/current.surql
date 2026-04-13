@@ -19,7 +19,6 @@ DEFINE FIELD IF NOT EXISTS name ON TABLE project TYPE string;
 DEFINE FIELD IF NOT EXISTS name_lower ON TABLE project TYPE string;
 DEFINE FIELD IF NOT EXISTS created_at ON TABLE project TYPE string;
 DEFINE FIELD IF NOT EXISTS updated_at ON TABLE project TYPE string;
-DEFINE FIELD IF NOT EXISTS description ON TABLE project TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS icon ON TABLE project TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS workspaces ON TABLE project TYPE array<object>;
 DEFINE FIELD IF NOT EXISTS workspaces[*].id ON TABLE project TYPE string;
@@ -124,6 +123,7 @@ DEFINE TABLE OVERWRITE kg_node SCHEMALESS
     FOR delete WHERE id[0] = $auth.project_id;
 DEFINE FIELD OVERWRITE updated_at ON TABLE kg_node VALUE time::now();
 DEFINE FIELD IF NOT EXISTS tags ON TABLE kg_node TYPE option<array<string>> DEFAULT [];
+DEFINE FIELD IF NOT EXISTS read_by_search_context ON TABLE kg_node TYPE option<datetime>;
 
 DEFINE ANALYZER IF NOT EXISTS kg_text_analyzer TOKENIZERS blank, class, punct FILTERS snowball(english), lowercase;
 DEFINE INDEX IF NOT EXISTS kg_node_label_search ON TABLE kg_node COLUMNS label FULLTEXT ANALYZER kg_text_analyzer BM25;

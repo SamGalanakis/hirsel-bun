@@ -10,7 +10,6 @@ export interface ProjectWorkspaceEntry {
 export interface Project {
   id: number;
   name: string;
-  description: string | null;
   workspaces: ProjectWorkspaceEntry[];
   shepherd_cwd: string | null;
   created_at: string;

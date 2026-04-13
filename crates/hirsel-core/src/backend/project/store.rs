@@ -20,7 +20,6 @@ struct ProjectRecord {
     name_lower: String,
     created_at: String,
     updated_at: String,
-    description: Option<String>,
     icon: Option<String>,
     #[serde(default)]
     workspaces: Vec<ProjectWorkspaceEntry>,
@@ -83,7 +82,6 @@ impl ProjectStore {
             name_lower: normalize_text(&req.name),
             created_at: now.clone(),
             updated_at: now,
-            description: req.description.clone(),
             icon: None,
             workspaces: Vec::new(),
             shepherd_cwd: None,
@@ -100,6 +98,23 @@ impl ProjectStore {
                 "UPSERT type::record('project_canvas', $pid) MERGE {
                     html: '<hirsel-callout title=\"New Project\" tone=\"info\">Use the shepherd to explore your project. The Librarian will keep this canvas updated as you work.</hirsel-callout>',
                     source: 'system',
+                }",
+            )
+            .bind(("pid", id))
+            .await;
+
+        // Seed the knowledge graph index document.
+        let _ = db
+            .query(
+                "UPSERT type::record('kg_node', [$pid, 'document', 'index']) MERGE {
+                    project_id: $pid,
+                    kind: 'document',
+                    node_id: 'index',
+                    label: 'Project Index',
+                    content: '# Project Index\n\nThis index is maintained by the librarian. It maps the project knowledge graph.\n\n## Components\n\n(none yet)\n\n## Domain Entities\n\n(none yet)\n\n## Conventions\n\n(none yet)\n\n## Decisions\n\n(none yet)\n\n## Facts\n\n(none yet)\n\n## Goals\n\n(none yet)',
+                    source: 'system',
+                    tags: ['index'],
+                    metadata: {},
                 }",
             )
             .bind(("pid", id))
@@ -159,10 +174,6 @@ impl ProjectStore {
                 record.name_lower = normalize_text(name);
             }
         }
-        if let Some(description) = req.description.as_ref() {
-            record.description = Some(description.clone());
-        }
-
         record.updated_at = utc_now();
         let _: Option<ProjectRecord> = db
             .upsert((PROJECT_TABLE, id))
@@ -371,7 +382,6 @@ impl ProjectRecord {
             name: self.name,
             created_at: self.created_at,
             updated_at: self.updated_at,
-            description: self.description,
             icon: self.icon,
             workspaces: self.workspaces,
             shepherd_cwd: self.shepherd_cwd,

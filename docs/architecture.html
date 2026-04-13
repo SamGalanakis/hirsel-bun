@@ -1,446 +1,750 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Hirsel Architecture</title>
-  <script type="module">
-    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
-    mermaid.initialize({ startOnLoad: true, theme: "dark" });
-  </script>
-  <style>
-    :root {
-      --bg: #0d0d0c;
-      --panel: rgba(20, 20, 18, 0.92);
-      --panel-soft: rgba(30, 30, 27, 0.9);
-      --line: rgba(232, 228, 208, 0.12);
-      --text: #ece7dc;
-      --muted: #b2ac9e;
-      --accent: #d7a84a;
-      --green: #92b276;
-      --red: #c87c67;
-      --blue: #87abc5;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: "Chivo Mono", monospace;
-      color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(215, 168, 74, 0.14), transparent 24rem),
-        radial-gradient(circle at bottom right, rgba(135, 171, 197, 0.08), transparent 26rem),
-        linear-gradient(180deg, #090908, var(--bg));
-      line-height: 1.6;
-    }
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      opacity: 0.3;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 320 320' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
-    }
-    .wrap {
-      position: relative;
-      z-index: 1;
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 32px 20px 80px;
-    }
-    .hero,
-    section,
-    .card {
-      border: 1px solid var(--line);
-      background: var(--panel);
-      backdrop-filter: blur(10px);
-      border-radius: 18px;
-    }
-    .hero {
-      padding: 30px;
-      margin-bottom: 18px;
-    }
-    .eyebrow {
-      color: var(--accent);
-      text-transform: uppercase;
-      letter-spacing: 0.22em;
-      font-size: 12px;
-      margin-bottom: 10px;
-    }
-    h1, h2, h3 {
-      margin: 0 0 10px;
-      font-family: "Azeret Mono", monospace;
-    }
-    h1 {
-      font-size: clamp(2.5rem, 6vw, 3.6rem);
-      line-height: 0.95;
-    }
-    h2 {
-      font-size: 1.45rem;
-    }
-    p, li {
-      color: var(--muted);
-    }
-    code {
-      color: var(--accent);
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.06);
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 0.95em;
-    }
-    .pillrow {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 16px;
-    }
-    .pill {
-      padding: 6px 10px;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      color: var(--muted);
-      font-size: 12px;
-      background: rgba(255,255,255,0.03);
-    }
-    section, .card {
-      padding: 22px;
-      margin-bottom: 16px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
-    }
-    .three {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 16px;
-    }
-    .mermaid {
-      background: var(--panel-soft);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 12px;
-      overflow: auto;
-    }
-    .callout {
-      margin-top: 14px;
-      padding: 14px 16px;
-      border-left: 3px solid var(--accent);
-      background: rgba(255,255,255,0.02);
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 8px;
-    }
-    th, td {
-      border-top: 1px solid var(--line);
-      padding: 10px 12px;
-      text-align: left;
-      vertical-align: top;
-    }
-    th {
-      color: var(--text);
-    }
-    .ok { color: var(--green); }
-    .warn { color: var(--accent); }
-    .info { color: var(--blue); }
-    .danger { color: var(--red); }
-    ul {
-      margin: 0;
-      padding-left: 18px;
-    }
-    @media (max-width: 900px) {
-      .grid, .three {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&display=swap">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hirsel Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;700;800&family=Chivo+Mono:wght@300;400;500;700&family=Spectral:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0d0d0c;
+  --panel: rgba(20, 20, 18, 0.92);
+  --panel-soft: rgba(30, 30, 27, 0.9);
+  --line: rgba(232, 228, 208, 0.12);
+  --line-strong: rgba(232, 163, 60, 0.28);
+  --text: #ece7dc;
+  --muted: #b2ac9e;
+  --dim: #7a7a6e;
+  --accent: #d7a84a;
+  --green: #92b276;
+  --red: #c87c67;
+  --blue: #87abc5;
+  --purple: #a890c4;
+  --font-display: "Azeret Mono", monospace;
+  --font-ui: "Chivo Mono", monospace;
+  --font-body: "Spectral", serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-ui);
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(215, 168, 74, 0.14), transparent 24rem),
+    radial-gradient(circle at bottom right, rgba(135, 171, 197, 0.08), transparent 26rem),
+    linear-gradient(180deg, #090908, var(--bg));
+  line-height: 1.6;
+}
+body::before {
+  content: ""; position: fixed; inset: 0; pointer-events: none; opacity: 0.3;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 320 320' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+}
+
+/* ── Layout ── */
+.wrap { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto; padding: 32px 20px 80px; }
+section, .card, .hero { border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px); border-radius: 18px; }
+section, .card { padding: 22px; margin-bottom: 16px; }
+.hero { padding: 30px; margin-bottom: 18px; }
+.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 900px) { .grid, .three { grid-template-columns: 1fr; } }
+
+/* ── Typography ── */
+.eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.22em; font-size: 12px; margin-bottom: 10px; }
+h1, h2, h3 { margin: 0 0 10px; font-family: var(--font-display); }
+h1 { font-size: clamp(2.5rem, 6vw, 3.6rem); line-height: 0.95; }
+h2 { font-size: 1.45rem; }
+p, li { color: var(--muted); }
+ul { margin: 0; padding-left: 18px; }
+code { color: var(--accent); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 999px; padding: 2px 8px; font-size: 0.95em; }
+pre { background: rgba(255,255,255,0.02); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font-family: var(--font-ui); font-size: 0.82rem; line-height: 1.6; color: var(--muted); margin: 8px 0; }
+
+/* ── Components ── */
+.pillrow { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.pill { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 12px; background: rgba(255,255,255,0.03); }
+.callout { margin-top: 14px; padding: 14px 16px; border-left: 3px solid var(--accent); background: rgba(255,255,255,0.02); border-radius: 0 10px 10px 0; }
+.mermaid { background: var(--panel-soft); border: 1px solid var(--line); border-radius: 14px; padding: 12px; overflow: auto; }
+table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+th, td { border-top: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top; }
+th { color: var(--text); font-size: 0.85rem; }
+td { color: var(--muted); }
+td code { font-size: 0.85em; }
+.ok { color: var(--green); }
+.warn { color: var(--accent); }
+.info { color: var(--blue); }
+.danger { color: var(--red); }
+
+/* ── Tab bar ── */
+.tab-bar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; gap: 0; overflow-x: auto;
+  background: rgba(13, 13, 12, 0.95); backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-radius: 14px;
+  margin-bottom: 18px; scrollbar-width: none;
+}
+.tab-bar::-webkit-scrollbar { display: none; }
+.tab-btn {
+  appearance: none; border: none; background: none; cursor: pointer;
+  font-family: var(--font-ui); font-size: 11px; font-weight: 500;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--dim); padding: 12px 16px;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap; transition: all 0.15s;
+}
+.tab-btn:hover { color: var(--muted); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── KPI ── */
+.kpi-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.kpi { background: rgba(255,255,255,0.02); border: 1px solid var(--line); padding: 12px 16px; border-radius: 12px; min-width: 120px; }
+.kpi-val { font-family: var(--font-display); font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+.kpi-lbl { font-size: 10px; color: var(--dim); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+
+/* ── Kind tags ── */
+.kind { display: inline-block; font-family: var(--font-ui); font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid; }
+.kind.component { color: var(--green); border-color: rgba(146,178,118,0.3); }
+.kind.entity { color: var(--blue); border-color: rgba(135,171,197,0.3); }
+.kind.convention { color: var(--purple); border-color: rgba(168,144,196,0.3); }
+.kind.decision { color: var(--accent); border-color: rgba(215,168,74,0.3); }
+.kind.fact { color: var(--muted); border-color: var(--line); }
+.kind.goal { color: var(--green); border-color: rgba(146,178,118,0.3); }
+.kind.document { color: var(--blue); border-color: rgba(135,171,197,0.3); }
+</style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <div class="eyebrow">Current Architecture</div>
-      <h1>One project, one shepherd, many visible threads.</h1>
-      <p>Hirsel is now backend-first. The desktop app is a thin shell that stores backend connection details and loads the backend-served Datastar UI. The durable product model is <code>project + shepherd + canvas + threads</code>, with coding work executed as queued scope turns against project workspaces.</p>
-      <div class="pillrow">
-        <div class="pill">Backend-served Datastar UI</div>
-        <div class="pill">Thin Tauri shell</div>
-        <div class="pill">Queued scope runtime</div>
-        <div class="pill">Central checkout</div>
-        <div class="pill">Visible thread cards</div>
-      </div>
-    </div>
+<div class="wrap">
 
-    <section>
-      <h2>System Shape</h2>
-      <div class="mermaid">
-flowchart LR
-    User[User]
-    Shell[Desktop shell or browser]
-    Server[Axum + Datastar backend]
-    Project[Project state]
-    Canvas[Canvas HTML artifact]
-    Shepherd[Shepherd conversation + queue]
-    Threads[Visible thread records]
-    Runtime[Central checkout]
-    Scope[Hidden scope runtime]
-    Session[Scope session]
-    Checkout[Thread checkout]
-
-    User --> Shell
-    Shell --> Server
-    Server --> Project
-    Project --> Canvas
-    Project --> Shepherd
-    Project --> Threads
-    Shepherd --> Runtime
-    Shepherd --> Scope
-    Threads --> Checkout
-    Scope --> Session
-    Session --> Runtime
-    Session --> Checkout
-      </div>
-      <div class="callout">
-        <p><span class="ok">Important:</span> threads are durable product objects, but their coding turns are not in-process. Each queued shepherd or thread turn runs through the hidden <code>hirsel __shepherd-scope-runtime</code> for that scope.</p>
-      </div>
-    </section>
-
-    <div class="three">
-      <div class="card">
-        <h3>Project</h3>
-        <p>Top-level unit of work.</p>
-        <ul>
-          <li>One starting point</li>
-          <li>One central checkout</li>
-          <li>One shepherd conversation</li>
-          <li>One canvas artifact</li>
-          <li>Many visible threads</li>
-        </ul>
-      </div>
-      <div class="card">
-        <h3>Shepherd</h3>
-        <p>The only agent the user talks to directly.</p>
-        <ul>
-          <li>Answers simple questions directly</li>
-          <li>Creates, renames, updates, archives, deletes, and messages threads</li>
-          <li>Owns integration decisions in the central checkout</li>
-        </ul>
-      </div>
-      <div class="card">
-        <h3>Canvas</h3>
-        <p>A separately-authored HTML artifact stored on the backend.</p>
-        <ul>
-          <li>Rendered on the project page</li>
-          <li>Updated by shepherd through a narrow tool surface</li>
-          <li>Intended for synthesis, comparisons, and current project state</li>
-        </ul>
-      </div>
-    </div>
-
-    <section>
-      <h2>Core Objects</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Object</th>
-            <th>Durable?</th>
-            <th>Where it lives</th>
-            <th>Purpose</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><code>project</code></td>
-            <td>Yes</td>
-            <td>SQLite + project workspace</td>
-            <td>Top-level product object and workspace root</td>
-          </tr>
-          <tr>
-            <td><code>canvas</code></td>
-            <td>Yes</td>
-            <td><code>document:canvas</code></td>
-            <td>Shared HTML artifact shown in the main project view</td>
-          </tr>
-          <tr>
-            <td><code>retained context</code></td>
-            <td>Yes</td>
-            <td><code>project_retained_context</code></td>
-            <td>Compact markdown memory for the project</td>
-          </tr>
-          <tr>
-            <td><code>thread</code></td>
-            <td>Yes</td>
-            <td><code>shepherd_threads</code></td>
-            <td>Visible parallel line of work with title, status, summary, and checkout</td>
-          </tr>
-          <tr>
-            <td><code>scope turn</code></td>
-            <td>Queued durably</td>
-            <td><code>shepherd_chat_queue</code></td>
-            <td>Pending or completed shepherd/thread turn execution</td>
-          </tr>
-          <tr>
-            <td><code>conversation</code></td>
-            <td>Yes</td>
-            <td><code>shepherd_chat_messages</code></td>
-            <td>User-visible transcript for project and thread scopes</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Execution Model</h2>
-      <div class="grid">
-        <div class="card">
-          <h3>Central Checkout</h3>
-          <p>The first time a project needs workspace materialization, Hirsel creates a central checkout at <code>~/.hirsel/workspaces/project-&lt;id&gt;/work/central</code>. This becomes the integration base that shepherd reasons over and that thread checkouts branch from.</p>
-        </div>
-        <div class="card">
-          <h3>Thread Checkouts</h3>
-          <p>Each visible thread gets its own checkout under the same project workspace, usually at <code>.../work/thread-&lt;slug&gt;-&lt;id&gt;</code>. The checkout path and checkout name are stored on the thread record.</p>
-        </div>
-        <div class="card">
-          <h3>Scope Runtime</h3>
-          <p>When a queued turn runs, the backend starts the hidden scope runtime for that shepherd or thread scope against the appropriate workspace.</p>
-        </div>
-        <div class="card">
-          <h3>Scope State</h3>
-          <p>Each scope keeps durable session state and a workspace path so shepherd and threads can resume work against the correct checkout.</p>
-        </div>
-      </div>
-    </section>
-
-    <section>
-      <h2>HTTP Surface</h2>
-      <p>The live UI is page/action/SSE based rather than a client-owned SPA store.</p>
-      <table>
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Examples</th>
-            <th>Purpose</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Pages</td>
-            <td><code>/connect</code>, <code>/app</code>, <code>/app/projects/:id</code>, <code>/app/projects/:id/threads/:thread_id</code></td>
-            <td>Initial HTML and navigation targets</td>
-          </tr>
-          <tr>
-            <td>Actions</td>
-            <td><code>/connect/session</code>, <code>/app/projects/:id/chat/send</code>, <code>/app/projects/:id/threads/:thread_id/chat/send</code></td>
-            <td>State-changing POST flows</td>
-          </tr>
-          <tr>
-            <td>Streams</td>
-            <td><code>/app/projects/:id/stream</code>, <code>/app/projects/:id/threads/:thread_id/stream</code></td>
-            <td>Incremental Datastar patches over SSE</td>
-          </tr>
-          <tr>
-            <td>Artifacts</td>
-            <td><code>/app/projects/:id/focus</code></td>
-            <td>Project canvas document embedded in the main view</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>On-Disk Layout</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Path</th>
-            <th>What lives there</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><code>~/.hirsel/hirsel.db</code></td>
-            <td>Projects, canvas HTML, retained context, threads, chat history, and queue state</td>
-          </tr>
-          <tr>
-            <td><code>~/.hirsel/workspaces/project-&lt;id&gt;/work/central</code></td>
-            <td>Central checkout for a project</td>
-          </tr>
-          <tr>
-            <td><code>~/.hirsel/workspaces/project-&lt;id&gt;/work/thread-*</code></td>
-            <td>Per-thread checkouts</td>
-          </tr>
-          <tr>
-            <td><code>~/.hirsel/agent-sessions/</code></td>
-            <td>Per-scope home directories and runtime state</td>
-          </tr>
-          <tr>
-            <td><code>~/.hirsel/logs/server</code>, <code>.../gui</code>, <code>.../scope</code></td>
-            <td>Rotated tracing logs</td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Code Map</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Area</th>
-            <th>Main files</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Thin shell</td>
-            <td><code>src/main.ts</code>, <code>src/wrapper.css</code>, <code>src-tauri/src/desktop/</code></td>
-          </tr>
-          <tr>
-            <td>HTTP server</td>
-            <td><code>src-tauri/src/backend/server/mod.rs</code>, <code>src-tauri/src/backend/server/web_routes/</code>, <code>src-tauri/src/backend/server/auth.rs</code></td>
-          </tr>
-          <tr>
-            <td>UI rendering</td>
-            <td><code>src-tauri/src/backend/webui/</code>, <code>src-tauri/src/backend/server/webui.css</code></td>
-          </tr>
-          <tr>
-            <td>Project state</td>
-            <td><code>src-tauri/src/backend/project/</code>, <code>src-tauri/src/backend/workspace.rs</code></td>
-          </tr>
-          <tr>
-            <td>Thread state</td>
-            <td><code>src-tauri/src/backend/shepherd_threads.rs</code></td>
-          </tr>
-          <tr>
-            <td>Conversation + queue</td>
-            <td><code>src-tauri/src/backend/shepherd_chat.rs</code>, <code>src-tauri/src/backend/shepherd_runtime/commands.rs</code></td>
-          </tr>
-          <tr>
-            <td>Scope runtime</td>
-            <td><code>src-tauri/src/backend/shepherd_runtime/runtime.rs</code>, <code>src-tauri/src/backend/shepherd_runtime/sandbox.rs</code>, <code>src-tauri/src/backend/sandbox.rs</code></td>
-          </tr>
-          <tr>
-            <td>Git workspace materialization</td>
-            <td><code>src-tauri/src/backend/git.rs</code></td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Current Constraints</h2>
-      <ul>
-        <li>Coding turns are queued scope executions rather than continuously running workers.</li>
-        <li>Shepherd owns the central checkout; isolated work should live in visible thread workspaces.</li>
-        <li>Thread titles, statuses, and summaries are part of the user-facing product surface and should stay understandable.</li>
-        <li>Backend route composition and project UI composition still own too many concerns.</li>
-      </ul>
-    </section>
+<div class="hero">
+  <div class="eyebrow">Architecture</div>
+  <h1>Hirsel</h1>
+  <p>An IDE for herding AI coding agents around a persistent, project-scoped knowledge graph.</p>
+  <div class="pillrow">
+    <div class="pill">SolidJS + Axum</div>
+    <div class="pill">SurrealDB 3</div>
+    <div class="pill">lash agent runtime</div>
+    <div class="pill">Knowledge graph</div>
+    <div class="pill">Tauri desktop</div>
   </div>
+</div>
+
+<nav class="tab-bar" id="tabbar">
+  <button class="tab-btn active" data-tab="overview">Overview</button>
+  <button class="tab-btn" data-tab="modules">Modules</button>
+  <button class="tab-btn" data-tab="kg">Knowledge Graph</button>
+  <button class="tab-btn" data-tab="dataflow">Data Flow</button>
+  <button class="tab-btn" data-tab="execution">Execution</button>
+  <button class="tab-btn" data-tab="abstractions">Abstractions</button>
+  <button class="tab-btn" data-tab="deps">Dependencies</button>
+  <button class="tab-btn" data-tab="files">Files</button>
+</nav>
+
+<!-- ═══════════════ OVERVIEW ═══════════════ -->
+<div class="tab-panel active" id="tab-overview">
+<section>
+  <h2>System Shape</h2>
+  <div class="mermaid">
+flowchart TD
+  subgraph UI["Web UI"]
+    Chat["Chat"]
+    Canvas["Canvas"]
+    KGView["Graph View"]
+    Files["File Browser"]
+  end
+  subgraph Backend["Rust Backend"]
+    Server["Axum Server"]
+    Shepherd["Shepherd Runtime"]
+    LibAgent["Librarian Agent"]
+    Search["search_context"]
+  end
+  subgraph DB["SurrealDB"]
+    Projects["Projects"]
+    ChatDB["Chat History"]
+    KG["Knowledge Graph"]
+    CanvasDB["Canvas"]
+  end
+  UI -->|"HTTP + SSE"| Server
+  Server --> Shepherd
+  Shepherd -->|"sync"| LibAgent
+  Shepherd -->|"spawns"| Search
+  Search -->|"read-only"| KG
+  LibAgent -->|"read/write"| KG
+  Shepherd --> CanvasDB
+  Shepherd --> ChatDB
+  Server --> Projects
+  </div>
+</section>
+
+<div class="kpi-row">
+  <div class="kpi"><div class="kpi-val">~16K</div><div class="kpi-lbl">Rust LOC</div></div>
+  <div class="kpi"><div class="kpi-val">~14K</div><div class="kpi-lbl">TS/TSX LOC</div></div>
+  <div class="kpi"><div class="kpi-val">3</div><div class="kpi-lbl">Crates</div></div>
+  <div class="kpi"><div class="kpi-val">14</div><div class="kpi-lbl">DB Tables</div></div>
+  <div class="kpi"><div class="kpi-val">4</div><div class="kpi-lbl">Agent Scopes</div></div>
+</div>
+
+<div class="three">
+  <div class="card">
+    <h3>Shepherd</h3>
+    <p>User's main point of contact. Orchestrates threads, updates the canvas, queries the knowledge graph via <code>search_context</code>.</p>
+  </div>
+  <div class="card">
+    <h3>Librarian</h3>
+    <p>Async knowledge curator. Receives conversation syncs, extracts durable facts, maintains the graph and project index.</p>
+  </div>
+  <div class="card">
+    <h3>Threads</h3>
+    <p>Isolated workers with their own workspaces. Can query the knowledge graph for project context.</p>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════════ MODULES ═══════════════ -->
+<div class="tab-panel" id="tab-modules">
+<section>
+  <h2>Crate Structure</h2>
+  <table>
+    <tr><th>Crate</th><th>Purpose</th></tr>
+    <tr><td><code>hirsel-core</code></td><td>All backend logic: runtime, server, tools, database, prompts, knowledge graph</td></tr>
+    <tr><td><code>hirsel-cli</code></td><td>CLI entry point and HTTP server binary</td></tr>
+    <tr><td><code>hirsel-desktop-app</code></td><td>Tauri desktop wrapper</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Backend Modules</h2>
+  <table>
+    <tr><th>Module</th><th>Responsibility</th></tr>
+    <tr><td><code>shepherd_runtime/</code></td><td>Agent execution: scopes, workers, tools, history, sessions, search_context</td></tr>
+    <tr><td><code>server/</code></td><td>Axum HTTP server, API routes, SSE events, auth</td></tr>
+    <tr><td><code>librarian.rs</code></td><td>Knowledge graph agent: SurrealQL ops, sync, lint</td></tr>
+    <tr><td><code>documents.rs</code></td><td>Canvas document storage (<code>project_canvas</code> table)</td></tr>
+    <tr><td><code>knowledge_graph.rs</code></td><td>KG row types, API serialization</td></tr>
+    <tr><td><code>db.rs</code></td><td>SurrealDB connections (global + per-project librarian auth)</td></tr>
+    <tr><td><code>lash_tools.rs</code></td><td>Tool plugin factory assembly</td></tr>
+    <tr><td><code>llm_provider.rs</code></td><td>LLM provider resolution, model role mapping</td></tr>
+    <tr><td><code>prompts.rs</code></td><td>Askama template rendering for scope guidance</td></tr>
+    <tr><td><code>app_settings.rs</code></td><td>LLM settings persistence (per-role model overrides)</td></tr>
+    <tr><td><code>credentials.rs</code></td><td>Encrypted API key / OAuth storage</td></tr>
+    <tr><td><code>skills.rs</code></td><td>Skill catalog, file reference enrichment</td></tr>
+    <tr><td><code>live_updates.rs</code></td><td>SSE event broadcasting</td></tr>
+    <tr><td><code>text_patch.rs</code></td><td>Line-based text patching</td></tr>
+    <tr><td><code>project/</code></td><td>Project CRUD, workspace management, retained context</td></tr>
+    <tr><td><code>config/</code></td><td>Config loading/saving, LLM config, paths</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>shepherd_runtime/ Sub-modules</h2>
+  <table>
+    <tr><th>Module</th><th>Responsibility</th></tr>
+    <tr><td><code>worker.rs</code></td><td>Lash runtime construction, turn execution, event streaming</td></tr>
+    <tr><td><code>commands.rs</code></td><td>Public API: send messages, create/archive threads, manage turns</td></tr>
+    <tr><td><code>tools.rs</code></td><td>ShepherdToolProvider, LibrarianToolProvider, prompt contributions</td></tr>
+    <tr><td><code>search_context.rs</code></td><td>search_context tool: sub-agent with read-only graph access</td></tr>
+    <tr><td><code>runtime.rs</code></td><td>Scope guidance rendering, prompt overrides, workspace resolution</td></tr>
+    <tr><td><code>shell.rs</code></td><td>Shell tool routing (local vs thread workspaces)</td></tr>
+    <tr><td><code>session.rs</code></td><td>Scope session persistence</td></tr>
+    <tr><td><code>history.rs</code></td><td>Chat message to lash Message conversion</td></tr>
+    <tr><td><code>types.rs</code></td><td>ShepherdScope, ShepherdMessageChunk, TurnResult</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Frontend</h2>
+  <p>SolidJS + TypeScript + Tailwind CSS 4. Pages: Workspace, NewProject, Connect, Settings. Key components: ChatTranscript, CanvasSurface, WorkspaceBrowser, KnowledgeGraphView (Three.js), TerminalPanel (xterm.js), MonacoTextEditor.</p>
+</section>
+</div>
+
+<!-- ═══════════════ KNOWLEDGE GRAPH ═══════════════ -->
+<div class="tab-panel" id="tab-kg">
+<section>
+  <h2>Knowledge Graph Architecture</h2>
+  <p>The knowledge graph is Hirsel's durable project memory &mdash; structured facts about architecture, decisions, conventions, and domain, stored in SurrealDB. The <strong class="ok">Librarian</strong> writes; the <strong class="info">search_context sub-agent</strong> reads; <strong>Shepherd</strong> and <strong>Threads</strong> query via search_context.</p>
+  <div class="mermaid">
+flowchart LR
+  Shepherd["Shepherd"] -->|"search_context(question)"| SA["Search Sub-Agent"]
+  Thread["Thread"] -->|"search_context(question)"| SA
+  SA -->|"graph_query\n(read-only)"| KG["kg_node\nkg_edge"]
+  SA -->|"search_graph_text\n(BM25)"| KG
+  Turn["Turn Completes"] -->|"queue_background_sync"| Lib["Librarian"]
+  Lib -->|"graph_surql\n(read/write)"| KG
+  Lint["Lint Worker\n(30min)"] -->|"enqueue_librarian_lint"| Lib
+  SA -.->|"bump\nread_by_search_context"| KG
+  </div>
+</section>
+
+<section>
+  <h2>Graph Schema</h2>
+
+  <h3>kg_node</h3>
+  <p>Record ID: <code>type::record('kg_node', [$project_id, $kind, $node_id])</code></p>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>kind</code></td><td>string</td><td>Node type (see vocabulary)</td></tr>
+    <tr><td><code>node_id</code></td><td>string</td><td>Stable slug identifier</td></tr>
+    <tr><td><code>label</code></td><td>string</td><td>Short human-readable title</td></tr>
+    <tr><td><code>content</code></td><td>string</td><td>Rich description &mdash; the substance</td></tr>
+    <tr><td><code>tags</code></td><td>array&lt;string&gt;</td><td>Cross-cutting labels</td></tr>
+    <tr><td><code>source</code></td><td>string</td><td>Provenance: user, shepherd, librarian, system</td></tr>
+    <tr><td><code>metadata</code></td><td>object</td><td>Optional structured data</td></tr>
+    <tr><td><code>updated_at</code></td><td>datetime</td><td>Auto-set on write</td></tr>
+    <tr><td><code>read_by_search_context</code></td><td>datetime?</td><td>Last time search_context returned this node</td></tr>
+  </table>
+
+  <h3>kg_edge</h3>
+  <p>SurrealDB <code>TYPE RELATION</code> table. Created with <code>RELATE $from->kg_edge->$to</code>.</p>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>relation</code></td><td>string</td><td>part_of, depends_on, implements, relates_to</td></tr>
+    <tr><td><code>metadata</code></td><td>object</td><td>Optional edge metadata</td></tr>
+    <tr><td><code>created_at</code></td><td>datetime</td><td>Auto-set</td></tr>
+  </table>
+
+  <h3>Full-Text Search</h3>
+  <pre>DEFINE ANALYZER kg_text_analyzer TOKENIZERS blank, class, punct FILTERS snowball(english), lowercase;
+DEFINE INDEX kg_node_label_search ON TABLE kg_node COLUMNS label FULLTEXT ANALYZER kg_text_analyzer BM25;
+DEFINE INDEX kg_node_content_search ON TABLE kg_node COLUMNS content FULLTEXT ANALYZER kg_text_analyzer BM25;</pre>
+</section>
+
+<section>
+  <h2>Node Kind Vocabulary</h2>
+  <table>
+    <tr><th>Kind</th><th>Purpose</th><th>ID Convention</th><th>Examples</th></tr>
+    <tr><td><span class="kind component">component</span></td><td>Architectural building blocks</td><td>stable slug</td><td>auth, api-gateway, db-layer</td></tr>
+    <tr><td><span class="kind entity">entity</span></td><td>Domain model objects</td><td>singular slug</td><td>user, workspace, project</td></tr>
+    <tr><td><span class="kind convention">convention</span></td><td>How things should be done</td><td>topic slug</td><td>naming, error-handling, testing</td></tr>
+    <tr><td><span class="kind decision">decision</span></td><td>Why things are the way they are</td><td>descriptive slug</td><td>chose-surrealdb, monorepo-structure</td></tr>
+    <tr><td><span class="kind fact">fact</span></td><td>Project truths, quirks, gotchas</td><td>descriptive slug</td><td>ci-needs-docker, deploy-to-fly</td></tr>
+    <tr><td><span class="kind goal">goal</span></td><td>Active objectives</td><td>slug</td><td>v1-launch, reduce-cold-start</td></tr>
+    <tr><td><span class="kind document">document</span></td><td>Canvas, index, specs</td><td>slug</td><td>index, canvas</td></tr>
+  </table>
+  <div class="callout"><p>Custom kinds per project are encouraged. The librarian documents them in <code>document:index</code>.</p></div>
+</section>
+
+<section>
+  <h2>Edge Relations</h2>
+  <table>
+    <tr><th>Relation</th><th>Semantics</th><th>Direction</th></tr>
+    <tr><td><code>part_of</code></td><td>Structural containment</td><td>child &rarr; parent</td></tr>
+    <tr><td><code>depends_on</code></td><td>Runtime or build dependency</td><td>dependent &rarr; dependency</td></tr>
+    <tr><td><code>implements</code></td><td>Realizes a goal</td><td>implementation &rarr; goal</td></tr>
+    <tr><td><code>relates_to</code></td><td>Soft association</td><td>either direction</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>The Librarian Agent</h2>
+  <p>Persistent agent scoped to a project. Has read/write access to <code>kg_node</code> and <code>kg_edge</code> via SurrealDB record-user permissions. Pure knowledge curation &mdash; no file editing, no canvas.</p>
+
+  <h3>Sync Workflow</h3>
+  <p>After every Shepherd/Thread turn, <code>queue_background_sync()</code> sends the Librarian a transcript. The sync prompt instructs:</p>
+  <ol style="color: var(--muted); padding-left: 1.5rem;">
+    <li>Identify what was learned, decided, built, or changed</li>
+    <li>Query existing nodes related to these topics</li>
+    <li>Update <em>every</em> relevant node &mdash; a single sync touches all affected nodes</li>
+    <li>Create new nodes only for genuinely new entities</li>
+    <li>Update <code>document:index</code> if the project landscape changed</li>
+  </ol>
+
+  <h3>Lint (Health Check)</h3>
+  <p>Background worker runs every 30 minutes. Checks: orphan nodes, stale-but-read nodes, unused nodes, missing nodes, weak content, index drift.</p>
+
+  <h3>Librarian Tools</h3>
+  <table>
+    <tr><th>Tool</th><th>Purpose</th></tr>
+    <tr><td><code>graph_surql</code></td><td>Arbitrary SurrealQL read/write on kg_node, kg_edge</td></tr>
+    <tr><td><code>edit_graph_node_text</code></td><td>Incremental patch on node content</td></tr>
+    <tr><td><code>ls, glob, read_file, grep</code></td><td>Read-only workspace inspection</td></tr>
+    <tr><td><code>list/upsert/remove_project_workspace</code></td><td>Workspace metadata</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>document:index</h2>
+  <p>Seeded on project creation. The Librarian maintains it as a structured project map with <code>[kind:id]</code> references. The search agent reads it first when answering questions.</p>
+  <pre># Project Index
+
+## Components
+- [component:auth] &mdash; JWT-based auth system
+- [component:api-gateway] &mdash; Axum HTTP server
+
+## Decisions
+- [decision:chose-surrealdb] &mdash; Why SurrealDB over Postgres
+
+## Facts
+- [fact:ci-needs-docker] &mdash; CI pipeline requires Docker</pre>
+</section>
+
+<section>
+  <h2>search_context Tool</h2>
+  <p>Available to Shepherd and Thread scopes. Takes a natural-language question, spawns a short-lived LLM sub-agent, returns a text answer with <code>[kind:id]</code> citations.</p>
+  <div class="mermaid">
+sequenceDiagram
+  participant A as Shepherd / Thread
+  participant SC as search_context
+  participant Sub as Search Sub-Agent
+  participant DB as SurrealDB
+  A->>SC: search_context("how does auth work?")
+  SC->>Sub: Create runtime + stream_turn
+  Sub->>DB: Read document:index
+  Sub->>DB: search_graph_text("auth")
+  DB-->>Sub: Ranked nodes
+  Sub->>DB: graph_query(targeted lookup)
+  DB-->>Sub: Node details
+  Sub-->>SC: Answer + [kind:id] citations
+  SC->>SC: bump read_by_search_context (async)
+  SC-->>A: ToolResult { answer }
+  </div>
+
+  <h3>Sub-Agent Internals</h3>
+  <table>
+    <tr><th>Component</th><th>Purpose</th></tr>
+    <tr><td><code>ReadOnlyGraphToolProvider</code></td><td>graph_query (rejects mutations) + search_graph_text (BM25)</td></tr>
+    <tr><td><code>CollectingEventSink</code></td><td>Captures TextDelta into String. No UI streaming.</td></tr>
+    <tr><td><code>SearchContextToolProvider</code></td><td>Outer provider exposing <code>search_context(question)</code></td></tr>
+    <tr><td><code>RuntimeModelRole::Search</code></td><td>Configurable model for the sub-agent</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>read_by_search_context Tracking</h2>
+  <p>After graph_query or search_graph_text returns results, a background <code>tokio::spawn</code> task bumps <code>read_by_search_context = time::now()</code> on every returned node. This enables:</p>
+  <div class="grid">
+    <div class="card">
+      <h3 class="warn">Stale but valued</h3>
+      <p><code>read_by_search_context</code> recent, <code>updated_at</code> old. High-value node going stale &mdash; needs refresh.</p>
+    </div>
+    <div class="card">
+      <h3 class="danger">Unused</h3>
+      <p><code>read_by_search_context</code> null, <code>updated_at</code> old. Nobody needs this &mdash; candidate for cleanup.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Canvas</h2>
+  <p>Ephemeral project-scoped document in <code>project_canvas</code> table. Can reference graph nodes via <code>&lt;hirsel-node-ref node="kind:id"&gt;</code> tags. <strong>Owned by the Shepherd</strong> for real-time updates during conversation.</p>
+</section>
+
+<section>
+  <h2>DB Access Model</h2>
+  <table>
+    <tr><th>Connection</th><th>Scope</th><th>Usage</th></tr>
+    <tr><td><code>global_db()</code></td><td>Unauthenticated singleton</td><td>Projects, settings, chat, credentials</td></tr>
+    <tr><td><code>librarian_db(project_id)</code></td><td>Record-user, cached per project</td><td>kg_node/kg_edge (Librarian + search_context)</td></tr>
+  </table>
+  <p>Librarian DB uses SurrealDB record-user auth. Table permissions enforce <code>id[0] = $auth.project_id</code>.</p>
+</section>
+</div>
+
+<!-- ═══════════════ DATA FLOW ═══════════════ -->
+<div class="tab-panel" id="tab-dataflow">
+<section>
+  <h2>Request Lifecycle</h2>
+  <div class="mermaid">
+sequenceDiagram
+  participant User
+  participant UI as Web UI
+  participant API as Axum
+  participant W as Worker
+  participant Lash as Lash Runtime
+  participant DB as SurrealDB
+  participant Lib as Librarian
+  User->>UI: Send message
+  UI->>API: POST /api/projects/{id}/chat/send
+  API->>W: dispatch_scope_message
+  W->>Lash: stream_turn
+  Lash->>Lash: Tool calls
+  Lash-->>W: TextDelta / ToolCall events
+  W-->>API: Channel events
+  API-->>UI: SSE stream
+  W->>DB: Save message + state
+  W->>Lib: queue_background_sync
+  Lib->>DB: Update kg_node, kg_edge
+  </div>
+</section>
+
+<section>
+  <h2>Knowledge Compounding Loop</h2>
+  <div class="mermaid">
+flowchart LR
+  Conv["Conversation"] -->|"turn completes"| Sync["Sync"]
+  Sync -->|"transcript"| Lib["Librarian"]
+  Lib -->|"UPSERT / RELATE"| KG["Knowledge Graph"]
+  KG -->|"BM25 + SurrealQL"| Search["Search Agent"]
+  Search -->|"context + citations"| Conv
+  Lint["Lint (30min)"] -->|"health check"| Lib
+  </div>
+  <div class="callout"><p>Knowledge compounds: conversations feed the graph, the graph feeds future conversations.</p></div>
+</section>
+
+<section>
+  <h2>Live Update Events</h2>
+  <table>
+    <tr><th>Event</th><th>Trigger</th></tr>
+    <tr><td>ProjectSurfaceChanged</td><td>Canvas updated</td></tr>
+    <tr><td>KnowledgeGraphChanged</td><td>Graph mutation</td></tr>
+    <tr><td>ThreadChanged</td><td>Thread status/title updated</td></tr>
+    <tr><td>LiveTurnStarted/Updated/Ended</td><td>Agent turn lifecycle</td></tr>
+  </table>
+</section>
+</div>
+
+<!-- ═══════════════ EXECUTION ═══════════════ -->
+<div class="tab-panel" id="tab-execution">
+<section>
+  <h2>Agent Scopes</h2>
+  <table>
+    <tr><th>Scope</th><th>Role</th><th>Custom Tools</th><th>Model Role</th></tr>
+    <tr><td>General</td><td>Standalone assistant</td><td>Shell, files, web search</td><td>Shepherd</td></tr>
+    <tr><td>Shepherd</td><td>Project orchestrator</td><td>Threads, canvas, retained context, search_context</td><td>Shepherd</td></tr>
+    <tr><td>Thread</td><td>Isolated worker</td><td>Shell, files, search_context</td><td>Thread</td></tr>
+    <tr><td>Librarian</td><td>Knowledge curator</td><td>graph_surql, edit_graph_node_text, workspace (read-only)</td><td>Librarian</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Runtime Construction</h2>
+  <ol style="color: var(--muted); padding-left: 1.5rem;">
+    <li>Load LLM settings, resolve provider (Codex or OpenRouter)</li>
+    <li>Resolve model for scope's <code>RuntimeModelRole</code></li>
+    <li>Build <code>SessionPolicy</code> (model, context window, execution mode)</li>
+    <li>Build <code>RuntimeHostConfig</code> with prompt overrides (scope guidance appended)</li>
+    <li>Assemble tool plugins via plugin factories + scope-specific custom plugins</li>
+    <li>Create or resume <code>LashRuntime</code> from state/history</li>
+    <li>Stream turn via <code>ChannelEventSink</code> &rarr; SSE to UI</li>
+  </ol>
+</section>
+
+<section>
+  <h2>Model Roles</h2>
+  <table>
+    <tr><th>Role</th><th>Used By</th><th>Config Key</th></tr>
+    <tr><td>Shepherd</td><td>Shepherd + General scopes</td><td><code>role_models.shepherd</code></td></tr>
+    <tr><td>Thread</td><td>Thread scope</td><td><code>role_models.thread</code></td></tr>
+    <tr><td>Librarian</td><td>Librarian scope</td><td><code>role_models.librarian</code></td></tr>
+    <tr><td>Search</td><td>search_context sub-agent</td><td><code>role_models.search</code></td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Prompt System</h2>
+  <p>Hirsel <strong>appends</strong> to lash's built-in system prompt (never replaces).</p>
+  <table>
+    <tr><th>Mechanism</th><th>Source</th><th>Content</th></tr>
+    <tr><td>PromptSectionOverride</td><td>runtime.rs</td><td>Scope role prompt + timestamp</td></tr>
+    <tr><td>PromptContribution::guidance</td><td>Plugin prompt contributors</td><td>Tool-specific guidance (injected when plugin present)</td></tr>
+  </table>
+</section>
+
+<section>
+  <h2>Background Workers</h2>
+  <table>
+    <tr><th>Worker</th><th>Interval</th><th>Purpose</th></tr>
+    <tr><td>Librarian Lint</td><td>30min (5min initial delay)</td><td>Graph health check for all projects</td></tr>
+  </table>
+</section>
+</div>
+
+<!-- ═══════════════ ABSTRACTIONS ═══════════════ -->
+<div class="tab-panel" id="tab-abstractions">
+<section>
+  <h2>Core Types</h2>
+  <pre>pub enum ShepherdScope {
+    General,
+    Shepherd { project_id, focus? },
+    Thread { project_id, thread_id, title, focus? },
+    Librarian { project_id },
+}</pre>
+  <pre>pub enum ShepherdMessageChunk {
+    Text { content },
+    Notice { tone, title?, content },
+    Thinking { content },
+    Tool { id, title, kind, status, input, output },
+    Image { mimeType, dataBase64 },
+    Skill { name, description, path },
+    FileRef { rootId, path, lineStart?, lineEnd? },
+}</pre>
+  <pre>pub enum RuntimeModelRole {
+    Shepherd, Librarian, Thread, Search,
+}</pre>
+</section>
+
+<section>
+  <h2>Tool System</h2>
+  <div class="mermaid">
+flowchart TD
+  PH["PluginHost"] --> PF["Plugin Factories"]
+  PF --> Shell["Shell\nexec_command, write_stdin"]
+  PF --> Files["Files\nread_file, glob, grep, ls"]
+  PF --> Patch["apply_patch"]
+  PF --> Custom["Custom Tool Plugin\nShepherd or Librarian tools"]
+  PF --> Plan["Plan Tracker\nupdate_plan"]
+  PF --> SC["SearchContext\nsearch_context"]
+  PF --> Web["Web\nsearch_web, fetch_url"]
+  Custom -->|"prompt_contributions"| PC["Tool guidance\ninjected when present"]
+  </div>
+</section>
+
+<section>
+  <h2>Tool Presets</h2>
+  <pre>pub enum EmbeddedToolPreset {
+    General,    // Shell + files + patch + glob + grep + ls + web
+    Shepherd,   // Shell + patch + glob + custom (ShepherdToolProvider)
+    Librarian,  // Custom only (LibrarianToolProvider)
+}</pre>
+</section>
+</div>
+
+<!-- ═══════════════ DEPENDENCIES ═══════════════ -->
+<div class="tab-panel" id="tab-deps">
+<section>
+  <h2>Dependency Graph</h2>
+  <div class="mermaid">
+flowchart TD
+  Core["hirsel-core"] --> Lash["lash"]
+  Core --> SDB["surrealdb 3"]
+  Core --> Axum["axum 0.8"]
+  Core --> Tokio["tokio"]
+  Core --> Askama["askama"]
+  Core --> Serde["serde"]
+  CLI["hirsel-cli"] --> Core
+  CLI --> Clap["clap 4"]
+  Desktop["hirsel-desktop-app"] --> Core
+  Desktop --> Tauri["tauri 2"]
+  WebUI["webui"] --> Solid["solid-js"]
+  WebUI --> Vite["vite"]
+  WebUI --> TW["tailwindcss 4"]
+  WebUI --> Monaco["monaco-editor"]
+  WebUI --> XTerm["xterm.js"]
+  WebUI --> Three["three.js"]
+  </div>
+</section>
+
+<section>
+  <h2>Key Dependencies</h2>
+  <table>
+    <tr><th>Dep</th><th>Version</th><th>Purpose</th></tr>
+    <tr><td><code>lash</code></td><td>0.2.46 (git)</td><td>Agent runtime: tools, plugins, prompts, streaming</td></tr>
+    <tr><td><code>surrealdb</code></td><td>3.0.5</td><td>Embedded KV database for all persistence</td></tr>
+    <tr><td><code>axum</code></td><td>0.8</td><td>HTTP server</td></tr>
+    <tr><td><code>tokio</code></td><td>1.x</td><td>Async runtime</td></tr>
+    <tr><td><code>askama</code></td><td>0.15</td><td>Compile-time template rendering</td></tr>
+    <tr><td><code>scraper</code></td><td>0.23</td><td>HTML parsing for canvas validation</td></tr>
+    <tr><td><code>aes-gcm</code></td><td>0.10</td><td>Credential encryption</td></tr>
+    <tr><td><code>chrono</code></td><td>0.4</td><td>Date/time handling</td></tr>
+    <tr><td><code>tracing</code></td><td>0.1</td><td>Structured logging</td></tr>
+  </table>
+</section>
+</div>
+
+<!-- ═══════════════ FILES ═══════════════ -->
+<div class="tab-panel" id="tab-files">
+<section>
+  <h2>Project Layout</h2>
+  <pre style="line-height: 1.8;">
+<span style="color:var(--blue)">hirsel/</span>
+  Cargo.toml                                <span style="color:var(--dim)">workspace: 3 crates</span>
+  <span style="color:var(--blue)">crates/hirsel-core/src/backend/</span>          <span style="color:var(--dim)">~16K LOC</span>
+    db.rs                                   <span style="color:var(--dim)">SurrealDB connections</span>
+    librarian.rs                            <span style="color:var(--dim)">KG agent: graph ops, sync, lint</span>
+    knowledge_graph.rs                      <span style="color:var(--dim)">KG row types, API serialization</span>
+    documents.rs                            <span style="color:var(--dim)">Canvas document storage</span>
+    llm_provider.rs                         <span style="color:var(--dim)">LLM provider/model resolution</span>
+    lash_tools.rs                           <span style="color:var(--dim)">Tool plugin factory assembly</span>
+    prompts.rs                              <span style="color:var(--dim)">Askama template rendering</span>
+    <span style="color:var(--blue)">shepherd_runtime/</span>
+      worker.rs                             <span style="color:var(--dim)">Runtime + turn execution</span>
+      commands.rs                           <span style="color:var(--dim)">Public API</span>
+      tools.rs                              <span style="color:var(--dim)">Tool providers + prompt contributions</span>
+      search_context.rs                     <span style="color:var(--dim)">search_context sub-agent</span>
+      runtime.rs                            <span style="color:var(--dim)">Scope guidance, prompt overrides</span>
+      shell.rs                              <span style="color:var(--dim)">Shell tool routing</span>
+    <span style="color:var(--blue)">server/web_routes/</span>
+      projects.rs                           <span style="color:var(--dim)">Project + KG + chat endpoints</span>
+      threads.rs workspace_browser.rs       <span style="color:var(--dim)">Thread + file endpoints</span>
+      settings.rs terminal.rs               <span style="color:var(--dim)">Settings + terminal</span>
+  <span style="color:var(--blue)">templates/prompts/</span>
+    shepherd_scope_guidance.txt              <span style="color:var(--dim)">Shepherd role prompt</span>
+    librarian_scope_guidance.txt             <span style="color:var(--dim)">Librarian role prompt</span>
+    librarian_sync.txt                       <span style="color:var(--dim)">Sync message template</span>
+    thread_scope_guidance.txt                <span style="color:var(--dim)">Thread role prompt</span>
+    general_scope_guidance.txt               <span style="color:var(--dim)">General scope prompt</span>
+  <span style="color:var(--blue)">webui/src/</span>                                <span style="color:var(--dim)">~14K LOC SolidJS</span>
+    pages/ components/ lib/api/ lib/
+  <span style="color:var(--blue)">db/schema/</span>
+    current.surql                           <span style="color:var(--dim)">14 table definitions</span></pre>
+</section>
+
+<section>
+  <h2>Database Tables</h2>
+  <table>
+    <tr><th>Table</th><th>Purpose</th></tr>
+    <tr><td><code>project</code></td><td>Project metadata (name, workspaces)</td></tr>
+    <tr><td><code>project_retained_context</code></td><td>Persistent markdown notes per project</td></tr>
+    <tr><td><code>project_canvas</code></td><td>Ephemeral canvas document</td></tr>
+    <tr><td><code>kg_node</code></td><td>Knowledge graph nodes</td></tr>
+    <tr><td><code>kg_edge</code></td><td>Knowledge graph edges (RELATION)</td></tr>
+    <tr><td><code>agent</code></td><td>Librarian record-user identities</td></tr>
+    <tr><td><code>shepherd_chat_message</code></td><td>Chat history</td></tr>
+    <tr><td><code>shepherd_live_turn</code></td><td>In-progress agent turns</td></tr>
+    <tr><td><code>shepherd_scope_state</code></td><td>Durable session state</td></tr>
+    <tr><td><code>shepherd_thread</code></td><td>Thread metadata</td></tr>
+    <tr><td><code>shepherd_session</code></td><td>Active session tracking</td></tr>
+    <tr><td><code>app_setting</code></td><td>Global settings (LLM provider, models)</td></tr>
+    <tr><td><code>credential</code></td><td>Encrypted API keys</td></tr>
+    <tr><td><code>counter</code></td><td>Atomic ID generation</td></tr>
+  </table>
+</section>
+</div>
+
+</div><!-- .wrap -->
+
+<script type="module">
+import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "base",
+  themeVariables: {
+    primaryColor: "#1a1a18",
+    primaryTextColor: "#ece7dc",
+    primaryBorderColor: "rgba(232,228,208,0.2)",
+    lineColor: "#555",
+    secondaryColor: "#222220",
+    tertiaryColor: "#1a1a18",
+    fontFamily: "Chivo Mono, monospace",
+    fontSize: "13px",
+    noteBkgColor: "#222220",
+    noteTextColor: "#ece7dc",
+    noteBorderColor: "rgba(232,228,208,0.2)",
+    actorBkg: "#1a1a18",
+    actorBorder: "#d7a84a",
+    actorTextColor: "#ece7dc",
+    signalColor: "#888",
+    signalTextColor: "#ece7dc",
+  },
+});
+
+function activate(id) {
+  document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach((p) => p.classList.remove("active"));
+  document.querySelector(`[data-tab="${id}"]`)?.classList.add("active");
+  const panel = document.getElementById("tab-" + id);
+  if (panel) {
+    panel.classList.add("active");
+    mermaid.run({ nodes: panel.querySelectorAll(".mermaid:not([data-processed])") });
+  }
+}
+
+document.getElementById("tabbar").addEventListener("click", (e) => {
+  const btn = e.target.closest(".tab-btn");
+  if (btn) activate(btn.dataset.tab);
+});
+
+mermaid.run({ nodes: document.querySelectorAll("#tab-overview .mermaid") });
+</script>
 </body>
 </html>
