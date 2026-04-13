@@ -66,6 +66,18 @@ export interface ShepherdThread {
   updated_at: string;
   last_activity_at: string;
   highlight: string | null;
+  focused_task_id: string | null;
+}
+
+export interface Task {
+  id: string;
+  project_id: number;
+  title: string;
+  status: string;
+  content: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ChatMessage {

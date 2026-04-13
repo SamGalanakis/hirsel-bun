@@ -47,6 +47,7 @@ import {
 } from "@/lib/api";
 
 const KnowledgeGraphView = lazy(() => import("@/components/KnowledgeGraphView"));
+const TaskList = lazy(() => import("@/components/TaskList"));
 const TerminalPanel = lazy(() => import("@/components/TerminalPanel"));
 const WorkspaceBrowser = lazy(() => import("@/components/WorkspaceBrowser"));
 
@@ -294,7 +295,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   );
   const [inspectorDragging, setInspectorDragging] = createSignal(false);
   const [inspectorFullscreen, setInspectorFullscreen] = createSignal(false);
-  const [inspectorTab, setInspectorTab] = createSignal<"files" | "canvas" | "library">("files");
+  const [inspectorTab, setInspectorTab] = createSignal<"files" | "tasks" | "canvas" | "library">("files");
   const [sidebarWidth, setSidebarWidth] = createSignal(
     Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || SIDEBAR_DEFAULT)),
   );
@@ -904,7 +905,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     setComposerFocusNonce((current) => current + 1);
   };
 
-  const openInspectorTab = (tab: "files" | "canvas" | "library") => {
+  const openInspectorTab = (tab: "files" | "tasks" | "canvas" | "library") => {
     if (inspectorOpen() && inspectorTab() === tab) {
       setInspectorFullscreen(false);
       setInspectorOpen(false);
@@ -1388,6 +1389,18 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                       aria-label="Open files panel"
                     >
                       <span class="h-3.5 w-3.5">{filesIcon()}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="flex h-8 w-8 items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground"
+                      onClick={() => openInspectorTab("tasks")}
+                      title="Open tasks"
+                      aria-label="Open tasks panel"
+                    >
+                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" class="h-3.5 w-3.5">
+                        <rect x="2" y="2" width="12" height="12" rx="1" />
+                        <path d="M5 6h6M5 8.5h4M5 11h5" />
+                      </svg>
                     </button>
                     <button
                       type="button"
@@ -1884,6 +1897,20 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   <button
                     type="button"
                     class="inspector-tab-btn"
+                    data-active={inspectorTab() === "tasks"}
+                    onClick={() => setInspectorTab("tasks")}
+                  >
+                    <span class="tab-icon">
+                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3">
+                        <rect x="2" y="2" width="12" height="12" rx="1" />
+                        <path d="M5 6h6M5 8.5h4M5 11h5" />
+                      </svg>
+                    </span>
+                    Tasks
+                  </button>
+                  <button
+                    type="button"
+                    class="inspector-tab-btn"
                     data-active={inspectorTab() === "canvas"}
                     onClick={() => setInspectorTab("canvas")}
                   >
@@ -1956,6 +1983,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                       }
                     >
                       <WorkspaceBrowser projectId={props.projectId} threadId={props.threadId} />
+                    </Suspense>
+                  </Show>
+                  <Show when={inspectorTab() === "tasks"}>
+                    <Suspense
+                      fallback={
+                        <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
+                          loading tasks...
+                        </div>
+                      }
+                    >
+                      <TaskList projectId={props.projectId} />
                     </Suspense>
                   </Show>
                   <Show when={inspectorTab() === "canvas"}>
