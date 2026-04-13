@@ -1190,28 +1190,42 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                               <a
                                 href={`#project/${project.id}`}
                                 class={cn(
-                                  "flex items-center gap-2 px-2 py-1 text-[11px] transition-colors",
+                                  "flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
                                   !props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
                                     ? "text-foreground"
-                                    : "text-muted-foreground/50 hover:text-muted-foreground",
+                                    : "text-muted-foreground hover:text-foreground",
                                 )}
+                                style={!props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                  ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" }
+                                  : undefined}
                                 onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                               >
-                                <span class={cn("h-1 w-1 shrink-0 rounded-full", statusDotClass(projectScopeStatus()))} />
-                                <span class="font-mono text-[9px] uppercase tracking-[0.1em]">Shepherd</span>
+                                <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" class="shrink-0">
+                                  <rect x="2" y="2" width="5" height="5" />
+                                  <rect x="9" y="2" width="5" height="5" />
+                                  <rect x="2" y="9" width="5" height="5" />
+                                  <rect x="9" y="9" width="5" height="5" />
+                                </svg>
+                                <span class="flex-1 truncate">Canvas</span>
                               </a>
                               <a
                                 href={`#librarian/${project.id}`}
                                 class={cn(
-                                  "flex items-center gap-2 px-2 py-1 text-[11px] transition-colors",
+                                  "flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
                                   props.librarianView && !settingsOpen() && !projectSettingsOpen()
                                     ? "text-foreground"
-                                    : "text-muted-foreground/50 hover:text-muted-foreground",
+                                    : "text-muted-foreground hover:text-foreground",
                                 )}
+                                style={props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                  ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" }
+                                  : undefined}
                                 onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                               >
-                                <span class={cn("h-1 w-1 shrink-0 rounded-full", librarianActivity()?.has_active_turn ? "bg-signal-amber animate-pulse-dot" : "bg-muted-foreground/20")} />
-                                <span class="font-mono text-[9px] uppercase tracking-[0.1em]">Librarian</span>
+                                <span class={cn(
+                                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                                  librarianActivity()?.has_active_turn ? "bg-signal-amber animate-pulse-dot" : "bg-muted-foreground/30",
+                                )} />
+                                <span class="flex-1 truncate">Librarian</span>
                               </a>
                             </Show>
 

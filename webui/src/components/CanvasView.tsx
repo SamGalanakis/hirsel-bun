@@ -74,8 +74,11 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
 
   // Filters
   const [hiddenKinds, setHiddenKinds] = createSignal<Set<string>>(new Set());
+  const [hiddenStatuses, setHiddenStatuses] = createSignal<Set<string>>(new Set(["done"]));
   const [searchText, setSearchText] = createSignal("");
-  const [layoutMode, setLayoutMode] = createSignal<"free" | "grid" | "grouped">("free");
+  const [layoutMode, setLayoutMode] = createSignal<"free" | "grid" | "grouped" | "force" | "radial">("free");
+  const [viewMenuOpen, setViewMenuOpen] = createSignal(false);
+  const [filterMenuOpen, setFilterMenuOpen] = createSignal(false);
 
   let containerRef: HTMLDivElement | undefined;
   let surfaceRef: HTMLDivElement | undefined;
@@ -118,9 +121,11 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   // Filter logic
   const visibleNodes = createMemo(() => {
     const hidden = hiddenKinds();
+    const hiddenSt = hiddenStatuses();
     const search = searchText().toLowerCase().trim();
     return nodes().filter((n) => {
       if (hidden.has(n.kind)) return false;
+      if (n.status && hiddenSt.has(n.status)) return false;
       if (search) {
         const inLabel = n.label.toLowerCase().includes(search);
         const inContent = (n.content ?? "").toLowerCase().includes(search);
@@ -264,16 +269,53 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
     });
   };
 
+  const toggleStatus = (status: string) => {
+    setHiddenStatuses((prev) => {
+      const next = new Set(prev);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  };
+
+  // Count nodes per kind and status (from all nodes, not filtered)
+  const kindCounts = createMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const n of nodes()) {
+      counts[n.kind] = (counts[n.kind] ?? 0) + 1;
+    }
+    return counts;
+  });
+
+  const statusCounts = createMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const n of nodes()) {
+      if (n.status) counts[n.status] = (counts[n.status] ?? 0) + 1;
+    }
+    return counts;
+  });
+
+  const activeFilterCount = createMemo(() => {
+    let count = 0;
+    if (hiddenKinds().size > 0) count += hiddenKinds().size;
+    if (hiddenStatuses().size > 0) count += hiddenStatuses().size;
+    if (searchText().trim()) count += 1;
+    return count;
+  });
+
   const handleResetLayout = async () => {
     await resetCanvasLayout(props.projectId);
     await loadCanvas();
   };
 
-  const applyLayout = (mode: "free" | "grid" | "grouped") => {
+  const applyLayout = (mode: "free" | "grid" | "grouped" | "force" | "radial") => {
     setLayoutMode(mode);
+    setViewMenuOpen(false);
     if (mode === "free") return;
 
     const current = nodes();
+    if (current.length === 0) return;
+
     if (mode === "grid") {
       const cols = Math.max(1, Math.ceil(Math.sqrt(current.length)));
       const repositioned = current.map((n, i) => ({
@@ -284,7 +326,6 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
       setNodes(repositioned);
       scheduleSave();
     } else if (mode === "grouped") {
-      // Group by kind, arrange each kind in a column
       const byKind: Record<string, PositionedNode[]> = {};
       for (const n of current) {
         (byKind[n.kind] ??= []).push(n);
@@ -298,7 +339,156 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
       });
       setNodes(repositioned);
       scheduleSave();
+    } else if (mode === "force") {
+      runForceSimulation();
+    } else if (mode === "radial") {
+      applyRadialLayout();
     }
+  };
+
+  // Force-directed layout: iterate a spring/charge simulation until it settles
+  const runForceSimulation = () => {
+    const current = nodes();
+    if (current.length === 0) return;
+
+    // Use a copy so we can mutate freely
+    const sim = current.map((n) => ({
+      ...n,
+      vx: 0,
+      vy: 0,
+    }));
+
+    const edgeLookup = edges();
+    const nodeByKey = new Map<string, (typeof sim)[number]>();
+    for (const n of sim) nodeByKey.set(nodeKey(n), n);
+
+    // Seed positions in a circle if they're all stacked
+    const allSame =
+      sim.every((n) => n.x === sim[0].x && n.y === sim[0].y) || sim.some((n) => !isFinite(n.x));
+    if (allSame) {
+      const r = 300;
+      sim.forEach((n, i) => {
+        const a = (i / sim.length) * Math.PI * 2;
+        n.x = Math.cos(a) * r + 400;
+        n.y = Math.sin(a) * r + 300;
+      });
+    }
+
+    const REPULSION = 25000; // node-node repulsion strength
+    const SPRING = 0.02; // edge attraction
+    const IDEAL_LEN = 200; // ideal edge length
+    const DAMPING = 0.85;
+    const CENTER_GRAVITY = 0.005;
+    const ITERATIONS = 300;
+    const MIN_DIST = 10;
+    const MAX_VEL = 30;
+
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      // Repulsion between all pairs
+      for (let i = 0; i < sim.length; i++) {
+        for (let j = i + 1; j < sim.length; j++) {
+          const a = sim[i];
+          const b = sim[j];
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist2 = Math.max(dx * dx + dy * dy, MIN_DIST * MIN_DIST);
+          const dist = Math.sqrt(dist2);
+          const force = REPULSION / dist2;
+          const fx = (dx / dist) * force;
+          const fy = (dy / dist) * force;
+          a.vx -= fx;
+          a.vy -= fy;
+          b.vx += fx;
+          b.vy += fy;
+        }
+      }
+
+      // Spring attraction along edges
+      for (const edge of edgeLookup) {
+        const a = nodeByKey.get(edge.from);
+        const b = nodeByKey.get(edge.to);
+        if (!a || !b) continue;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.max(Math.sqrt(dx * dx + dy * dy), MIN_DIST);
+        const displacement = dist - IDEAL_LEN;
+        const force = SPRING * displacement;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        a.vx += fx;
+        a.vy += fy;
+        b.vx -= fx;
+        b.vy -= fy;
+      }
+
+      // Gentle pull toward center
+      for (const n of sim) {
+        n.vx -= n.x * CENTER_GRAVITY;
+        n.vy -= n.y * CENTER_GRAVITY;
+      }
+
+      // Integrate with damping and velocity clamp
+      for (const n of sim) {
+        n.vx *= DAMPING;
+        n.vy *= DAMPING;
+        const v = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
+        if (v > MAX_VEL) {
+          n.vx = (n.vx / v) * MAX_VEL;
+          n.vy = (n.vy / v) * MAX_VEL;
+        }
+        n.x += n.vx;
+        n.y += n.vy;
+      }
+    }
+
+    // Shift to positive coordinates (min at margin)
+    const minX = Math.min(...sim.map((n) => n.x));
+    const minY = Math.min(...sim.map((n) => n.y));
+    const offsetX = 80 - minX;
+    const offsetY = 80 - minY;
+
+    const repositioned = current.map((n) => {
+      const s = nodeByKey.get(nodeKey(n))!;
+      return { ...n, x: s.x + offsetX, y: s.y + offsetY };
+    });
+    setNodes(repositioned);
+    scheduleSave();
+  };
+
+  // Radial: place nodes around a circle, grouped by kind as arcs
+  const applyRadialLayout = () => {
+    const current = nodes();
+    if (current.length === 0) return;
+
+    const byKind: Record<string, PositionedNode[]> = {};
+    for (const n of current) {
+      (byKind[n.kind] ??= []).push(n);
+    }
+    const kinds = Object.keys(byKind).sort();
+
+    const centerX = 500;
+    const centerY = 400;
+    const radius = Math.max(250, current.length * 25);
+
+    const totalNodes = current.length;
+    let cursor = 0;
+    const positioned: PositionedNode[] = [];
+
+    kinds.forEach((kind) => {
+      const group = byKind[kind];
+      group.forEach((n) => {
+        const angle = (cursor / totalNodes) * Math.PI * 2 - Math.PI / 2;
+        cursor++;
+        positioned.push({
+          ...n,
+          x: centerX + Math.cos(angle) * radius,
+          y: centerY + Math.sin(angle) * radius,
+        });
+      });
+    });
+
+    setNodes(positioned);
+    scheduleSave();
   };
 
   const handleCreateTask = async () => {
@@ -308,15 +498,34 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
     await loadCanvas();
   };
 
-  // Keyboard: Esc collapses popup
+  // Keyboard: Esc collapses popup / closes menu
   onMount(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && expandedId()) {
-        setExpandedId(null);
+      if (e.key === "Escape") {
+        if (viewMenuOpen()) {
+          setViewMenuOpen(false);
+        } else if (expandedId()) {
+          setExpandedId(null);
+        }
       }
     };
     document.addEventListener("keydown", handler);
     onCleanup(() => document.removeEventListener("keydown", handler));
+  });
+
+  // Close menus on outside click
+  onMount(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (viewMenuOpen() && !target.closest(".canvas-view-menu")) {
+        setViewMenuOpen(false);
+      }
+      if (filterMenuOpen() && !target.closest(".canvas-filter-menu")) {
+        setFilterMenuOpen(false);
+      }
+    };
+    document.addEventListener("click", handler);
+    onCleanup(() => document.removeEventListener("click", handler));
   });
 
   return (
@@ -332,58 +541,207 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
     >
       {/* Toolbar */}
       <div class="canvas-toolbar">
-        <input
-          type="text"
-          class="canvas-search"
-          placeholder="Search..."
-          value={searchText()}
-          onInput={(e) => setSearchText(e.currentTarget.value)}
-        />
-        <div class="canvas-kind-chips">
-          <For each={KINDS}>
-            {(kind) => (
-              <button
-                type="button"
-                class="canvas-kind-chip"
-                data-active={!hiddenKinds().has(kind)}
-                data-kind={kind}
-                onClick={() => toggleKind(kind)}
-              >
-                {kind}
-              </button>
-            )}
-          </For>
+        <div class="canvas-toolbar-search">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3" class="canvas-toolbar-search-icon">
+            <circle cx="5" cy="5" r="3.5" />
+            <path d="M8 8L11 11" />
+          </svg>
+          <input
+            type="text"
+            class="canvas-search"
+            placeholder="Search..."
+            value={searchText()}
+            onInput={(e) => setSearchText(e.currentTarget.value)}
+          />
+          <Show when={searchText()}>
+            <button
+              type="button"
+              class="canvas-search-clear"
+              onClick={() => setSearchText("")}
+              title="Clear"
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3">
+                <path d="M2 2L8 8M8 2L2 8" />
+              </svg>
+            </button>
+          </Show>
         </div>
-        <div class="canvas-layout-chips">
+
+        {/* Filter dropdown trigger */}
+        <div class="canvas-filter-menu">
           <button
             type="button"
-            class="canvas-kind-chip"
-            data-active={layoutMode() === "free"}
-            onClick={() => applyLayout("free")}
-            title="Free placement (drag to reposition)"
+            class="canvas-toolbar-btn canvas-filter-trigger"
+            onClick={() => setFilterMenuOpen(!filterMenuOpen())}
+            data-active={activeFilterCount() > 0}
+            title="Filter nodes"
           >
-            free
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3">
+              <path d="M1 2h10L7.5 7v3.5L4.5 12V7L1 2z" />
+            </svg>
+            <span>Filter</span>
+            <Show when={activeFilterCount() > 0}>
+              <span class="canvas-filter-badge">{activeFilterCount()}</span>
+            </Show>
           </button>
-          <button
-            type="button"
-            class="canvas-kind-chip"
-            data-active={layoutMode() === "grid"}
-            onClick={() => applyLayout("grid")}
-            title="Arrange in a grid"
-          >
-            grid
-          </button>
-          <button
-            type="button"
-            class="canvas-kind-chip"
-            data-active={layoutMode() === "grouped"}
-            onClick={() => applyLayout("grouped")}
-            title="Group by kind"
-          >
-            grouped
-          </button>
+          <Show when={filterMenuOpen()}>
+            <div class="canvas-filter-dropdown" onPointerDown={(e) => e.stopPropagation()}>
+              <div class="canvas-filter-section">
+                <div class="canvas-filter-section-header">
+                  <span>Kind</span>
+                  <Show when={hiddenKinds().size > 0}>
+                    <button
+                      type="button"
+                      class="canvas-filter-clear"
+                      onClick={() => setHiddenKinds(new Set())}
+                    >
+                      show all
+                    </button>
+                  </Show>
+                </div>
+                <div class="canvas-filter-chips">
+                  <For each={KINDS}>
+                    {(kind) => {
+                      const count = () => kindCounts()[kind] ?? 0;
+                      return (
+                        <button
+                          type="button"
+                          class="canvas-filter-chip"
+                          data-active={!hiddenKinds().has(kind)}
+                          data-kind={kind}
+                          onClick={() => toggleKind(kind)}
+                          disabled={count() === 0}
+                        >
+                          <span class="canvas-filter-chip-dot" />
+                          <span>{kind}</span>
+                          <span class="canvas-filter-chip-count">{count()}</span>
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+
+              <div class="canvas-filter-divider" />
+
+              <div class="canvas-filter-section">
+                <div class="canvas-filter-section-header">
+                  <span>Status</span>
+                  <Show when={hiddenStatuses().size > 0}>
+                    <button
+                      type="button"
+                      class="canvas-filter-clear"
+                      onClick={() => setHiddenStatuses(new Set())}
+                    >
+                      show all
+                    </button>
+                  </Show>
+                </div>
+                <div class="canvas-filter-chips">
+                  <For each={["todo", "active", "review", "done", "running", "waiting", "blocked", "failed"]}>
+                    {(status) => {
+                      const count = () => statusCounts()[status] ?? 0;
+                      if (count() === 0) return null;
+                      return (
+                        <button
+                          type="button"
+                          class="canvas-filter-chip"
+                          data-active={!hiddenStatuses().has(status)}
+                          data-status={status}
+                          onClick={() => toggleStatus(status)}
+                        >
+                          <span class="canvas-filter-chip-dot" />
+                          <span>{status}</span>
+                          <span class="canvas-filter-chip-count">{count()}</span>
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
+              </div>
+            </div>
+          </Show>
         </div>
+
+        <div class="canvas-toolbar-divider" />
+
         <div class="canvas-toolbar-actions">
+          <div class="canvas-view-menu">
+            <button
+              type="button"
+              class="canvas-toolbar-btn canvas-view-trigger"
+              onClick={() => setViewMenuOpen(!viewMenuOpen())}
+              title="Layout options"
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.3">
+                <circle cx="3" cy="3" r="1.2" />
+                <circle cx="9" cy="3" r="1.2" />
+                <circle cx="6" cy="6" r="1.2" />
+                <circle cx="3" cy="9" r="1.2" />
+                <circle cx="9" cy="9" r="1.2" />
+                <line x1="3" y1="3" x2="6" y2="6" />
+                <line x1="9" y1="3" x2="6" y2="6" />
+                <line x1="3" y1="9" x2="6" y2="6" />
+                <line x1="9" y1="9" x2="6" y2="6" />
+              </svg>
+              <span>View: {layoutMode()}</span>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.3">
+                <path d="M2 4L5 7L8 4" />
+              </svg>
+            </button>
+            <Show when={viewMenuOpen()}>
+              <div
+                class="canvas-view-dropdown"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                <button
+                  type="button"
+                  class="canvas-view-item"
+                  data-active={layoutMode() === "free"}
+                  onClick={() => applyLayout("free")}
+                >
+                  <span class="canvas-view-item-label">Free</span>
+                  <span class="canvas-view-item-hint">Drag to reposition</span>
+                </button>
+                <button
+                  type="button"
+                  class="canvas-view-item"
+                  data-active={layoutMode() === "force"}
+                  onClick={() => applyLayout("force")}
+                >
+                  <span class="canvas-view-item-label">Force-directed</span>
+                  <span class="canvas-view-item-hint">Clusters connected nodes</span>
+                </button>
+                <button
+                  type="button"
+                  class="canvas-view-item"
+                  data-active={layoutMode() === "radial"}
+                  onClick={() => applyLayout("radial")}
+                >
+                  <span class="canvas-view-item-label">Radial</span>
+                  <span class="canvas-view-item-hint">Circle grouped by kind</span>
+                </button>
+                <button
+                  type="button"
+                  class="canvas-view-item"
+                  data-active={layoutMode() === "grouped"}
+                  onClick={() => applyLayout("grouped")}
+                >
+                  <span class="canvas-view-item-label">Grouped columns</span>
+                  <span class="canvas-view-item-hint">One column per kind</span>
+                </button>
+                <button
+                  type="button"
+                  class="canvas-view-item"
+                  data-active={layoutMode() === "grid"}
+                  onClick={() => applyLayout("grid")}
+                >
+                  <span class="canvas-view-item-label">Grid</span>
+                  <span class="canvas-view-item-hint">Uniform tiling</span>
+                </button>
+              </div>
+            </Show>
+          </div>
           <button class="canvas-toolbar-btn" onClick={() => void handleCreateTask()}>
             + Task
           </button>
