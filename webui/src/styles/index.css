@@ -482,6 +482,153 @@
   --grid-line: oklch(0.74 0.108 86 / 0.025);
 }
 
+/* ── Void (pure dark — black, white, electric) ────
+ * Near-black background, pure white text, zero warmth.
+ * Accent is electric blue — cold, precise, digital.
+ */
+[data-theme="void"] {
+  --background: 0.06 0 0;
+  --foreground: 0.93 0 0;
+  --card: 0.10 0 0;
+  --card-foreground: 0.93 0 0;
+  --popover: 0.10 0 0;
+  --popover-foreground: 0.93 0 0;
+  --primary: 0.93 0 0;
+  --primary-foreground: 0.06 0 0;
+  --secondary: 0.14 0 0;
+  --secondary-foreground: 0.72 0 0;
+  --muted: 0.14 0 0;
+  --muted-foreground: 0.48 0 0;
+  --accent: 0.14 0 0;
+  --accent-foreground: 0.93 0 0;
+  --destructive: 0.60 0.22 25;
+  --destructive-foreground: 0.98 0 0;
+  --border: 0.20 0 0;
+  --input: 0.20 0 0;
+  --ring: 0.68 0.16 250;
+  --ink-2: 0.68 0 0;
+  --brand: 0.68 0.16 250;
+  --signal-red: 0.62 0.22 25;
+  --signal-blue: 0.68 0.16 250;
+  --signal-amber: 0.75 0.15 80;
+  --signal-green: 0.65 0.18 155;
+  --radius: 0px;
+  --border-light: 0.16 0 0;
+  --node: oklch(0.20 0 0);
+  --node-highlight: oklch(0.32 0 0);
+  --on-signal: oklch(0.06 0 0);
+  --red-bg: oklch(0.62 0.22 25 / 0.10);
+  --red-border: oklch(0.62 0.22 25 / 0.30);
+  --blue-bg: oklch(0.68 0.16 250 / 0.08);
+  --blue-border: oklch(0.68 0.16 250 / 0.28);
+  --amber-bg: oklch(0.75 0.15 80 / 0.08);
+  --amber-border: oklch(0.75 0.15 80 / 0.25);
+  --green-bg: oklch(0.65 0.18 155 / 0.08);
+  --green-border: oklch(0.65 0.18 155 / 0.25);
+  --hirsel-shadow-sm: 0 1px 3px oklch(0 0 0 / 0.6);
+  --hirsel-shadow-md: 0 4px 12px oklch(0 0 0 / 0.7);
+  --hirsel-shadow-lift: 0 8px 28px oklch(0 0 0 / 0.8);
+  --grid-line: oklch(1 0 0 / 0.015);
+}
+
+/* ── Cobalt (deep blue — inspired by Cobalt2/One Dark) ────
+ * Rich navy surfaces with cyan and coral accents.
+ * The classic "blue editor" look — Cobalt2, Oceanic, Night Owl.
+ */
+[data-theme="cobalt"] {
+  --background: 0.12 0.035 250;
+  --foreground: 0.90 0.010 220;
+  --card: 0.15 0.035 250;
+  --card-foreground: 0.90 0.010 220;
+  --popover: 0.15 0.035 250;
+  --popover-foreground: 0.90 0.010 220;
+  --primary: 0.90 0.010 220;
+  --primary-foreground: 0.12 0.035 250;
+  --secondary: 0.19 0.030 250;
+  --secondary-foreground: 0.75 0.015 220;
+  --muted: 0.19 0.030 250;
+  --muted-foreground: 0.55 0.020 240;
+  --accent: 0.19 0.030 250;
+  --accent-foreground: 0.90 0.010 220;
+  --destructive: 0.60 0.20 20;
+  --destructive-foreground: 0.97 0.005 220;
+  --border: 0.25 0.030 250;
+  --input: 0.25 0.030 250;
+  --ring: 0.72 0.14 195;
+  --ink-2: 0.70 0.015 220;
+  --brand: 0.72 0.14 195;
+  --signal-red: 0.62 0.18 20;
+  --signal-blue: 0.72 0.14 195;
+  --signal-amber: 0.76 0.14 80;
+  --signal-green: 0.68 0.15 155;
+  --radius: 0px;
+  --border-light: 0.22 0.030 250;
+  --node: oklch(0.25 0.030 250);
+  --node-highlight: oklch(0.38 0.035 250);
+  --on-signal: oklch(0.12 0.035 250);
+  --red-bg: oklch(0.62 0.18 20 / 0.12);
+  --red-border: oklch(0.62 0.18 20 / 0.30);
+  --blue-bg: oklch(0.72 0.14 195 / 0.10);
+  --blue-border: oklch(0.72 0.14 195 / 0.28);
+  --amber-bg: oklch(0.76 0.14 80 / 0.10);
+  --amber-border: oklch(0.76 0.14 80 / 0.28);
+  --green-bg: oklch(0.68 0.15 155 / 0.10);
+  --green-border: oklch(0.68 0.15 155 / 0.26);
+  --hirsel-shadow-sm: 0 1px 3px oklch(0.05 0.02 250 / 0.5);
+  --hirsel-shadow-md: 0 4px 12px oklch(0.05 0.02 250 / 0.6);
+  --hirsel-shadow-lift: 0 8px 28px oklch(0.05 0.02 250 / 0.7);
+  --grid-line: oklch(0.72 0.14 195 / 0.025);
+}
+
+/* ── Rosepine (muted purple — inspired by Rose Pine) ────
+ * Dusty purple-gray surfaces with rose and gold highlights.
+ * Soft, poetic, easy on the eyes for long sessions.
+ */
+[data-theme="rosepine"] {
+  --background: 0.14 0.018 290;
+  --foreground: 0.88 0.012 310;
+  --card: 0.17 0.018 290;
+  --card-foreground: 0.88 0.012 310;
+  --popover: 0.17 0.018 290;
+  --popover-foreground: 0.88 0.012 310;
+  --primary: 0.88 0.012 310;
+  --primary-foreground: 0.14 0.018 290;
+  --secondary: 0.21 0.016 290;
+  --secondary-foreground: 0.72 0.015 310;
+  --muted: 0.21 0.016 290;
+  --muted-foreground: 0.52 0.015 300;
+  --accent: 0.21 0.016 290;
+  --accent-foreground: 0.88 0.012 310;
+  --destructive: 0.58 0.16 15;
+  --destructive-foreground: 0.97 0.005 310;
+  --border: 0.27 0.018 290;
+  --input: 0.27 0.018 290;
+  --ring: 0.68 0.12 340;
+  --ink-2: 0.68 0.015 310;
+  --brand: 0.68 0.12 340;
+  --signal-red: 0.60 0.14 15;
+  --signal-blue: 0.62 0.10 260;
+  --signal-amber: 0.74 0.12 70;
+  --signal-green: 0.65 0.10 160;
+  --radius: 0px;
+  --border-light: 0.24 0.016 290;
+  --node: oklch(0.27 0.018 290);
+  --node-highlight: oklch(0.40 0.022 290);
+  --on-signal: oklch(0.14 0.018 290);
+  --red-bg: oklch(0.60 0.14 15 / 0.10);
+  --red-border: oklch(0.60 0.14 15 / 0.28);
+  --blue-bg: oklch(0.62 0.10 260 / 0.10);
+  --blue-border: oklch(0.62 0.10 260 / 0.28);
+  --amber-bg: oklch(0.74 0.12 70 / 0.10);
+  --amber-border: oklch(0.74 0.12 70 / 0.28);
+  --green-bg: oklch(0.65 0.10 160 / 0.10);
+  --green-border: oklch(0.65 0.10 160 / 0.26);
+  --hirsel-shadow-sm: 0 1px 3px oklch(0.08 0.015 290 / 0.4);
+  --hirsel-shadow-md: 0 4px 12px oklch(0.08 0.015 290 / 0.5);
+  --hirsel-shadow-lift: 0 8px 28px oklch(0.08 0.015 290 / 0.6);
+  --grid-line: oklch(0.68 0.12 340 / 0.02);
+}
+
 /* ═══════════════════════════════════════
    Base Reset
    ═══════════════════════════════════════ */

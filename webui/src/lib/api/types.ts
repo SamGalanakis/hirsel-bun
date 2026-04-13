@@ -65,6 +65,7 @@ export interface ShepherdThread {
   created_at: string;
   updated_at: string;
   last_activity_at: string;
+  highlight: string | null;
 }
 
 export interface ChatMessage {

@@ -1,6 +1,6 @@
 import { createSignal, onCleanup } from "solid-js";
 
-export type ThemeName = "forge" | "eclipse" | "graphite" | "miasma" | "parchment" | "bone";
+export type ThemeName = "forge" | "eclipse" | "graphite" | "miasma" | "void" | "cobalt" | "rosepine" | "parchment" | "bone";
 
 export interface ThemeOption {
   name: ThemeName;
@@ -14,6 +14,9 @@ export const themes: ThemeOption[] = [
   { name: "eclipse", label: "Eclipse", mode: "dark", description: "Very dark — black with burnished brass" },
   { name: "graphite", label: "Graphite", mode: "dark", description: "Cool dark — steel and ice" },
   { name: "miasma", label: "Miasma", mode: "dark", description: "Olive dark — moss and fog" },
+  { name: "void", label: "Void", mode: "dark", description: "Pure black — white text, electric blue" },
+  { name: "cobalt", label: "Cobalt", mode: "dark", description: "Deep blue — cyan and coral accents" },
+  { name: "rosepine", label: "Rose Pine", mode: "dark", description: "Muted purple — rose and gold" },
   { name: "parchment", label: "Parchment", mode: "light", description: "Warm light — cream and walnut" },
   { name: "bone", label: "Bone", mode: "light", description: "Cool light — paper and slate" },
 ];
@@ -25,6 +28,9 @@ const modeMap: Record<ThemeName, "light" | "dark"> = {
   eclipse: "dark",
   graphite: "dark",
   miasma: "dark",
+  void: "dark",
+  cobalt: "dark",
+  rosepine: "dark",
   parchment: "light",
   bone: "light",
 };

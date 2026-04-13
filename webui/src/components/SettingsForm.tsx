@@ -28,6 +28,9 @@ const THEME_SWATCHES: Record<string, [string, string, string]> = {
   eclipse:       ["oklch(0.08 0.004 65)", "oklch(0.94 0.012 75)", "oklch(0.76 0.14 75)"],
   graphite:      ["oklch(0.175 0.010 245)", "oklch(0.92 0.008 235)", "oklch(0.72 0.12 230)"],
   miasma:        ["oklch(0.175 0.012 85)", "oklch(0.82 0.020 100)", "oklch(0.74 0.108 86)"],
+  void:          ["oklch(0.06 0 0)", "oklch(0.93 0 0)", "oklch(0.68 0.16 250)"],
+  cobalt:        ["oklch(0.12 0.035 250)", "oklch(0.90 0.010 220)", "oklch(0.72 0.14 195)"],
+  rosepine:      ["oklch(0.14 0.018 290)", "oklch(0.88 0.012 310)", "oklch(0.68 0.12 340)"],
   parchment:     ["oklch(0.96 0.012 78)", "oklch(0.17 0.022 65)", "oklch(0.55 0.15 75)"],
   bone:          ["oklch(0.97 0.004 235)", "oklch(0.20 0.020 245)", "oklch(0.48 0.15 250)"],
 };

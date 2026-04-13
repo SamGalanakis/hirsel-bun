@@ -1188,58 +1188,34 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                         <Show when={expanded()}>
                           <div class="ml-[10px] border-l border-border/40 pl-1 pb-1">
 
-                            {/* Current project: show Project root + Librarian */}
+                            {/* Shepherd + Librarian (compact, only when current project) */}
                             <Show when={isCurrent()}>
-                              {(() => {
-                                const isActive = () => !props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen();
-                                return (
-                                  <a
-                                    href={`#project/${project.id}`}
-                                    class={cn(
-                                      "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                      isActive()
-                                        ? "text-foreground"
-                                        : "text-muted-foreground hover:text-foreground",
-                                    )}
-                                    style={isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : undefined}
-                                    onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
-                                  >
-                                    <span class={cn(
-                                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                                      isActive() ? "bg-brand" : statusDotClass(projectScopeStatus()),
-                                    )} />
-                                    <span class="truncate font-medium">{ROOT_CHANNEL_LABEL}</span>
-                                    <span class="ml-auto font-mono text-[9px] uppercase tracking-wider text-muted-foreground/50">{statusLabel(projectScopeStatus())}</span>
-                                  </a>
-                                );
-                              })()}
-
-                              {(() => {
-                                const isActive = () => props.librarianView && !settingsOpen() && !projectSettingsOpen();
-                                const isRunning = () => (props.librarianView && optimisticLiveTurn()) || librarianActivity()?.has_active_turn;
-                                return (
-                                  <a
-                                    href={`#librarian/${project.id}`}
-                                    class={cn(
-                                      "group flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                      isActive()
-                                        ? "text-foreground"
-                                        : "text-muted-foreground hover:text-foreground",
-                                    )}
-                                    style={isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : undefined}
-                                    onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
-                                  >
-                                    <span class={cn(
-                                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                                      isActive() ? "bg-brand" : isRunning() ? "bg-signal-amber animate-pulse-dot" : "bg-signal-amber/40",
-                                    )} />
-                                    <span class="truncate font-medium">Librarian</span>
-                                    <Show when={isRunning()}>
-                                      <span class="ml-auto font-mono text-[9px] uppercase tracking-wider text-signal-amber/60">running</span>
-                                    </Show>
-                                  </a>
-                                );
-                              })()}
+                              <a
+                                href={`#project/${project.id}`}
+                                class={cn(
+                                  "flex items-center gap-2 px-2 py-1 text-[11px] transition-colors",
+                                  !props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                    ? "text-foreground"
+                                    : "text-muted-foreground/50 hover:text-muted-foreground",
+                                )}
+                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
+                              >
+                                <span class={cn("h-1 w-1 shrink-0 rounded-full", statusDotClass(projectScopeStatus()))} />
+                                <span class="font-mono text-[9px] uppercase tracking-[0.1em]">Shepherd</span>
+                              </a>
+                              <a
+                                href={`#librarian/${project.id}`}
+                                class={cn(
+                                  "flex items-center gap-2 px-2 py-1 text-[11px] transition-colors",
+                                  props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                    ? "text-foreground"
+                                    : "text-muted-foreground/50 hover:text-muted-foreground",
+                                )}
+                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
+                              >
+                                <span class={cn("h-1 w-1 shrink-0 rounded-full", librarianActivity()?.has_active_turn ? "bg-signal-amber animate-pulse-dot" : "bg-muted-foreground/20")} />
+                                <span class="font-mono text-[9px] uppercase tracking-[0.1em]">Librarian</span>
+                              </a>
                             </Show>
 
                             {/* Thread list */}
@@ -1258,24 +1234,40 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                 };
                                 const isActive = () => props.threadId === thread.thread.id && isCurrent() && !settingsOpen() && !projectSettingsOpen();
 
+                                const hasHighlight = () => !!thread.thread.highlight;
+
                                 return (
                                   <a
                                     href={`#thread/${project.id}/${thread.thread.id}`}
+                                    data-thread-id={thread.thread.id}
                                     class={cn(
-                                      "group flex items-center gap-2 px-2 py-1.5 text-xs transition-all",
+                                      "group flex flex-col gap-0.5 px-2 py-1.5 text-xs transition-all",
                                       isActive()
                                         ? "text-foreground"
                                         : "text-muted-foreground hover:text-foreground active:scale-[0.995]",
+                                      hasHighlight() && !isActive()
+                                        ? "border-l-2 border-signal-amber/50"
+                                        : "",
                                     )}
-                                    style={isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : undefined}
+                                    style={{
+                                      ...(isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : {}),
+                                      ...(hasHighlight() ? { "box-shadow": "inset 0 0 12px oklch(var(--signal-amber) / 0.08)" } : {}),
+                                    }}
                                     onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
                                   >
-                                    <span class={cn(
-                                      "h-1.5 w-1.5 shrink-0 rounded-full",
-                                      isActive() ? "bg-brand" : statusDotClass(status()),
-                                    )} />
-                                    <span class="flex-1 truncate">{thread.thread.title || "Untitled Thread"}</span>
-                                    <span class="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground/50">{meta()}</span>
+                                    <div class="flex items-center gap-2">
+                                      <span class={cn(
+                                        "h-1.5 w-1.5 shrink-0 rounded-full",
+                                        isActive() ? "bg-brand" : hasHighlight() ? "bg-signal-amber animate-pulse-dot" : statusDotClass(status()),
+                                      )} />
+                                      <span class="flex-1 truncate">{thread.thread.title || "Untitled Thread"}</span>
+                                      <span class="ml-auto shrink-0 font-mono text-[9px] uppercase tracking-wider text-muted-foreground/50">{meta()}</span>
+                                    </div>
+                                    <Show when={hasHighlight()}>
+                                      <div class="pl-4 text-[10px] leading-tight text-signal-amber/70 line-clamp-2">
+                                        {thread.thread.highlight}
+                                      </div>
+                                    </Show>
                                   </a>
                                 );
                               }}
@@ -1352,10 +1344,12 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   </span>
                 </Show>
                 <Show when={!settingsOpen() && !projectSettingsOpen()}>
-                  <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70">
-                    {props.threadId ? "Thread" : props.librarianView ? "Librarian" : "Shepherd"}
-                  </span>
-                  <span class="h-3 w-px bg-border/40" aria-hidden="true" />
+                  <Show when={props.threadId}>
+                    <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70">
+                      Thread
+                    </span>
+                    <span class="h-3 w-px bg-border/40" aria-hidden="true" />
+                  </Show>
                   <span class="truncate text-[13px] font-medium text-foreground">
                     {activeTitle()}
                   </span>
@@ -1520,16 +1514,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                 />
                               </div>
 
-                              <div class="space-y-1.5">
-                                <label class="text-xs font-medium text-foreground">Description</label>
-                                <textarea
-                                  class="z-input w-full min-h-[60px] resize-y"
-                                  value={descVal()}
-                                  onInput={(e) => setDescVal(e.currentTarget.value)}
-                                  placeholder="What this project does"
-                                  rows={2}
-                                />
-                              </div>
                             </div>
 
                             {/* ── Workspaces section ── */}
