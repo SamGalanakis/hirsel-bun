@@ -83,6 +83,34 @@ export interface Task {
   updated_at: string;
 }
 
+export interface CanvasPosition {
+  x: number;
+  y: number;
+}
+
+export interface CanvasNode {
+  kind: string;
+  id: string;
+  label: string;
+  content?: string | null;
+  status?: string | null;
+  tags?: string[] | null;
+  focused_task_id?: string | null;
+  updated_at: string;
+}
+
+export interface CanvasEdge {
+  from: string;
+  to: string;
+  relation: string;
+}
+
+export interface CanvasView {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  layout: Record<string, CanvasPosition>;
+}
+
 export interface ChatMessage {
   id: number;
   role: string;

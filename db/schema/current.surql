@@ -144,6 +144,10 @@ DEFINE FIELD OVERWRITE created_at ON TABLE kg_edge DEFAULT time::now();
 DEFINE TABLE IF NOT EXISTS project_canvas SCHEMALESS;
 DEFINE FIELD OVERWRITE updated_at ON TABLE project_canvas VALUE time::now();
 
+-- Canvas spatial layout (per-project map of kind:id -> {x, y})
+DEFINE TABLE IF NOT EXISTS project_canvas_layout SCHEMALESS;
+DEFINE FIELD OVERWRITE updated_at ON TABLE project_canvas_layout VALUE time::now();
+
 -- Tasks (persistent planning documents with status tracking)
 DEFINE TABLE IF NOT EXISTS task SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS task_id ON TABLE task TYPE string;

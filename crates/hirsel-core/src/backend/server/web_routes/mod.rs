@@ -1,4 +1,5 @@
 mod auth;
+mod canvas;
 mod common;
 mod projects;
 mod settings;
@@ -164,6 +165,15 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/projects/{project_id}/tasks/{task_id}/review",
             post(tasks::review_action),
+        )
+        // Canvas
+        .route(
+            "/api/projects/{project_id}/canvas",
+            get(canvas::get_canvas),
+        )
+        .route(
+            "/api/projects/{project_id}/canvas/layout",
+            patch(canvas::patch_layout).delete(canvas::delete_layout),
         )
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings/provider", post(settings::save_llm_provider))

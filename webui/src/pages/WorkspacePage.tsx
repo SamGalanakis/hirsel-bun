@@ -46,6 +46,7 @@ import {
   type ProjectWorkspaceEntry,
 } from "@/lib/api";
 
+const CanvasView = lazy(() => import("@/components/CanvasView"));
 const KnowledgeGraphView = lazy(() => import("@/components/KnowledgeGraphView"));
 const TaskCanvas = lazy(() => import("@/components/TaskCanvas"));
 const TaskList = lazy(() => import("@/components/TaskList"));
@@ -1800,45 +1801,68 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   </div>
                 }
               >
-                <ChatTranscript
-                  title={activeTitle()}
-                  threadId={props.threadId}
-                  librarianView={props.librarianView}
-                  loaded={props.threadId ? !!threadDetail() : !!project()}
-                  messages={activeMessages()}
-                  liveTurn={activeLiveTurn()}
-                  runtimeError={visibleRuntimeError()}
-                  scanning={scanning()}
-                  stickToBottom={stickToBottom()}
-                  onTranscriptRef={(element) => {
-                    transcriptRef = element;
-                  }}
-                  onScroll={updateStickinessFromScroll}
-                  onScrollToBottom={() => {
-                    setStickToBottom(true);
-                    if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
-                  }}
-                  onKnowledgeScan={() => void handleKnowledgeScan()}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                  onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
-                  onSuggestion={useSuggestion}
-                />
+                <Show
+                  when={!props.threadId && !props.librarianView}
+                  fallback={
+                    <>
+                      <ChatTranscript
+                        title={activeTitle()}
+                        threadId={props.threadId}
+                        librarianView={props.librarianView}
+                        loaded={props.threadId ? !!threadDetail() : !!project()}
+                        messages={activeMessages()}
+                        liveTurn={activeLiveTurn()}
+                        runtimeError={visibleRuntimeError()}
+                        scanning={scanning()}
+                        stickToBottom={stickToBottom()}
+                        onTranscriptRef={(element) => {
+                          transcriptRef = element;
+                        }}
+                        onScroll={updateStickinessFromScroll}
+                        onScrollToBottom={() => {
+                          setStickToBottom(true);
+                          if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
+                        }}
+                        onKnowledgeScan={() => void handleKnowledgeScan()}
+                        onOpenSettings={() => setSettingsOpen(true)}
+                        onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
+                        onSuggestion={useSuggestion}
+                      />
 
-                <div class="relative shrink-0 border-t border-border/40 bg-card">
-                  <div class="mx-auto max-w-2xl px-3 pb-3 pt-2">
-                    <ChatComposer
+                      <div class="relative shrink-0 border-t border-border/40 bg-card">
+                        <div class="mx-auto max-w-2xl px-3 pb-3 pt-2">
+                          <ChatComposer
+                            projectId={props.projectId}
+                            threadId={props.threadId}
+                            value={input()}
+                            running={isRunning()}
+                            justStopped={justStopped()}
+                            focusNonce={composerFocusNonce()}
+                            onValueChange={setInput}
+                            onSubmit={() => void handleSubmit()}
+                            onStop={() => void handleStop()}
+                          />
+                        </div>
+                      </div>
+                    </>
+                  }
+                >
+                  {/* Canvas view — the project home */}
+                  <Suspense
+                    fallback={
+                      <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
+                        loading canvas...
+                      </div>
+                    }
+                  >
+                    <CanvasView
                       projectId={props.projectId}
-                      threadId={props.threadId}
-                      value={input()}
-                      running={isRunning()}
-                      justStopped={justStopped()}
-                      focusNonce={composerFocusNonce()}
-                      onValueChange={setInput}
-                      onSubmit={() => void handleSubmit()}
-                      onStop={() => void handleStop()}
+                      onOpenThread={(threadId) => {
+                        window.location.hash = `#thread/${props.projectId}/${threadId}`;
+                      }}
                     />
-                  </div>
-                </div>
+                  </Suspense>
+                </Show>
               </Show>
             </main>
 

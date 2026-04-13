@@ -629,6 +629,333 @@
   --grid-line: oklch(0.68 0.12 340 / 0.02);
 }
 
+/* ── Canvas view ── */
+.canvas-view {
+  user-select: none;
+}
+
+.canvas-surface {
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+}
+
+.canvas-edges {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.canvas-node {
+  position: absolute;
+  background: oklch(var(--card));
+  border: 1px solid;
+  padding: 10px 12px;
+  font-size: 13px;
+  cursor: grab;
+  transition: box-shadow 0.15s, width 0.2s, min-height 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.canvas-node:hover {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25);
+}
+
+.canvas-node.canvas-node-dragging {
+  cursor: grabbing;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+  z-index: 10;
+}
+
+.canvas-node.canvas-node-expanded {
+  cursor: default;
+  z-index: 20;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 14px 16px;
+}
+
+.canvas-node-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.canvas-node-kind {
+  font-weight: 500;
+}
+
+.canvas-node-status {
+  color: oklch(var(--muted-foreground));
+  padding: 1px 5px;
+  background: oklch(var(--secondary));
+  border: 1px solid oklch(var(--border) / 0.3);
+  font-size: 8px;
+}
+
+.canvas-node-title {
+  font-family: var(--font-body);
+  font-size: 14px;
+  font-weight: 500;
+  color: oklch(var(--foreground));
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.canvas-node-body {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid oklch(var(--border) / 0.3);
+  font-size: 13px;
+  line-height: 1.6;
+  color: oklch(var(--foreground) / 0.85);
+  cursor: auto;
+}
+
+.canvas-node-markdown {
+  max-height: 360px;
+  overflow-y: auto;
+  font-size: 13px;
+}
+
+.canvas-node-textarea {
+  width: 100%;
+  min-height: 180px;
+  background: oklch(var(--background));
+  border: 1px solid oklch(var(--border) / 0.5);
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: oklch(var(--foreground));
+  resize: vertical;
+  outline: none;
+}
+
+.canvas-node-textarea:focus {
+  border-color: oklch(var(--brand) / 0.5);
+}
+
+.canvas-node-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.canvas-action-btn {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid oklch(var(--border) / 0.5);
+  color: oklch(var(--muted-foreground));
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.canvas-action-btn:hover {
+  color: oklch(var(--foreground));
+  border-color: oklch(var(--border));
+}
+
+.canvas-action-primary {
+  color: oklch(var(--brand));
+  border-color: oklch(var(--brand) / 0.4);
+}
+
+.canvas-action-primary:hover {
+  background: oklch(var(--brand) / 0.1);
+  border-color: oklch(var(--brand));
+}
+
+.canvas-action-approve {
+  color: oklch(var(--signal-green));
+  border-color: oklch(var(--signal-green) / 0.4);
+}
+
+.canvas-action-approve:hover {
+  background: oklch(var(--signal-green) / 0.1);
+}
+
+.canvas-action-danger {
+  color: oklch(var(--signal-red) / 0.7);
+}
+
+.canvas-action-danger:hover {
+  color: oklch(var(--signal-red));
+  border-color: oklch(var(--signal-red) / 0.4);
+}
+
+.task-review-box {
+  border-left: 2px solid oklch(var(--signal-blue) / 0.5);
+  padding: 6px 10px;
+  margin-top: 8px;
+  background: oklch(var(--signal-blue) / 0.05);
+}
+
+.task-review-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: oklch(var(--signal-blue) / 0.7);
+  margin-bottom: 4px;
+}
+
+.task-review-summary {
+  font-size: 12px;
+  line-height: 1.5;
+  color: oklch(var(--foreground) / 0.85);
+}
+
+.task-review-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+/* Toolbar */
+.canvas-toolbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 100;
+  background: oklch(var(--card) / 0.9);
+  backdrop-filter: blur(12px);
+  border: 1px solid oklch(var(--border) / 0.4);
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  max-width: calc(100% - 24px);
+}
+
+.canvas-search {
+  background: transparent;
+  border: 1px solid oklch(var(--border) / 0.4);
+  padding: 4px 8px;
+  font-size: 12px;
+  color: oklch(var(--foreground));
+  width: 160px;
+  outline: none;
+}
+
+.canvas-search:focus {
+  border-color: oklch(var(--brand) / 0.5);
+}
+
+.canvas-kind-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.canvas-kind-chip {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid oklch(var(--border) / 0.4);
+  color: oklch(var(--muted-foreground) / 0.6);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.canvas-kind-chip[data-active="true"] {
+  color: oklch(var(--foreground));
+  border-color: oklch(var(--border));
+  background: oklch(var(--secondary) / 0.4);
+}
+
+.canvas-kind-chip:hover {
+  color: oklch(var(--foreground));
+}
+
+.canvas-toolbar-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.canvas-toolbar-btn {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid oklch(var(--border) / 0.5);
+  color: oklch(var(--muted-foreground));
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.canvas-toolbar-btn:hover {
+  color: oklch(var(--foreground));
+  border-color: oklch(var(--brand) / 0.5);
+}
+
+.canvas-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: oklch(var(--muted-foreground) / 0.5);
+}
+
+.canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.canvas-empty-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: oklch(var(--foreground) / 0.5);
+}
+
+.canvas-empty-body {
+  font-size: 12px;
+  color: oklch(var(--muted-foreground) / 0.5);
+  max-width: 280px;
+  text-align: center;
+  line-height: 1.5;
+}
+
+.canvas-zoom-indicator {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: oklch(var(--muted-foreground) / 0.5);
+  background: oklch(var(--card) / 0.8);
+  backdrop-filter: blur(8px);
+  padding: 2px 8px;
+  border: 1px solid oklch(var(--border) / 0.3);
+  pointer-events: none;
+}
+
 /* ── Task canvas elements ── */
 .task-node-ref {
   display: inline;

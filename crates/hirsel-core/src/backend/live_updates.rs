@@ -23,6 +23,7 @@ pub enum LiveUpdateKind {
     ThreadActivityChanged,
     TasksChanged,
     TaskChanged,
+    CanvasLayoutChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
