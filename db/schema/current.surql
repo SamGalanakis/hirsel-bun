@@ -82,6 +82,7 @@ DEFINE FIELD IF NOT EXISTS updated_at ON TABLE shepherd_thread TYPE string;
 DEFINE FIELD IF NOT EXISTS last_activity_at ON TABLE shepherd_thread TYPE string;
 DEFINE FIELD IF NOT EXISTS archived_at ON TABLE shepherd_thread TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS highlight ON TABLE shepherd_thread TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS focused_task_id ON TABLE shepherd_thread TYPE option<string>;
 DEFINE INDEX IF NOT EXISTS shepherd_thread_project_idx ON TABLE shepherd_thread FIELDS project_id;
 DEFINE INDEX IF NOT EXISTS shepherd_thread_title_idx ON TABLE shepherd_thread FIELDS project_id, title_lower;
 
@@ -142,6 +143,18 @@ DEFINE FIELD OVERWRITE created_at ON TABLE kg_edge DEFAULT time::now();
 -- Canvas document (ephemeral, project-scoped, not part of the knowledge graph)
 DEFINE TABLE IF NOT EXISTS project_canvas SCHEMALESS;
 DEFINE FIELD OVERWRITE updated_at ON TABLE project_canvas VALUE time::now();
+
+-- Tasks (persistent planning documents with status tracking)
+DEFINE TABLE IF NOT EXISTS task SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS task_id ON TABLE task TYPE string;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE task TYPE int;
+DEFINE FIELD IF NOT EXISTS title ON TABLE task TYPE string;
+DEFINE FIELD IF NOT EXISTS status ON TABLE task TYPE string;
+DEFINE FIELD IF NOT EXISTS content ON TABLE task TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS sort_order ON TABLE task TYPE int DEFAULT 0;
+DEFINE FIELD IF NOT EXISTS created_at ON TABLE task TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at ON TABLE task TYPE string;
+DEFINE INDEX IF NOT EXISTS task_project_idx ON TABLE task FIELDS project_id;
 
 -- Shepherd event queue (batched input for event-driven shepherd turns)
 DEFINE TABLE IF NOT EXISTS shepherd_event SCHEMALESS;

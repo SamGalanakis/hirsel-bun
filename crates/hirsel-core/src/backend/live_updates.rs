@@ -21,6 +21,8 @@ pub enum LiveUpdateKind {
     ThreadChanged,
     ThreadHistoryChanged,
     ThreadActivityChanged,
+    TasksChanged,
+    TaskChanged,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

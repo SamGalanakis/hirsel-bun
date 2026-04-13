@@ -22,6 +22,8 @@ struct ShepherdThreadRecord {
     archived_at: Option<String>,
     #[serde(default)]
     highlight: Option<String>,
+    #[serde(default)]
+    focused_task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +42,8 @@ pub struct ShepherdThread {
     pub archived_at: Option<String>,
     #[serde(default)]
     pub highlight: Option<String>,
+    #[serde(default)]
+    pub focused_task_id: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -95,6 +99,7 @@ impl ShepherdThreadStore {
             last_activity_at: now,
             archived_at: None,
             highlight: None,
+            focused_task_id: None,
         };
 
         let _: Option<ShepherdThreadRecord> = db
@@ -249,6 +254,27 @@ impl ShepherdThreadStore {
         Ok(())
     }
 
+    pub async fn set_focused_task(
+        &self,
+        thread_id: &str,
+        task_id: Option<&str>,
+    ) -> ShepherdThreadResult<()> {
+        let db = self.db().await;
+        if let Some(mut record) = self.load_thread_record(thread_id).await? {
+            record.focused_task_id = task_id.map(ToOwned::to_owned);
+            let _: Option<ShepherdThreadRecord> = db
+                .upsert((SHEPHERD_THREAD_TABLE, thread_id))
+                .content(record.clone())
+                .await?;
+            live_updates::publish_thread(
+                record.project_id,
+                record.thread_id.clone(),
+                LiveUpdateKind::ThreadChanged,
+            );
+        }
+        Ok(())
+    }
+
     pub async fn archive_thread(&self, thread_id: &str) -> ShepherdThreadResult<()> {
         let db = self.db().await;
         if let Some(mut record) = self.load_thread_record(thread_id).await? {
@@ -321,6 +347,7 @@ impl ShepherdThreadRecord {
             last_activity_at: self.last_activity_at,
             archived_at: self.archived_at,
             highlight: self.highlight,
+            focused_task_id: self.focused_task_id,
         }
     }
 }

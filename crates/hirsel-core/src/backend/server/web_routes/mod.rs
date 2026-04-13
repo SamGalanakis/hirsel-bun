@@ -3,13 +3,14 @@ mod common;
 mod projects;
 mod settings;
 mod skills;
+mod tasks;
 mod terminal;
 mod threads;
 mod workspace_browser;
 
 use std::sync::Arc;
 
-use axum::routing::{get, post};
+use axum::routing::{get, patch, post};
 use axum::Router;
 
 use super::AppState;
@@ -142,6 +143,19 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/projects/{project_id}/threads/{thread_id}/chat/stop",
             post(threads::stop_thread_chat),
+        )
+        // Tasks
+        .route(
+            "/api/projects/{project_id}/tasks",
+            get(tasks::list_tasks).post(tasks::create_task),
+        )
+        .route(
+            "/api/projects/{project_id}/tasks/{task_id}",
+            patch(tasks::update_task).delete(tasks::delete_task),
+        )
+        .route(
+            "/api/projects/{project_id}/tasks/reorder",
+            post(tasks::reorder_tasks),
         )
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings/provider", post(settings::save_llm_provider))
