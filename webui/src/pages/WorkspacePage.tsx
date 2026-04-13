@@ -12,7 +12,6 @@ import {
   onMount,
 } from "solid-js";
 import { cn } from "@/lib/cn";
-import CanvasSurface from "@/components/CanvasSurface";
 import ChatComposer from "@/components/ChatComposer";
 import ChatTranscript from "@/components/chat/ChatTranscript";
 import SettingsForm from "@/components/SettingsForm";
@@ -47,9 +46,6 @@ import {
 } from "@/lib/api";
 
 const CanvasView = lazy(() => import("@/components/CanvasView"));
-const KnowledgeGraphView = lazy(() => import("@/components/KnowledgeGraphView"));
-const TaskCanvas = lazy(() => import("@/components/TaskCanvas"));
-const TaskList = lazy(() => import("@/components/TaskList"));
 const TerminalPanel = lazy(() => import("@/components/TerminalPanel"));
 const WorkspaceBrowser = lazy(() => import("@/components/WorkspaceBrowser"));
 
@@ -235,16 +231,6 @@ function filesIcon() {
   );
 }
 
-function canvasIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-      <rect x="3" y="4" width="18" height="16" rx="1" />
-      <path d="M3 10h18" />
-      <path d="M10 10v10" />
-    </svg>
-  );
-}
-
 function libraryIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -280,6 +266,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [threadDetail, setThreadDetail] = createSignal<ThreadDetail | null>(null);
   const [threadHistory, setThreadHistory] = createSignal<ApiChatMessage[]>([]);
   const [focusedTask, setFocusedTask] = createSignal<import("@/lib/api/types").Task | null>(null);
+  const [canvasReloadNonce, setCanvasReloadNonce] = createSignal(0);
   const [librarianActivity, setLibrarianActivity] = createSignal<ScopeActivity | null>(null);
   const [librarianHistory, setLibrarianHistory] = createSignal<ApiChatMessage[]>([]);
   const [error, setError] = createSignal("");
@@ -298,7 +285,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   );
   const [inspectorDragging, setInspectorDragging] = createSignal(false);
   const [inspectorFullscreen, setInspectorFullscreen] = createSignal(false);
-  const [inspectorTab, setInspectorTab] = createSignal<"files" | "tasks" | "canvas" | "library">("files");
+  const [inspectorTab, setInspectorTab] = createSignal<"files">("files");
   const [sidebarWidth, setSidebarWidth] = createSignal(
     Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, Number(localStorage.getItem(SIDEBAR_WIDTH_KEY)) || SIDEBAR_DEFAULT)),
   );
@@ -317,7 +304,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [otherProjectThreads, setOtherProjectThreads] = createSignal<Map<number, ThreadSummary[]>>(new Map());
   const [dismissedRuntimeErrorRaw, setDismissedRuntimeErrorRaw] = createSignal<string | null>(null);
   const [scanning, setScanning] = createSignal(false);
-  const [knowledgeGraphReloadToken, setKnowledgeGraphReloadToken] = createSignal(0);
   const [terminalOpen, setTerminalOpen] = createSignal(false);
   const [terminalHeight, setTerminalHeight] = createSignal(
     Math.max(150, Number(localStorage.getItem("hirsel_terminal_height")) || 250),
@@ -442,13 +428,19 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         scheduleRefresh("workspace", refreshWorkspace, 0);
         break;
       case "knowledge_graph_changed":
-        setKnowledgeGraphReloadToken((current) => current + 1);
+        setCanvasReloadNonce((n) => n + 1);
         break;
       case "threads_changed":
       case "thread_changed":
       case "thread_history_changed":
       case "thread_activity_changed":
         scheduleRefresh("workspace", refreshWorkspace, 0);
+        setCanvasReloadNonce((n) => n + 1);
+        break;
+      case "tasks_changed":
+      case "task_changed":
+      case "canvas_layout_changed":
+        setCanvasReloadNonce((n) => n + 1);
         break;
     }
   };
@@ -909,7 +901,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     setComposerFocusNonce((current) => current + 1);
   };
 
-  const openInspectorTab = (tab: "files" | "tasks" | "canvas" | "library") => {
+  const openInspectorTab = (tab: "files") => {
     if (inspectorOpen() && inspectorTab() === tab) {
       setInspectorFullscreen(false);
       setInspectorOpen(false);
@@ -1394,27 +1386,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     >
                       <span class="h-3.5 w-3.5">{filesIcon()}</span>
                     </button>
-                    <button
-                      type="button"
-                      class="flex h-8 w-8 items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground"
-                      onClick={() => openInspectorTab("tasks")}
-                      title="Open tasks"
-                      aria-label="Open tasks panel"
-                    >
-                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3" class="h-3.5 w-3.5">
-                        <rect x="2" y="2" width="12" height="12" rx="1" />
-                        <path d="M5 6h6M5 8.5h4M5 11h5" />
-                      </svg>
-                    </button>
-                    <button
-                      type="button"
-                      class="flex h-8 w-8 items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground"
-                      onClick={() => openInspectorTab("canvas")}
-                      title="Open canvas"
-                      aria-label="Open canvas panel"
-                    >
-                      <span class="h-3.5 w-3.5">{canvasIcon()}</span>
-                    </button>
                   </div>
                 </Show>
               </div>
@@ -1857,6 +1828,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   >
                     <CanvasView
                       projectId={props.projectId}
+                      refreshNonce={canvasReloadNonce()}
                       onOpenThread={(threadId) => {
                         window.location.hash = `#thread/${props.projectId}/${threadId}`;
                       }}
@@ -1912,47 +1884,10 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 }
               >
                 <div class="inspector-tab-bar">
-                  <button
-                    type="button"
-                    class="inspector-tab-btn"
-                    data-active={inspectorTab() === "files"}
-                    onClick={() => setInspectorTab("files")}
-                  >
+                  <div class="inspector-tab-btn" data-active="true">
                     <span class="tab-icon">{filesIcon()}</span>
                     Files
-                  </button>
-                  <button
-                    type="button"
-                    class="inspector-tab-btn"
-                    data-active={inspectorTab() === "tasks"}
-                    onClick={() => setInspectorTab("tasks")}
-                  >
-                    <span class="tab-icon">
-                      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.3">
-                        <rect x="2" y="2" width="12" height="12" rx="1" />
-                        <path d="M5 6h6M5 8.5h4M5 11h5" />
-                      </svg>
-                    </span>
-                    Tasks
-                  </button>
-                  <button
-                    type="button"
-                    class="inspector-tab-btn"
-                    data-active={inspectorTab() === "canvas"}
-                    onClick={() => setInspectorTab("canvas")}
-                  >
-                    <span class="tab-icon">{canvasIcon()}</span>
-                    Canvas
-                  </button>
-                  <button
-                    type="button"
-                    class="inspector-tab-btn"
-                    data-active={inspectorTab() === "library"}
-                    onClick={() => setInspectorTab("library")}
-                  >
-                    <span class="tab-icon">{libraryIcon()}</span>
-                    Library
-                  </button>
+                  </div>
                   <div class="inspector-controls">
                     <Show when={!compactViewport()}>
                       <button
@@ -2011,64 +1946,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     >
                       <WorkspaceBrowser projectId={props.projectId} threadId={props.threadId} />
                     </Suspense>
-                  </Show>
-                  <Show when={inspectorTab() === "tasks"}>
-                    <Suspense
-                      fallback={
-                        <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
-                          loading tasks...
-                        </div>
-                      }
-                    >
-                      <TaskList projectId={props.projectId} />
-                    </Suspense>
-                  </Show>
-                  <Show when={inspectorTab() === "canvas"}>
-                    <Suspense
-                      fallback={
-                        <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
-                          loading canvas...
-                        </div>
-                      }
-                    >
-                      <TaskCanvas
-                        content={focusedTask()?.content ?? null}
-                        taskTitle={focusedTask()?.title}
-                      />
-                    </Suspense>
-                  </Show>
-                  <Show when={inspectorTab() === "library"}>
-                    <div class="relative h-full">
-                      <Suspense
-                        fallback={
-                          <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
-                            loading graph...
-                          </div>
-                        }
-                      >
-                        <KnowledgeGraphView
-                          projectId={props.projectId}
-                          reloadToken={knowledgeGraphReloadToken()}
-                        />
-                      </Suspense>
-                      <button
-                        type="button"
-                        class={cn(
-                          "absolute bottom-3 right-3 flex h-8 items-center gap-1.5 border border-border bg-card px-3 font-mono text-[10px] uppercase tracking-wider transition-colors",
-                          scanning() ? "text-signal-amber" : "text-muted-foreground hover:border-brand/40 hover:text-foreground",
-                        )}
-                        disabled={scanning()}
-                        onClick={() => void handleKnowledgeScan()}
-                        title="Run a full workspace scan to refresh the knowledge graph"
-                        aria-label="Run workspace scan"
-                      >
-                        <svg viewBox="0 0 24 24" class={cn("h-3 w-3", scanning() && "animate-spin")} fill="none" stroke="currentColor" stroke-width="2">
-                          <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                          <path d="M21 3v6h-6" />
-                        </svg>
-                        {scanning() ? "Scanning…" : "Scan"}
-                      </button>
-                    </div>
                   </Show>
                 </div>
               </aside>

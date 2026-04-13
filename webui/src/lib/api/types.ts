@@ -47,7 +47,10 @@ export type LiveUpdateKind =
   | "threads_changed"
   | "thread_changed"
   | "thread_history_changed"
-  | "thread_activity_changed";
+  | "thread_activity_changed"
+  | "tasks_changed"
+  | "task_changed"
+  | "canvas_layout_changed";
 
 export interface LiveUpdateEvent {
   projectId: number;

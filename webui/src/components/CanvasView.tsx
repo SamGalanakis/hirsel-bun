@@ -75,6 +75,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   // Filters
   const [hiddenKinds, setHiddenKinds] = createSignal<Set<string>>(new Set());
   const [searchText, setSearchText] = createSignal("");
+  const [layoutMode, setLayoutMode] = createSignal<"free" | "grid" | "grouped">("free");
 
   let containerRef: HTMLDivElement | undefined;
   let surfaceRef: HTMLDivElement | undefined;
@@ -268,6 +269,38 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
     await loadCanvas();
   };
 
+  const applyLayout = (mode: "free" | "grid" | "grouped") => {
+    setLayoutMode(mode);
+    if (mode === "free") return;
+
+    const current = nodes();
+    if (mode === "grid") {
+      const cols = Math.max(1, Math.ceil(Math.sqrt(current.length)));
+      const repositioned = current.map((n, i) => ({
+        ...n,
+        x: 80 + (i % cols) * 260,
+        y: 80 + Math.floor(i / cols) * 160,
+      }));
+      setNodes(repositioned);
+      scheduleSave();
+    } else if (mode === "grouped") {
+      // Group by kind, arrange each kind in a column
+      const byKind: Record<string, PositionedNode[]> = {};
+      for (const n of current) {
+        (byKind[n.kind] ??= []).push(n);
+      }
+      const kinds = Object.keys(byKind).sort();
+      const repositioned: PositionedNode[] = [];
+      kinds.forEach((kind, col) => {
+        byKind[kind].forEach((n, row) => {
+          repositioned.push({ ...n, x: 80 + col * 260, y: 80 + row * 120 });
+        });
+      });
+      setNodes(repositioned);
+      scheduleSave();
+    }
+  };
+
   const handleCreateTask = async () => {
     const title = window.prompt("Task title:");
     if (!title?.trim()) return;
@@ -321,12 +354,41 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
             )}
           </For>
         </div>
+        <div class="canvas-layout-chips">
+          <button
+            type="button"
+            class="canvas-kind-chip"
+            data-active={layoutMode() === "free"}
+            onClick={() => applyLayout("free")}
+            title="Free placement (drag to reposition)"
+          >
+            free
+          </button>
+          <button
+            type="button"
+            class="canvas-kind-chip"
+            data-active={layoutMode() === "grid"}
+            onClick={() => applyLayout("grid")}
+            title="Arrange in a grid"
+          >
+            grid
+          </button>
+          <button
+            type="button"
+            class="canvas-kind-chip"
+            data-active={layoutMode() === "grouped"}
+            onClick={() => applyLayout("grouped")}
+            title="Group by kind"
+          >
+            grouped
+          </button>
+        </div>
         <div class="canvas-toolbar-actions">
           <button class="canvas-toolbar-btn" onClick={() => void handleCreateTask()}>
             + Task
           </button>
           <button class="canvas-toolbar-btn" onClick={() => void handleResetLayout()}>
-            Reset layout
+            Reset
           </button>
         </div>
       </div>

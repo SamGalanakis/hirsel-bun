@@ -883,6 +883,14 @@
   color: oklch(var(--foreground));
 }
 
+.canvas-layout-chips {
+  display: flex;
+  gap: 4px;
+  padding-left: 8px;
+  margin-left: 4px;
+  border-left: 1px solid oklch(var(--border) / 0.3);
+}
+
 .canvas-toolbar-actions {
   display: flex;
   gap: 6px;
