@@ -12,6 +12,8 @@ import {
   createTask,
   updateTask,
   deleteTask,
+  dispatchTask,
+  reviewAction,
 } from "@/lib/api/tasks";
 import { cn } from "@/lib/cn";
 
@@ -22,21 +24,17 @@ interface TaskListProps {
 }
 
 const STATUS_ORDER: Record<string, number> = {
-  active: 0,
-  todo: 1,
-  done: 2,
+  review: 0,
+  active: 1,
+  todo: 2,
+  done: 3,
 };
 
 const STATUS_DOTS: Record<string, string> = {
   todo: "bg-muted-foreground/30",
   active: "bg-signal-amber",
+  review: "bg-signal-blue",
   done: "bg-signal-green/60",
-};
-
-const STATUS_LABELS: Record<string, string> = {
-  todo: "todo",
-  active: "active",
-  done: "done",
 };
 
 function nextStatus(current: string): string {
@@ -187,7 +185,7 @@ const TaskList: Component<TaskListProps> = (props) => {
                     <button
                       class="mt-1.5 shrink-0 cursor-pointer"
                       onClick={() => void handleStatusToggle(task)}
-                      title={`Status: ${STATUS_LABELS[task.status] ?? task.status}. Click to cycle.`}
+                      title={`Status: ${task.status}. Click to cycle.`}
                     >
                       <span
                         class={cn(
@@ -283,7 +281,85 @@ const TaskList: Component<TaskListProps> = (props) => {
                       >
                         {task.content}
                       </div>
+                      {/* Dispatch button for tasks with content */}
+                      <Show when={task.status === "todo" && task.content}>
+                        <div class="mt-2 flex items-center gap-2">
+                          <button
+                            class="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-signal-amber/30 text-signal-amber/80 hover:bg-signal-amber/10 transition-colors"
+                            onClick={async () => {
+                              try {
+                                const result = await dispatchTask(props.projectId, task.id, "new_thread");
+                                if (result.thread_id) {
+                                  window.location.hash = `#thread/${props.projectId}/${result.thread_id}`;
+                                }
+                                await loadTasks();
+                              } catch (e) {
+                                console.error("Dispatch failed", e);
+                              }
+                            }}
+                          >
+                            Dispatch
+                          </button>
+                        </div>
+                      </Show>
                     </div>
+                  </Show>
+
+                  {/* Review section */}
+                  <Show when={task.status === "review" && task.review_json}>
+                    {(() => {
+                      let review: { summary?: string; changes?: string[]; suggested_next?: string[] } = {};
+                      try {
+                        review = JSON.parse(task.review_json!);
+                      } catch { /* ignore */ }
+
+                      return (
+                        <div class="px-7 pb-3 space-y-2">
+                          <div class="border-l-2 border-signal-blue/40 pl-3">
+                            <div class="font-mono text-[9px] uppercase tracking-wider text-signal-blue/60 mb-1">
+                              Completion Review
+                            </div>
+                            <div class="text-[12px] text-foreground/80 leading-relaxed">
+                              {review.summary ?? "Task completed."}
+                            </div>
+                            <Show when={review.changes && review.changes.length > 0}>
+                              <div class="mt-1 text-[11px] text-muted-foreground/50">
+                                Changes: {review.changes!.join(", ")}
+                              </div>
+                            </Show>
+                          </div>
+                          <div class="flex items-center gap-2 pt-1">
+                            <button
+                              class="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-signal-green/30 text-signal-green/80 hover:bg-signal-green/10 transition-colors"
+                              onClick={async () => {
+                                await reviewAction(props.projectId, task.id, "approve");
+                                await loadTasks();
+                              }}
+                            >
+                              Approve
+                            </button>
+                            <button
+                              class="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-signal-amber/30 text-signal-amber/80 hover:bg-signal-amber/10 transition-colors"
+                              onClick={async () => {
+                                await reviewAction(props.projectId, task.id, "replan");
+                                await loadTasks();
+                              }}
+                            >
+                              Re-plan
+                            </button>
+                            <button
+                              class="font-mono text-[10px] uppercase tracking-wider px-2 py-1 border border-border/30 text-muted-foreground/50 hover:bg-foreground/5 transition-colors"
+                              onClick={async () => {
+                                await reviewAction(props.projectId, task.id, "dismiss");
+                                await loadTasks();
+                              }}
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </Show>
                 </div>
               );

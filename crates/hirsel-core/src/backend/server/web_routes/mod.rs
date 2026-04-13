@@ -157,6 +157,14 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/api/projects/{project_id}/tasks/reorder",
             post(tasks::reorder_tasks),
         )
+        .route(
+            "/api/projects/{project_id}/tasks/{task_id}/dispatch",
+            post(tasks::dispatch_task),
+        )
+        .route(
+            "/api/projects/{project_id}/tasks/{task_id}/review",
+            post(tasks::review_action),
+        )
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings/provider", post(settings::save_llm_provider))
         .route("/api/settings/models", post(settings::save_role_models))

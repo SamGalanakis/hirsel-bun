@@ -629,6 +629,78 @@
   --grid-line: oklch(0.68 0.12 340 / 0.02);
 }
 
+/* ── Task canvas elements ── */
+.task-node-ref {
+  display: inline;
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+  padding: 1px 6px;
+  background: oklch(var(--brand) / 0.08);
+  border: 1px solid oklch(var(--brand) / 0.2);
+  color: oklch(var(--brand));
+  cursor: default;
+}
+.task-mermaid-container {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: oklch(var(--card));
+  border: 1px solid oklch(var(--border) / 0.4);
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+}
+.task-mermaid-container svg {
+  max-width: 100%;
+  height: auto;
+}
+.task-canvas-content {
+  font-size: 14px;
+  line-height: 1.7;
+}
+.task-canvas-content h1 { font-size: 1.5rem; margin: 1.5rem 0 0.5rem; font-weight: 600; }
+.task-canvas-content h2 { font-size: 1.2rem; margin: 1.2rem 0 0.4rem; font-weight: 600; }
+.task-canvas-content h3 { font-size: 1rem; margin: 1rem 0 0.3rem; font-weight: 600; }
+.task-canvas-content ul, .task-canvas-content ol { padding-left: 1.5rem; margin: 0.5rem 0; }
+.task-canvas-content li { margin: 0.2rem 0; }
+.task-canvas-content code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  padding: 1px 5px;
+  background: oklch(var(--secondary));
+  border: 1px solid oklch(var(--border) / 0.3);
+}
+.task-canvas-content pre {
+  background: oklch(var(--secondary));
+  border: 1px solid oklch(var(--border) / 0.3);
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+  margin: 0.6rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+.task-canvas-content pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.task-canvas-content blockquote {
+  border-left: 3px solid oklch(var(--brand) / 0.3);
+  padding-left: 1rem;
+  margin: 0.6rem 0;
+  color: oklch(var(--muted-foreground));
+}
+.task-canvas-content a {
+  color: oklch(var(--signal-blue));
+  text-decoration: none;
+}
+.task-canvas-content a:hover {
+  text-decoration: underline;
+}
+.task-canvas-content input[type="checkbox"] {
+  margin-right: 0.4rem;
+}
+
 /* ═══════════════════════════════════════
    Base Reset
    ═══════════════════════════════════════ */

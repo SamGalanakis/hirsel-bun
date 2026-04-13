@@ -71,6 +71,10 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         "focus_task" => ("Focus Task".to_string(), Some("execute".to_string())),
         "unfocus_task" => ("Unfocus Task".to_string(), Some("execute".to_string())),
         "patch_task_content" => ("Patch Task".to_string(), Some("edit".to_string())),
+        "submit_completion" => (
+            "Submit Completion".to_string(),
+            Some("execute".to_string()),
+        ),
         "update_plan" => ("Plan Update".to_string(), Some("edit".to_string())),
         _ => (name.to_string(), None),
     }

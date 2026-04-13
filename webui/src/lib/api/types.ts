@@ -30,6 +30,8 @@ export interface WorkspaceSnapshot {
   threads: ThreadSummary[];
   thread_detail: ThreadDetail | null;
   thread_history: ChatMessage[];
+  focused_task: Task | null;
+  tasks: Task[];
   librarian_activity: ScopeActivity;
   librarian_history: ChatMessage[];
 }
@@ -75,6 +77,7 @@ export interface Task {
   title: string;
   status: string;
   content: string | null;
+  review_json: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;

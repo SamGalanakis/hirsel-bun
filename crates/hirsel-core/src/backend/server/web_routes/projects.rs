@@ -256,6 +256,26 @@ pub async fn get_workspace_snapshot(
         Vec::new()
     };
 
+    // Load tasks for the project
+    let tasks = crate::backend::tasks::TaskStore::open()
+        .await
+        .ok()
+        .map(|store| {
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(store.list_project_tasks(project_id))
+            })
+        })
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    // Load focused task if thread has one
+    let focused_task = thread_detail
+        .as_ref()
+        .and_then(|(detail, _)| detail.thread.focused_task_id.as_deref())
+        .and_then(|task_id| tasks.iter().find(|t| t.id == task_id))
+        .cloned();
+
     Ok(Json(ApiWorkspaceSnapshot {
         project: to_api_project(&project),
         project_activity: to_api_activity(&project_activity),
@@ -272,6 +292,8 @@ pub async fn get_workspace_snapshot(
             .as_ref()
             .map(|(_, history)| history.iter().map(to_api_message).collect())
             .unwrap_or_default(),
+        focused_task,
+        tasks,
         librarian_activity: to_api_activity(&librarian_activity),
         librarian_history: librarian_history.iter().map(to_api_message).collect(),
     }))

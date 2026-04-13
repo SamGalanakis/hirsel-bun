@@ -56,6 +56,10 @@ pub struct ApiThread {
     pub created_at: String,
     pub updated_at: String,
     pub last_activity_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focused_task_id: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -87,6 +91,8 @@ pub struct ApiWorkspaceSnapshot {
     pub threads: Vec<ApiThreadSummary>,
     pub thread_detail: Option<ApiThreadDetail>,
     pub thread_history: Vec<ApiChatMessage>,
+    pub focused_task: Option<crate::backend::tasks::Task>,
+    pub tasks: Vec<crate::backend::tasks::Task>,
     pub librarian_activity: ApiScopeActivity,
     pub librarian_history: Vec<ApiChatMessage>,
 }
@@ -139,6 +145,8 @@ pub fn to_api_thread(thread: &ShepherdThread) -> ApiThread {
         created_at: thread.created_at.clone(),
         updated_at: thread.updated_at.clone(),
         last_activity_at: thread.last_activity_at.clone(),
+        highlight: thread.highlight.clone(),
+        focused_task_id: thread.focused_task_id.clone(),
     }
 }
 

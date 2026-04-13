@@ -15,6 +15,8 @@ struct TaskRecord {
     #[serde(default)]
     content: Option<String>,
     #[serde(default)]
+    review_json: Option<String>,
+    #[serde(default)]
     sort_order: i64,
     created_at: String,
     updated_at: String,
@@ -29,6 +31,8 @@ pub struct Task {
     pub status: String,
     #[serde(default)]
     pub content: Option<String>,
+    #[serde(default)]
+    pub review_json: Option<String>,
     pub sort_order: i64,
     pub created_at: String,
     pub updated_at: String,
@@ -80,6 +84,7 @@ impl TaskStore {
             title: title.to_string(),
             status: "todo".to_string(),
             content: content.map(ToOwned::to_owned),
+            review_json: None,
             sort_order: next_order,
             created_at: now.clone(),
             updated_at: now,
@@ -169,6 +174,30 @@ impl TaskStore {
             .await
     }
 
+    pub async fn set_review(
+        &self,
+        task_id: &str,
+        review_json: &str,
+    ) -> TaskResult<Task> {
+        let db = self.db().await;
+        let mut record: TaskRecord = db
+            .select((TASK_TABLE, task_id))
+            .await?
+            .ok_or_else(|| TaskError::NotFound(task_id.to_string()))?;
+
+        record.review_json = Some(review_json.to_string());
+        record.status = "review".to_string();
+        record.updated_at = utc_now();
+
+        let _: Option<TaskRecord> = db
+            .upsert((TASK_TABLE, task_id))
+            .content(record.clone())
+            .await?;
+
+        live_updates::publish_project(record.project_id, LiveUpdateKind::TaskChanged);
+        Ok(record.into_task())
+    }
+
     pub async fn delete_task(&self, task_id: &str) -> TaskResult<()> {
         let db = self.db().await;
         let record: Option<TaskRecord> = db.select((TASK_TABLE, task_id)).await?;
@@ -242,6 +271,7 @@ impl TaskRecord {
             title: self.title,
             status: self.status,
             content: self.content,
+            review_json: self.review_json,
             sort_order: self.sort_order,
             created_at: self.created_at,
             updated_at: self.updated_at,

@@ -39,6 +39,31 @@ export async function deleteTask(
   await parseJson<{ ok: true }>(res);
 }
 
+export async function dispatchTask(
+  projectId: number,
+  taskId: string,
+  mode: "continue" | "new_thread",
+  threadId?: string,
+): Promise<{ mode: string; task_id: string; thread_id?: string }> {
+  const res = await apiFetch(`/projects/${projectId}/tasks/${taskId}/dispatch`, {
+    method: "POST",
+    body: JSON.stringify({ mode, thread_id: threadId }),
+  });
+  return parseJson(res);
+}
+
+export async function reviewAction(
+  projectId: number,
+  taskId: string,
+  action: "approve" | "replan" | "dismiss",
+): Promise<void> {
+  const res = await apiFetch(`/projects/${projectId}/tasks/${taskId}/review`, {
+    method: "POST",
+    body: JSON.stringify({ action }),
+  });
+  await parseJson<{ ok: true }>(res);
+}
+
 export async function reorderTasks(
   projectId: number,
   taskIds: string[],

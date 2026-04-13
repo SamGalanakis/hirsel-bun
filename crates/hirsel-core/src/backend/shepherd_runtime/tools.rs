@@ -971,9 +971,6 @@ async fn execute_shepherd_tool(
         "ls" => common.list_workspace(args).await,
         "read_file" => common.read_workspace_file(args).await,
         "grep" => common.grep_workspace(args).await,
-        "patch_canvas_document" => {
-            crate::backend::librarian::patch_canvas_document(project_id, args).await
-        }
         "highlight_thread" => common.highlight_thread_tool(project_id, args).await,
         "dismiss_highlight" => common.dismiss_highlight_tool(project_id, args).await,
         "search_threads" => common.search_threads_tool(project_id, args).await,
@@ -1408,20 +1405,6 @@ impl ToolProvider for ShepherdToolProvider {
                 enabled: true,
                 injected: true,
             },
-            tool_definition! {
-                name: "patch_canvas_document".to_string(),
-                description: format!(
-                    "Patch the project canvas document in place using a validated line patch. Graph-backed references must use node=\"kind:id\".\n\n{}",
-                    TEXT_PATCH_INSTRUCTIONS
-                ),
-                params: vec![
-                    ToolParam::typed("patch", "str"),
-                ],
-                returns: "dict".to_string(),
-                examples: vec![],
-                enabled: true,
-                injected: true,
-            },
         ]);
 
         definitions
@@ -1473,17 +1456,6 @@ pub(super) fn shepherd_prompt_contributions() -> Vec<PromptContribution> {
             "retained_context",
             "Retained Context",
             "Use `read_project_retained_context` and `update_project_retained_context` to persist project-level notes, summaries, or decisions across sessions. Keep retained context concise and up to date.",
-        ),
-        PromptContribution::guidance(
-            "canvas_rules",
-            "Canvas",
-            concat!(
-                "The canvas is an ephemeral project-scoped document that can reference the knowledge graph.\n",
-                "Use `patch_canvas_document(patch)` to update it with plans, diagrams, or working state for the user.\n",
-                "Reference graph nodes with tags like `<hirsel-node-ref node=\"feature:auth\">` instead of copying content.\n",
-                "Always use a single `node=\"kind:id\"` attribute. Do not emit separate `kind=` / `id=` attributes.\n",
-                "Keep the canvas concise and remove stale sections.",
-            ),
         ),
     ]
 }

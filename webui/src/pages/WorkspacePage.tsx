@@ -47,6 +47,7 @@ import {
 } from "@/lib/api";
 
 const KnowledgeGraphView = lazy(() => import("@/components/KnowledgeGraphView"));
+const TaskCanvas = lazy(() => import("@/components/TaskCanvas"));
 const TaskList = lazy(() => import("@/components/TaskList"));
 const TerminalPanel = lazy(() => import("@/components/TerminalPanel"));
 const WorkspaceBrowser = lazy(() => import("@/components/WorkspaceBrowser"));
@@ -277,6 +278,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [threads, setThreads] = createSignal<ThreadSummary[]>([]);
   const [threadDetail, setThreadDetail] = createSignal<ThreadDetail | null>(null);
   const [threadHistory, setThreadHistory] = createSignal<ApiChatMessage[]>([]);
+  const [focusedTask, setFocusedTask] = createSignal<import("@/lib/api/types").Task | null>(null);
   const [librarianActivity, setLibrarianActivity] = createSignal<ScopeActivity | null>(null);
   const [librarianHistory, setLibrarianHistory] = createSignal<ApiChatMessage[]>([]);
   const [error, setError] = createSignal("");
@@ -393,6 +395,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       setThreads(snapshot.threads);
       setThreadDetail(snapshot.thread_detail);
       setThreadHistory(snapshot.thread_history);
+      setFocusedTask(snapshot.focused_task);
       setLibrarianActivity(snapshot.librarian_activity);
       setLibrarianHistory(snapshot.librarian_history);
       setConnectionOk(true);
@@ -1997,33 +2000,18 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     </Suspense>
                   </Show>
                   <Show when={inspectorTab() === "canvas"}>
-                    <div class="h-full overflow-y-auto">
-                      <Show
-                        when={focusHtml().trim()}
-                        fallback={
-                          <div class="flex h-full flex-col items-start gap-5 p-6">
-                            <div class="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40 flex items-center gap-2">
-                              <span class="inline-block h-px w-6 bg-muted-foreground/30" />
-                              <span>Canvas</span>
-                            </div>
-                            <h3 class="font-display text-2xl font-normal tracking-tight text-foreground">
-                              Nothing on the canvas yet
-                            </h3>
-                            <p class="max-w-xs text-[13px] leading-[1.7] text-muted-foreground">
-                              The canvas is your project's living document. As you work, the librarian writes structured notes here — findings, diffs, diagrams, decisions worth keeping.
-                            </p>
-                          </div>
-                        }
-                      >
-                        <Show when={focusSource()}>
-                          <div class="canvas-provenance">
-                            <span class="canvas-provenance-dot" />
-                            <span>{focusSource()}</span>
-                          </div>
-                        </Show>
-                        <CanvasSurface html={focusHtml()} projectId={props.projectId} />
-                      </Show>
-                    </div>
+                    <Suspense
+                      fallback={
+                        <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
+                          loading canvas...
+                        </div>
+                      }
+                    >
+                      <TaskCanvas
+                        content={focusedTask()?.content ?? null}
+                        taskTitle={focusedTask()?.title}
+                      />
+                    </Suspense>
                   </Show>
                   <Show when={inspectorTab() === "library"}>
                     <div class="relative h-full">

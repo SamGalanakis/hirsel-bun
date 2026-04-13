@@ -89,6 +89,19 @@ impl ToolProvider for TaskToolProvider {
                     injected: true,
                 },
                 tool_definition! {
+                    name: "submit_completion".to_string(),
+                    description: "Submit a completion review for the focused task. Call this when the task's work is done. Provides a summary and suggested next steps for the user.".to_string(),
+                    params: vec![
+                        ToolParam::typed("summary", "str"),
+                        ToolParam::optional("changes", "list"),
+                        ToolParam::optional("suggested_next", "list"),
+                    ],
+                    returns: "dict".to_string(),
+                    examples: vec![],
+                    enabled: true,
+                    injected: true,
+                },
+                tool_definition! {
                     name: "patch_task_content".to_string(),
                     description: format!(
                         "Patch the focused task's content (markdown) using a line-based patch.\n\n{}",
@@ -114,6 +127,7 @@ impl ToolProvider for TaskToolProvider {
             "focus_task" => self.focus_task(args).await,
             "unfocus_task" => self.unfocus_task().await,
             "patch_task_content" => self.patch_task_content(args).await,
+            "submit_completion" => self.submit_completion(args).await,
             _ => ToolResult::err(json!({ "error": format!("Unknown tool: {name}") })),
         }
     }
@@ -211,6 +225,62 @@ impl TaskToolProvider {
             return ToolResult::err(json!({ "error": e.to_string() }));
         }
         ToolResult::ok(json!({ "focused": false }))
+    }
+
+    async fn submit_completion(&self, args: &Value) -> ToolResult {
+        let Some(thread_id) = &self.thread_id else {
+            return ToolResult::err(json!({ "error": "submit_completion requires a thread context" }));
+        };
+        let Some(summary) = args.get("summary").and_then(|v| v.as_str()) else {
+            return ToolResult::err(json!({ "error": "summary is required" }));
+        };
+        let changes = args
+            .get("changes")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let suggested_next = args
+            .get("suggested_next")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        // Get focused task from thread
+        let thread_store = match ShepherdThreadStore::open().await {
+            Ok(s) => s,
+            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
+        };
+        let thread = match thread_store.get_thread(thread_id).await {
+            Ok(t) => t,
+            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
+        };
+        let Some(task_id) = &thread.focused_task_id else {
+            return ToolResult::err(json!({
+                "error": "No task focused. submit_completion requires a focused task."
+            }));
+        };
+
+        let review = json!({
+            "summary": summary,
+            "changes": changes,
+            "suggested_next": suggested_next,
+        });
+
+        let task_store = match TaskStore::open().await {
+            Ok(s) => s,
+            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
+        };
+        match task_store
+            .set_review(task_id, &serde_json::to_string(&review).unwrap_or_default())
+            .await
+        {
+            Ok(task) => ToolResult::ok(json!({
+                "task_id": task.id,
+                "status": task.status,
+                "review": review,
+            })),
+            Err(e) => ToolResult::err(json!({ "error": e.to_string() })),
+        }
     }
 
     async fn patch_task_content(&self, args: &Value) -> ToolResult {
