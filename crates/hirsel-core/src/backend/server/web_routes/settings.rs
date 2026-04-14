@@ -42,6 +42,7 @@ struct ApiRoleModelsResponse {
     shepherd: ApiRoleModelResponse,
     librarian: ApiRoleModelResponse,
     thread: ApiRoleModelResponse,
+    search: ApiRoleModelResponse,
 }
 
 #[derive(Serialize)]
@@ -103,6 +104,8 @@ pub struct SaveRoleModelsBody {
     librarian: SaveRoleModelInput,
     #[serde(default)]
     thread: SaveRoleModelInput,
+    #[serde(default)]
+    search: SaveRoleModelInput,
 }
 
 #[derive(Deserialize, Default)]
@@ -221,6 +224,7 @@ fn build_model_catalog(settings: &LlmSettings) -> ApiLlmModelCatalog {
         RuntimeModelRole::Shepherd,
         RuntimeModelRole::Librarian,
         RuntimeModelRole::Thread,
+        RuntimeModelRole::Search,
     ] {
         let (effective_model, _) = llm_provider::resolve_model_for_role(settings, &provider, role);
         ensure_model_option(
@@ -333,6 +337,7 @@ pub async fn get_settings(
             shepherd: role_model_response(&llm_settings, RuntimeModelRole::Shepherd),
             librarian: role_model_response(&llm_settings, RuntimeModelRole::Librarian),
             thread: role_model_response(&llm_settings, RuntimeModelRole::Thread),
+            search: role_model_response(&llm_settings, RuntimeModelRole::Search),
         },
         model_catalog: build_model_catalog(&llm_settings),
         codex_configured: codex.is_some(),
@@ -392,7 +397,7 @@ pub async fn save_role_models(
         shepherd: normalize_role_model_input(body.shepherd),
         librarian: normalize_role_model_input(body.librarian),
         thread: normalize_role_model_input(body.thread),
-        search: None,
+        search: normalize_role_model_input(body.search),
     };
     let provider = llm_provider::provider_metadata(&settings);
 
@@ -400,6 +405,7 @@ pub async fn save_role_models(
         RuntimeModelRole::Shepherd,
         RuntimeModelRole::Librarian,
         RuntimeModelRole::Thread,
+        RuntimeModelRole::Search,
     ] {
         let role_cfg = match role {
             RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),
@@ -420,6 +426,7 @@ pub async fn save_role_models(
     settings.role_models = if role_models.shepherd.is_none()
         && role_models.librarian.is_none()
         && role_models.thread.is_none()
+        && role_models.search.is_none()
     {
         None
     } else {
@@ -430,6 +437,7 @@ pub async fn save_role_models(
         RuntimeModelRole::Shepherd,
         RuntimeModelRole::Librarian,
         RuntimeModelRole::Thread,
+        RuntimeModelRole::Search,
     ] {
         let role_cfg = match role {
             RuntimeModelRole::Shepherd => role_models.shepherd.as_ref(),

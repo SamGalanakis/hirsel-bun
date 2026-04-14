@@ -12,8 +12,8 @@ import {
   onMount,
 } from "solid-js";
 import { cn } from "@/lib/cn";
-import ChatComposer from "@/components/ChatComposer";
-import ChatTranscript from "@/components/chat/ChatTranscript";
+import { resetCanvasLayout, drainCompanionActions } from "@/lib/api/canvas";
+import ChatSurface from "@/components/chat/ChatSurface";
 import SettingsForm from "@/components/SettingsForm";
 import { matchesAction } from "@/lib/keybindings";
 import {
@@ -46,18 +46,22 @@ import {
 } from "@/lib/api";
 
 const CanvasView = lazy(() => import("@/components/CanvasView"));
+import CommandPalette from "@/components/CommandPalette";
 const TerminalPanel = lazy(() => import("@/components/TerminalPanel"));
 const WorkspaceBrowser = lazy(() => import("@/components/WorkspaceBrowser"));
 
 interface WorkspacePageProps {
   projectId: number;
-  threadId?: string;
   librarianView?: boolean;
 }
 
 const ROOT_CHANNEL_LABEL = "Shepherd";
 const MOBILE_MEDIA = "(max-width: 900px)";
 const INSPECTOR_WIDTH_KEY = "hirsel_workspace_inspector_width";
+const SHEPHERD_WIDTH_KEY = "hirsel_shepherd_width";
+const SHEPHERD_OPEN_KEY = "hirsel_shepherd_open";
+const SHEPHERD_MIN = 300;
+const SHEPHERD_DEFAULT = 380;
 const INSPECTOR_MIN = 320;
 const INSPECTOR_DEFAULT = 640;
 const SIDEBAR_WIDTH_KEY = "hirsel_workspace_sidebar_width";
@@ -257,6 +261,30 @@ function settingsIcon() {
 }
 
 const WorkspacePage: Component<WorkspacePageProps> = (props) => {
+  const [focusedThreadId, setFocusedThreadId] = createSignal<string | null>(null);
+  const threadId = () => focusedThreadId() ?? undefined;
+  const [paletteOpen, setPaletteOpen] = createSignal(false);
+  const [paletteQuery, setPaletteQuery] = createSignal("");
+  const [shepherdPanelOpen, setShepherdPanelOpen] = createSignal(
+    localStorage.getItem(SHEPHERD_OPEN_KEY) === "1",
+  );
+  const [shepherdPanelWidth, setShepherdPanelWidth] = createSignal(
+    Math.max(SHEPHERD_MIN, Number(localStorage.getItem(SHEPHERD_WIDTH_KEY)) || SHEPHERD_DEFAULT),
+  );
+  const [shepherdDragging, setShepherdDragging] = createSignal(false);
+  const toggleShepherdPanel = () => {
+    const next = !shepherdPanelOpen();
+    setShepherdPanelOpen(next);
+    try {
+      localStorage.setItem(SHEPHERD_OPEN_KEY, next ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  };
+  const [canvasFocusRequest, setCanvasFocusRequest] = createSignal<string | null>(null);
+  const [canvasCreateRequest, setCanvasCreateRequest] = createSignal<string | null>(null);
+  const [canvasCenterRequest, setCanvasCenterRequest] = createSignal<string | null>(null);
+  const [canvasCompanionQuery, setCanvasCompanionQuery] = createSignal("");
   const [projects, setProjects] = createSignal<Project[]>([]);
   const [project, setProject] = createSignal<Project | null>(null);
   const [projectActivity, setProjectActivity] = createSignal<ScopeActivity | null>(null);
@@ -275,7 +303,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [compactViewport, setCompactViewport] = createSignal(
     window.matchMedia(MOBILE_MEDIA).matches,
   );
-  const [inspectorOpen, setInspectorOpen] = createSignal(window.innerWidth >= 1180);
+  const [inspectorOpen, setInspectorOpen] = createSignal(false);
   const [inspectorWidth, setInspectorWidth] = createSignal(
     Math.min(
       Math.floor(window.innerWidth * 0.46),
@@ -294,6 +322,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = createSignal(false);
   const [input, setInput] = createSignal("");
+  // Root/shepherd panel has its own input state so it doesn't collide with an open thread focus overlay
+  const [rootInput, setRootInput] = createSignal("");
+  const [rootStickToBottom, setRootStickToBottom] = createSignal(true);
+  const [rootComposerFocusNonce, setRootComposerFocusNonce] = createSignal(0);
+  let rootTranscriptRef: HTMLDivElement | undefined;
   const [optimisticLiveTurn, setOptimisticLiveTurn] = createSignal<LiveTurn | null>(null);
   const [optimisticTurnStartedAt, setOptimisticTurnStartedAt] = createSignal<string | null>(null);
   const [composerFocusNonce, setComposerFocusNonce] = createSignal(0);
@@ -370,7 +403,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       const [projectList, snapshot] = await Promise.all([
         listProjects(),
         getWorkspaceSnapshot(props.projectId, {
-          threadId: props.threadId,
+          threadId: threadId(),
           librarian: props.librarianView,
         }),
       ]);
@@ -442,6 +475,31 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       case "canvas_layout_changed":
         setCanvasReloadNonce((n) => n + 1);
         break;
+      case "companion_action":
+        void drainAndApplyCompanionActions();
+        break;
+    }
+  };
+
+  const drainAndApplyCompanionActions = async () => {
+    try {
+      const actions = await drainCompanionActions(props.projectId);
+      for (const { action, payload } of actions) {
+        if (action === "filter_canvas") {
+          const q = String(payload?.query ?? "");
+          setCanvasCompanionQuery(q);
+        } else if (action === "focus_node") {
+          const kind = String(payload?.kind ?? "");
+          const nodeId = String(payload?.node_id ?? "");
+          if (kind && nodeId) setCanvasFocusRequest(`${kind}:${nodeId}`);
+        } else if (action === "center_on_node") {
+          const kind = String(payload?.kind ?? "");
+          const nodeId = String(payload?.node_id ?? "");
+          if (kind && nodeId) setCanvasCenterRequest(`${kind}:${nodeId}`);
+        }
+      }
+    } catch (e) {
+      console.error("Failed to drain companion actions", e);
     }
   };
 
@@ -457,7 +515,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   createEffect(
     on(
-      () => [props.projectId, props.threadId],
+      () => [props.projectId, threadId()],
       () => {
         setProjects([]);
         setProject(null);
@@ -490,6 +548,18 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   createEffect(() => {
     const handler = (event: KeyboardEvent) => {
+      const isPaletteShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
+      if (isPaletteShortcut) {
+        event.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      const isShepherdShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
+      if (isShepherdShortcut) {
+        event.preventDefault();
+        toggleShepherdPanel();
+        return;
+      }
       if (matchesAction(event, "toggle-terminal")) {
         event.preventDefault();
         setTerminalOpen((v) => !v);
@@ -509,6 +579,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
           event.preventDefault();
           setSettingsOpen(false);
           setProjectSettingsOpen(false);
+          return;
+        }
+        if (focusedThreadId()) {
+          event.preventDefault();
+          setFocusedThreadId(null);
           return;
         }
         if (terminalOpen()) {
@@ -549,7 +624,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   createEffect(
     on(
-      () => props.threadId,
+      () => threadId(),
       () => {
         setStickToBottom(true);
         queueMicrotask(() => {
@@ -580,17 +655,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
     const backendLiveTurn = props.librarianView
       ? librarianActivity()?.live_turn
-      : props.threadId
+      : threadId()
         ? threadDetail()?.activity.live_turn
         : projectActivity()?.live_turn;
     const backendHasActiveTurn = props.librarianView
       ? librarianActivity()?.has_active_turn ?? false
-      : props.threadId
+      : threadId()
         ? threadDetail()?.activity.has_active_turn ?? false
         : projectActivity()?.has_active_turn ?? false;
     const backendSessionStatus = props.librarianView
       ? librarianActivity()?.session?.status ?? null
-      : props.threadId
+      : threadId()
         ? threadDetail()?.activity.session?.status ?? null
         : projectActivity()?.session?.status ?? null;
 
@@ -607,7 +682,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
     const runtimeError = props.librarianView
       ? librarianActivity()?.session?.last_error
-      : props.threadId
+      : threadId()
         ? threadDetail()?.activity.session?.last_error
         : projectActivity()?.session?.last_error;
     if (runtimeError) {
@@ -656,7 +731,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const activeModel = () => {
     const models = roleModels();
     if (!models) return "";
-    const role = props.librarianView ? models.librarian : props.threadId ? models.thread : models.shepherd;
+    const role = props.librarianView ? models.librarian : threadId() ? models.thread : models.shepherd;
     const model = role.effective_model;
     const variant = role.effective_model_variant;
     if (!model) return "";
@@ -664,14 +739,14 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   };
 
   const activeThreadPanel = createMemo(
-    () => threads().find((thread) => thread.thread.id === props.threadId) ?? null,
+    () => threads().find((thread) => thread.thread.id === threadId()) ?? null,
   );
 
   const activeTitle = () => {
     if (settingsOpen()) return "Settings";
     if (projectSettingsOpen()) return "Project Settings";
     if (props.librarianView) return "Librarian";
-    if (!props.threadId) return ROOT_CHANNEL_LABEL;
+    if (!threadId()) return ROOT_CHANNEL_LABEL;
     return threadDetail()?.thread.title || activeThreadPanel()?.thread.title || "Untitled Thread";
   };
 
@@ -679,15 +754,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     const sessionStatus = activeSessionStatus();
     if (sessionStatus) return sessionStatus;
     if (activeExecutionStatus()) return "running";
-    if (!props.threadId && !props.librarianView) return "ready";
+    if (!threadId() && !props.librarianView) return "ready";
     return threadDetail()?.thread.status || activeThreadPanel()?.thread.status || "active";
   };
 
   const projectScopeStatus = () =>
-    !props.threadId && !props.librarianView && isRunning() ? "running" : "ready";
+    !threadId() && !props.librarianView && isRunning() ? "running" : "ready";
 
   const activeMessages = () => {
-    const history = (props.librarianView ? librarianHistory() : (props.threadId ? threadHistory() : projectHistory())).filter(
+    const history = (props.librarianView ? librarianHistory() : (threadId() ? threadHistory() : projectHistory())).filter(
       (message) => message.role !== "system",
     );
     const optimistic = optimisticUserMessage();
@@ -703,7 +778,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const activeLiveTurn = () => {
     const backendLiveTurn = props.librarianView
       ? librarianActivity()?.live_turn ?? null
-      : props.threadId
+      : threadId()
         ? threadDetail()?.activity.live_turn ?? null
         : projectActivity()?.live_turn ?? null;
     return backendLiveTurn ?? optimisticLiveTurn();
@@ -719,7 +794,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
 
   const activeSessionStatus = () => {
     if (props.librarianView) return librarianActivity()?.session?.status ?? null;
-    if (props.threadId) return threadDetail()?.activity.session?.status ?? activeThreadPanel()?.activity.session?.status ?? null;
+    if (threadId()) return threadDetail()?.activity.session?.status ?? activeThreadPanel()?.activity.session?.status ?? null;
     return projectActivity()?.session?.status ?? null;
   };
 
@@ -727,7 +802,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     classifyWorkspaceError(
       props.librarianView
         ? librarianActivity()?.session?.last_error
-        : props.threadId
+        : threadId()
           ? threadDetail()?.activity.session?.last_error
           : projectActivity()?.session?.last_error,
     );
@@ -809,8 +884,8 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     setOptimisticLiveTurn(null);
     if (props.librarianView) {
       await stopLibrarianChat(props.projectId);
-    } else if (props.threadId) {
-      await stopThreadChat(props.projectId, props.threadId);
+    } else if (threadId()) {
+      await stopThreadChat(props.projectId, threadId()!);
     } else {
       await stopChat(props.projectId);
     }
@@ -851,6 +926,26 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     }
   };
 
+  const handleRootSubmit = async () => {
+    const content = rootInput().trim();
+    if (!content) return;
+    setRootInput("");
+    setRootStickToBottom(true);
+    try {
+      await sendChatMessage(props.projectId, content);
+    } catch (error) {
+      console.error("Failed to send shepherd message", error);
+    }
+  };
+
+  const handleRootStop = async () => {
+    try {
+      await stopChat(props.projectId);
+    } catch (error) {
+      console.error("Failed to stop shepherd turn", error);
+    }
+  };
+
   const handleSubmit = async (event?: Event) => {
     event?.preventDefault();
     const content = input().trim();
@@ -876,8 +971,8 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     try {
       const response = props.librarianView
         ? await sendLibrarianMessage(props.projectId, content)
-        : props.threadId
-          ? await sendThreadMessage(props.projectId, props.threadId, content)
+        : threadId()
+          ? await sendThreadMessage(props.projectId, threadId()!, content)
           : await sendChatMessage(props.projectId, content);
       if (shouldStartOptimisticTurn && !response.started) {
         clearOptimisticTurn();
@@ -967,7 +1062,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 {projectName()}
               </a>
             </h1>
-            <Show when={props.threadId && !settingsOpen() && !projectSettingsOpen()}>
+            <Show when={threadId() && !settingsOpen() && !projectSettingsOpen()}>
               <span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70 md:inline">
                 Thread
               </span>
@@ -1191,11 +1286,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                 href={`#project/${project.id}`}
                                 class={cn(
                                   "flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                  !props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                  !threadId() && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
                                     ? "text-foreground"
                                     : "text-muted-foreground hover:text-foreground",
                                 )}
-                                style={!props.threadId && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                style={!threadId() && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
                                   ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" }
                                   : undefined}
                                 onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
@@ -1243,16 +1338,16 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                   const label = statusLabel(status());
                                   return progress ? `${progress} ${label}` : label;
                                 };
-                                const isActive = () => props.threadId === thread.thread.id && isCurrent() && !settingsOpen() && !projectSettingsOpen();
+                                const isActive = () => threadId() === thread.thread.id && isCurrent() && !settingsOpen() && !projectSettingsOpen();
 
                                 const hasHighlight = () => !!thread.thread.highlight;
 
                                 return (
-                                  <a
-                                    href={`#thread/${project.id}/${thread.thread.id}`}
+                                  <button
+                                    type="button"
                                     data-thread-id={thread.thread.id}
                                     class={cn(
-                                      "group flex flex-col gap-0.5 px-2 py-1.5 text-xs transition-all",
+                                      "group flex w-full flex-col gap-0.5 px-2 py-1.5 text-left text-xs transition-all",
                                       isActive()
                                         ? "text-foreground"
                                         : "text-muted-foreground hover:text-foreground active:scale-[0.995]",
@@ -1264,7 +1359,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                       ...(isActive() ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" } : {}),
                                       ...(hasHighlight() ? { "box-shadow": "inset 0 0 12px oklch(var(--signal-amber) / 0.08)" } : {}),
                                     }}
-                                    onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
+                                    onClick={() => {
+                                      setMobileSidebarOpen(false);
+                                      setSettingsOpen(false);
+                                      setProjectSettingsOpen(false);
+                                      if (project.id !== props.projectId) {
+                                        window.location.hash = `#project/${project.id}`;
+                                        queueMicrotask(() => setFocusedThreadId(thread.thread.id));
+                                      } else {
+                                        setFocusedThreadId(thread.thread.id);
+                                      }
+                                    }}
                                   >
                                     <div class="flex items-center gap-2">
                                       <span class={cn(
@@ -1279,7 +1384,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                         {thread.thread.highlight}
                                       </div>
                                     </Show>
-                                  </a>
+                                  </button>
                                 );
                               }}
                             </For>
@@ -1355,7 +1460,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   </span>
                 </Show>
                 <Show when={!settingsOpen() && !projectSettingsOpen()}>
-                  <Show when={props.threadId}>
+                  <Show when={threadId()}>
                     <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70">
                       Thread
                     </span>
@@ -1787,52 +1892,42 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 }
               >
                 <Show
-                  when={!props.threadId && !props.librarianView}
+                  when={!props.librarianView}
                   fallback={
-                    <>
-                      <ChatTranscript
-                        title={activeTitle()}
-                        threadId={props.threadId}
-                        librarianView={props.librarianView}
-                        loaded={props.threadId ? !!threadDetail() : !!project()}
-                        messages={activeMessages()}
-                        liveTurn={activeLiveTurn()}
-                        runtimeError={visibleRuntimeError()}
-                        scanning={scanning()}
-                        stickToBottom={stickToBottom()}
-                        onTranscriptRef={(element) => {
-                          transcriptRef = element;
-                        }}
-                        onScroll={updateStickinessFromScroll}
-                        onScrollToBottom={() => {
-                          setStickToBottom(true);
-                          if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
-                        }}
-                        onKnowledgeScan={() => void handleKnowledgeScan()}
-                        onOpenSettings={() => setSettingsOpen(true)}
-                        onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
-                        onSuggestion={useSuggestion}
-                      />
-
-                      <div class="relative shrink-0 border-t border-border/40 bg-card">
-                        <div class="mx-auto max-w-2xl px-3 pb-3 pt-2">
-                          <ChatComposer
-                            projectId={props.projectId}
-                            threadId={props.threadId}
-                            value={input()}
-                            running={isRunning()}
-                            justStopped={justStopped()}
-                            focusNonce={composerFocusNonce()}
-                            onValueChange={setInput}
-                            onSubmit={() => void handleSubmit()}
-                            onStop={() => void handleStop()}
-                          />
-                        </div>
-                      </div>
-                    </>
+                    <ChatSurface
+                      variant="main"
+                      scope="librarian"
+                      projectId={props.projectId}
+                      title={activeTitle()}
+                      loaded={!!project()}
+                      messages={activeMessages()}
+                      liveTurn={activeLiveTurn()}
+                      runtimeError={visibleRuntimeError()}
+                      scanning={scanning()}
+                      stickToBottom={stickToBottom()}
+                      inputValue={input()}
+                      running={isRunning()}
+                      justStopped={justStopped()}
+                      composerFocusNonce={composerFocusNonce()}
+                      onInputChange={setInput}
+                      onSubmit={() => void handleSubmit()}
+                      onStop={() => void handleStop()}
+                      onTranscriptRef={(el) => {
+                        transcriptRef = el;
+                      }}
+                      onScroll={updateStickinessFromScroll}
+                      onScrollToBottom={() => {
+                        setStickToBottom(true);
+                        if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
+                      }}
+                      onKnowledgeScan={() => void handleKnowledgeScan()}
+                      onOpenSettings={() => setSettingsOpen(true)}
+                      onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
+                      onSuggestion={useSuggestion}
+                    />
                   }
                 >
-                  {/* Canvas view — the project home */}
+                  {/* Canvas view — the project home. Always resident when not in librarian mode. */}
                   <Suspense
                     fallback={
                       <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
@@ -1843,14 +1938,228 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     <CanvasView
                       projectId={props.projectId}
                       refreshNonce={canvasReloadNonce()}
-                      onOpenThread={(threadId) => {
-                        window.location.hash = `#thread/${props.projectId}/${threadId}`;
+                      onOpenThread={(tid) => setFocusedThreadId(tid)}
+                      focusRequest={canvasFocusRequest()}
+                      createRequest={canvasCreateRequest()}
+                      centerRequest={canvasCenterRequest()}
+                      externalSearch={
+                        paletteOpen() ? paletteQuery() : canvasCompanionQuery()
+                      }
+                      onRequestHandled={() => {
+                        setCanvasFocusRequest(null);
+                        setCanvasCreateRequest(null);
+                        setCanvasCenterRequest(null);
                       }}
+                      onRequestPalette={() => setPaletteOpen(true)}
                     />
                   </Suspense>
+
+                  {/* Thread focus overlay — floats above the canvas */}
+                  <Show when={threadId()}>
+                    <div class="thread-focus-overlay">
+                      <div class="thread-focus-header">
+                        <button
+                          type="button"
+                          class="thread-focus-back"
+                          onClick={() => setFocusedThreadId(null)}
+                          title="Back to canvas (Esc)"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10 3L5 8l5 5" />
+                          </svg>
+                          <span>Canvas</span>
+                        </button>
+                        <span class="thread-focus-sep">/</span>
+                        <span class="thread-focus-kind">Thread</span>
+                        <span class="thread-focus-title">{activeTitle()}</span>
+                        <span class={cn("thread-focus-status-dot", statusDotClass(activeStatus()))} />
+                        <div class="thread-focus-spacer" />
+                        <button
+                          type="button"
+                          class="thread-focus-close"
+                          onClick={() => setFocusedThreadId(null)}
+                          title="Close (Esc)"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 3l10 10M13 3L3 13" />
+                          </svg>
+                        </button>
+                      </div>
+                      <ChatSurface
+                        variant="overlay"
+                        scope="thread"
+                        projectId={props.projectId}
+                        threadId={threadId()}
+                        title={activeTitle()}
+                        loaded={!!threadDetail()}
+                        messages={activeMessages()}
+                        liveTurn={activeLiveTurn()}
+                        runtimeError={visibleRuntimeError()}
+                        scanning={scanning()}
+                        stickToBottom={stickToBottom()}
+                        inputValue={input()}
+                        running={isRunning()}
+                        justStopped={justStopped()}
+                        composerFocusNonce={composerFocusNonce()}
+                        onInputChange={setInput}
+                        onSubmit={() => void handleSubmit()}
+                        onStop={() => void handleStop()}
+                        onTranscriptRef={(el) => {
+                          transcriptRef = el;
+                        }}
+                        onScroll={updateStickinessFromScroll}
+                        onScrollToBottom={() => {
+                          setStickToBottom(true);
+                          if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
+                        }}
+                        onKnowledgeScan={() => void handleKnowledgeScan()}
+                        onOpenSettings={() => setSettingsOpen(true)}
+                        onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
+                        onSuggestion={useSuggestion}
+                        class="thread-focus-chat"
+                      />
+                    </div>
+                  </Show>
                 </Show>
               </Show>
             </main>
+
+            {/* Shepherd companion panel */}
+            <Show
+              when={shepherdPanelOpen()}
+              fallback={
+                <button
+                  type="button"
+                  class="shepherd-edge"
+                  onClick={toggleShepherdPanel}
+                  title="Open Shepherd (⌘J)"
+                  aria-label="Open Shepherd panel"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 4h10M3 8h10M3 12h7" />
+                  </svg>
+                  <span class="shepherd-edge-label">Shepherd</span>
+                </button>
+              }
+            >
+              <div
+                class="shepherd-resize-handle"
+                data-dragging={shepherdDragging()}
+                onPointerDown={(event) => {
+                  event.preventDefault();
+                  setShepherdDragging(true);
+                  const startX = event.clientX;
+                  const startW = shepherdPanelWidth();
+                  const onMove = (moveEvent: PointerEvent) => {
+                    const delta = startX - moveEvent.clientX;
+                    const maxW = Math.floor(window.innerWidth * 0.5);
+                    const next = Math.max(SHEPHERD_MIN, Math.min(maxW, startW + delta));
+                    setShepherdPanelWidth(next);
+                  };
+                  const onUp = () => {
+                    setShepherdDragging(false);
+                    localStorage.setItem(SHEPHERD_WIDTH_KEY, String(shepherdPanelWidth()));
+                    window.removeEventListener("pointermove", onMove);
+                    window.removeEventListener("pointerup", onUp);
+                  };
+                  window.addEventListener("pointermove", onMove);
+                  window.addEventListener("pointerup", onUp);
+                }}
+              />
+              <aside
+                class="shepherd-panel"
+                style={{ width: `${shepherdPanelWidth()}px` }}
+                aria-label="Shepherd companion"
+              >
+                <header class="shepherd-panel-header">
+                  <span
+                    class="shepherd-panel-kind"
+                    style={{ color: "oklch(var(--brand))" }}
+                  >
+                    Shepherd
+                  </span>
+                  <span
+                    class={cn(
+                      "shepherd-panel-status-dot",
+                      projectActivity()?.has_active_turn
+                        ? "bg-signal-green"
+                        : "bg-muted-foreground/40",
+                    )}
+                  />
+                  <div class="shepherd-panel-spacer" />
+                  <button
+                    type="button"
+                    class="shepherd-panel-close"
+                    onClick={toggleShepherdPanel}
+                    title="Close (⌘J)"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M10 4L14 8L10 12M4 4L8 8L4 12" />
+                    </svg>
+                  </button>
+                </header>
+                <ChatSurface
+                  variant="panel"
+                  scope="root"
+                  projectId={props.projectId}
+                  title={ROOT_CHANNEL_LABEL}
+                  loaded={!!project()}
+                  messages={projectHistory().filter((m) => m.role !== "system")}
+                  liveTurn={projectActivity()?.live_turn ?? null}
+                  runtimeError={null}
+                  scanning={false}
+                  stickToBottom={rootStickToBottom()}
+                  inputValue={rootInput()}
+                  running={projectActivity()?.has_active_turn ?? false}
+                  justStopped={false}
+                  composerFocusNonce={rootComposerFocusNonce()}
+                  onInputChange={setRootInput}
+                  onSubmit={() => void handleRootSubmit()}
+                  onStop={() => void handleRootStop()}
+                  onTranscriptRef={(el) => {
+                    rootTranscriptRef = el;
+                  }}
+                  onScroll={() => {
+                    if (!rootTranscriptRef) return;
+                    const el = rootTranscriptRef;
+                    const atBottom =
+                      el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+                    setRootStickToBottom(atBottom);
+                  }}
+                  onScrollToBottom={() => {
+                    setRootStickToBottom(true);
+                    if (rootTranscriptRef)
+                      rootTranscriptRef.scrollTop = rootTranscriptRef.scrollHeight;
+                  }}
+                  onKnowledgeScan={() => void handleKnowledgeScan()}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onDismissRuntimeError={() => {}}
+                  onSuggestion={(text) => setRootInput(text)}
+                />
+              </aside>
+            </Show>
+
+            <CommandPalette
+              projectId={props.projectId}
+              open={paletteOpen()}
+              onClose={() => setPaletteOpen(false)}
+              onQueryChange={setPaletteQuery}
+              onSelectThread={(tid) => setFocusedThreadId(tid)}
+              onFocusNode={(key) => setCanvasFocusRequest(key)}
+              onAction={(action) => {
+                if (action === "create-task") setCanvasCreateRequest("task");
+                else if (action === "create-document") setCanvasCreateRequest("document");
+                else if (action === "create-goal") setCanvasCreateRequest("goal");
+                else if (action === "create-decision") setCanvasCreateRequest("decision");
+                else if (action === "open-librarian")
+                  window.location.hash = `#librarian/${props.projectId}`;
+                else if (action === "reset-layout") {
+                  void resetCanvasLayout(props.projectId).then(() =>
+                    setCanvasReloadNonce((n) => n + 1),
+                  );
+                }
+              }}
+            />
 
             <Show when={inspectorOpen()}>
               <Show when={!inspectorFullscreen() && !compactViewport()}>
@@ -1958,7 +2267,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                         </div>
                       }
                     >
-                      <WorkspaceBrowser projectId={props.projectId} threadId={props.threadId} />
+                      <WorkspaceBrowser projectId={props.projectId} threadId={threadId()} />
                     </Suspense>
                   </Show>
                 </div>

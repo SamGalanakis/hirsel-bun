@@ -11,6 +11,8 @@ DEFINE FIELD IF NOT EXISTS librarian_model ON TABLE app_setting TYPE option<stri
 DEFINE FIELD IF NOT EXISTS librarian_model_variant ON TABLE app_setting TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS thread_model ON TABLE app_setting TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS thread_model_variant ON TABLE app_setting TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS search_model ON TABLE app_setting TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS search_model_variant ON TABLE app_setting TYPE option<string>;
 DEFINE FIELD IF NOT EXISTS updated_at ON TABLE app_setting TYPE string;
 
 DEFINE TABLE IF NOT EXISTS project SCHEMAFULL;
@@ -164,3 +166,7 @@ DEFINE INDEX IF NOT EXISTS task_project_idx ON TABLE task FIELDS project_id;
 -- Shepherd event queue (batched input for event-driven shepherd turns)
 DEFINE TABLE IF NOT EXISTS shepherd_event SCHEMALESS;
 DEFINE FIELD IF NOT EXISTS created_at ON TABLE shepherd_event DEFAULT time::now();
+
+-- Librarian event queue (user activity signals: "user created X", "user edited Y", "user deleted Z")
+DEFINE TABLE IF NOT EXISTS librarian_event SCHEMALESS;
+DEFINE FIELD IF NOT EXISTS created_at ON TABLE librarian_event DEFAULT time::now();

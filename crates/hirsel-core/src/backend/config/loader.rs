@@ -8,9 +8,7 @@ use super::{Config, ConfigError, McpServerConfig};
 use std::collections::{BTreeMap, BTreeSet};
 
 fn validate_top_level_keys(table: &toml::Table) -> Result<(), ConfigError> {
-    let allowed: BTreeSet<&str> = ["root", "llm", "sandbox", "backend", "mcp_servers"]
-        .into_iter()
-        .collect();
+    let allowed: BTreeSet<&str> = ["root", "backend", "mcp_servers"].into_iter().collect();
 
     let unknown = table
         .keys()
@@ -80,11 +78,6 @@ pub fn load_config_file(
         }
     }
 
-    // Load LLM configuration
-    if let Some(llm_data) = table.get("llm") {
-        config.llm = parse_section("llm", llm_data)?;
-    }
-
     // Load backend connection
     if let Some(backend_data) = table.get("backend") {
         config.backend = parse_section("backend", backend_data)?;
@@ -141,21 +134,18 @@ mod tests {
     }
 
     #[test]
-    fn loads_full_llm_section() {
+    fn loads_backend_and_mcp_sections() {
         let temp = TempDir::new().expect("temp dir");
         let config_path = temp.path().join("config.toml");
         fs::write(
             &config_path,
             r#"
-[llm]
-provider = "openrouter"
-openrouter_base_url = "https://openrouter.example/api"
-model = "gpt-5"
-model_variant = "high"
+[backend]
+url = "http://127.0.0.1:8080"
+api_key = "dev-key"
 
-[llm.agent_models]
-low = "gpt-5-mini"
-high = "gpt-5"
+[mcp_servers.example]
+command = ["uvx", "example-mcp"]
 "#,
         )
         .expect("write config");
@@ -164,21 +154,30 @@ high = "gpt-5"
         let warnings = load_config_file(&mut config, &config_path).expect("load config");
 
         assert!(warnings.is_empty());
-        assert_eq!(
-            config
-                .llm
-                .agent_models
-                .as_ref()
-                .and_then(|m| m.low.as_deref()),
-            Some("gpt-5-mini")
-        );
-        assert_eq!(
-            config
-                .llm
-                .agent_models
-                .as_ref()
-                .and_then(|m| m.high.as_deref()),
-            Some("gpt-5")
-        );
+        assert_eq!(config.backend.url.as_deref(), Some("http://127.0.0.1:8080"));
+        assert_eq!(config.backend.api_key.as_deref(), Some("dev-key"));
+        assert!(config.mcp_servers.contains_key("example"));
+    }
+
+    #[test]
+    fn rejects_obsolete_llm_section() {
+        let temp = TempDir::new().expect("temp dir");
+        let config_path = temp.path().join("config.toml");
+        fs::write(
+            &config_path,
+            r#"
+[llm]
+provider = "codex"
+"#,
+        )
+        .expect("write config");
+
+        let mut config = Config::default();
+        match load_config_file(&mut config, &config_path) {
+            Err(ConfigError::ValidationError(message)) => {
+                assert!(message.contains("unknown config keys: llm"));
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
     }
 }

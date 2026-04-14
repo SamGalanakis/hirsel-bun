@@ -7,11 +7,16 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use surrealdb::types::SurrealValue;
 
+use crate::backend::companion_actions;
 use crate::backend::db::global_db;
 use crate::backend::knowledge_graph::KnowledgeGraphNodeRow;
+use crate::backend::librarian_events::record_user_activity;
 use crate::backend::live_updates::{self, LiveUpdateKind};
 use crate::backend::tasks::TaskStore;
 use crate::backend::ShepherdThreadStore;
+
+const USER_KIND_KG: &[&str] = &["document", "goal", "decision"];
+const EDITABLE_KG: &[&str] = &["document", "goal", "decision", "component", "entity", "convention", "fact"];
 
 const LAYOUT_TABLE: &str = "project_canvas_layout";
 
@@ -34,6 +39,8 @@ pub struct CanvasNode {
     pub tags: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focused_task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub highlight: Option<String>,
     pub updated_at: String,
 }
 
@@ -75,6 +82,7 @@ pub async fn get_canvas(
                     status: Some(task.status.clone()),
                     tags: None,
                     focused_task_id: None,
+                    highlight: None,
                     updated_at: task.updated_at.clone(),
                 });
             }
@@ -96,6 +104,7 @@ pub async fn get_canvas(
                     status: Some(thread.status.clone()),
                     tags: None,
                     focused_task_id: thread.focused_task_id.clone(),
+                    highlight: thread.highlight.clone(),
                     updated_at: thread.updated_at.clone(),
                 });
             }
@@ -123,6 +132,7 @@ pub async fn get_canvas(
             status: None,
             tags: kg.tags.clone(),
             focused_task_id: None,
+            highlight: None,
             updated_at: crate::backend::knowledge_graph::surreal_datetime_value_to_string(
                 kg.updated_at.clone(),
             ),
@@ -234,6 +244,224 @@ pub async fn delete_layout(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     live_updates::publish_project(project_id, LiveUpdateKind::CanvasLayoutChanged);
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct CreateCanvasNodeBody {
+    pub kind: String,
+    pub title: String,
+    #[serde(default)]
+    pub content: Option<String>,
+}
+
+pub async fn create_canvas_node(
+    Path(project_id): Path<i64>,
+    Json(body): Json<CreateCanvasNodeBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let title = body.title.trim().to_string();
+    if title.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "title is required".into()));
+    }
+    let node_id: String;
+    match body.kind.as_str() {
+        "task" => {
+            let store = TaskStore::open()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("open tasks: {e}")))?;
+            let task = store
+                .create_task(project_id, &title, body.content.as_deref())
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("create task: {e}")))?;
+            node_id = task.id;
+            live_updates::publish_project(project_id, LiveUpdateKind::TasksChanged);
+        }
+        k if USER_KIND_KG.contains(&k) => {
+            node_id = slugify_with_hash(&title);
+            let db = global_db().await;
+            let _ = db
+                .query(
+                    "UPSERT type::record('kg_node', [$pid, $kind, $nid]) MERGE { \
+                       project_id: $pid, kind: $kind, node_id: $nid, label: $label, \
+                       content: $content, source: 'user', tags: [] }",
+                )
+                .bind(("pid", project_id))
+                .bind(("kind", k.to_string()))
+                .bind(("nid", node_id.clone()))
+                .bind(("label", title.clone()))
+                .bind(("content", body.content.clone().unwrap_or_default()))
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("create kg_node: {e}")))?;
+            live_updates::publish_project(project_id, LiveUpdateKind::KnowledgeGraphChanged);
+        }
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unsupported create kind: {other}"),
+            ));
+        }
+    }
+    live_updates::publish_project(project_id, LiveUpdateKind::CanvasLayoutChanged);
+    record_user_activity(
+        project_id,
+        "user_created",
+        serde_json::json!({ "kind": body.kind, "node_id": node_id, "title": title }),
+    )
+    .await;
+    Ok(Json(serde_json::json!({ "ok": true, "id": node_id, "kind": body.kind })))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateCanvasNodeBody {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+pub async fn update_canvas_node(
+    Path((project_id, kind, node_id)): Path<(i64, String, String)>,
+    Json(body): Json<UpdateCanvasNodeBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match kind.as_str() {
+        "task" => {
+            let store = TaskStore::open()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("open tasks: {e}")))?;
+            let content_arg: Option<Option<&str>> = body.content.as_deref().map(Some);
+            store
+                .update_task(
+                    &node_id,
+                    body.title.as_deref(),
+                    body.status.as_deref(),
+                    content_arg,
+                )
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("update task: {e}")))?;
+            live_updates::publish_project(project_id, LiveUpdateKind::TasksChanged);
+        }
+        k if EDITABLE_KG.contains(&k) => {
+            let db = global_db().await;
+            // Only update fields that were provided. Build a MERGE payload dynamically.
+            let mut merge = serde_json::Map::new();
+            if let Some(t) = &body.title {
+                merge.insert("label".into(), serde_json::Value::String(t.clone()));
+            }
+            if let Some(c) = &body.content {
+                merge.insert("content".into(), serde_json::Value::String(c.clone()));
+            }
+            if merge.is_empty() {
+                return Ok(Json(serde_json::json!({ "ok": true })));
+            }
+            let merge_str = serde_json::Value::Object(merge).to_string();
+            let _ = db
+                .query(&format!(
+                    "UPDATE type::record('kg_node', [$pid, $kind, $nid]) MERGE {merge_str}"
+                ))
+                .bind(("pid", project_id))
+                .bind(("kind", kind.clone()))
+                .bind(("nid", node_id.clone()))
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("update kg_node: {e}")))?;
+            live_updates::publish_project(project_id, LiveUpdateKind::KnowledgeGraphChanged);
+        }
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unsupported update kind: {other}"),
+            ));
+        }
+    }
+    record_user_activity(
+        project_id,
+        "user_edited",
+        serde_json::json!({ "kind": kind, "node_id": node_id }),
+    )
+    .await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+pub async fn delete_canvas_node(
+    Path((project_id, kind, node_id)): Path<(i64, String, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    match kind.as_str() {
+        "task" => {
+            let store = TaskStore::open()
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("open tasks: {e}")))?;
+            store
+                .delete_task(&node_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("delete task: {e}")))?;
+            live_updates::publish_project(project_id, LiveUpdateKind::TasksChanged);
+            live_updates::publish_project(project_id, LiveUpdateKind::CanvasLayoutChanged);
+        }
+        "thread" => {
+            crate::backend::shepherd_runtime::archive_thread(project_id, &node_id)
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("archive thread: {e}")))?;
+            live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
+            live_updates::publish_project(project_id, LiveUpdateKind::CanvasLayoutChanged);
+        }
+        "component" | "entity" | "decision" | "fact" | "goal" | "convention" | "document" => {
+            let db = global_db().await;
+            let _ = db
+                .query(
+                    "DELETE FROM kg_edge WHERE (`in` = type::record('kg_node', [$pid, $kind, $nid])) OR (out = type::record('kg_node', [$pid, $kind, $nid])); \
+                     DELETE type::record('kg_node', [$pid, $kind, $nid])",
+                )
+                .bind(("pid", project_id))
+                .bind(("kind", kind.clone()))
+                .bind(("nid", node_id.clone()))
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("delete kg_node: {e}")))?;
+            live_updates::publish_project(project_id, LiveUpdateKind::KnowledgeGraphChanged);
+            live_updates::publish_project(project_id, LiveUpdateKind::CanvasLayoutChanged);
+        }
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unsupported canvas node kind: {other}"),
+            ));
+        }
+    }
+    record_user_activity(
+        project_id,
+        "user_deleted",
+        serde_json::json!({ "kind": kind, "node_id": node_id }),
+    )
+    .await;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+fn slugify_with_hash(title: &str) -> String {
+    let mut slug = String::new();
+    for ch in title.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+        } else if ch.is_whitespace() || ch == '-' || ch == '_' {
+            if !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    if slug.is_empty() {
+        slug.push_str("node");
+    }
+    // short hash disambiguates collisions
+    let suffix = uuid::Uuid::new_v4().to_string()[..6].to_string();
+    format!("{slug}-{suffix}")
+}
+
+pub async fn drain_companion_actions(
+    Path(project_id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let actions = companion_actions::drain(project_id);
+    Ok(Json(serde_json::json!({ "actions": actions })))
 }
 
 #[allow(dead_code)]

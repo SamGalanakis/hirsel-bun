@@ -10,7 +10,6 @@ const NewProjectPage = lazy(() => import("@/pages/NewProjectPage"));
 type ScreenState =
   | { page: "connect" }
   | { page: "project"; projectId: number }
-  | { page: "thread"; projectId: number; threadId: string }
   | { page: "librarian"; projectId: number }
   | { page: "settings" }
   | { page: "new" }
@@ -26,13 +25,13 @@ function parseHash(hash: string): ScreenState | null {
   const projectMatch = h.match(/^project\/(\d+)$/);
   if (projectMatch) return { page: "project", projectId: parseInt(projectMatch[1], 10) };
 
+  // Legacy thread route → redirect to project (thread becomes an overlay)
   const threadMatch = h.match(/^thread\/(\d+)\/(.+)$/);
-  if (threadMatch)
-    return {
-      page: "thread",
-      projectId: parseInt(threadMatch[1], 10),
-      threadId: threadMatch[2],
-    };
+  if (threadMatch) {
+    const pid = parseInt(threadMatch[1], 10);
+    window.location.hash = `#project/${pid}`;
+    return { page: "project", projectId: pid };
+  }
 
   const librarianMatch = h.match(/^librarian\/(\d+)$/);
   if (librarianMatch)
@@ -89,13 +88,6 @@ const App: Component = () => {
 
         <Show when={screen().page === "project"}>
           <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
-        </Show>
-
-        <Show when={screen().page === "thread"}>
-          <WorkspacePage
-            projectId={(screen() as { projectId: number }).projectId}
-            threadId={(screen() as { threadId: string }).threadId}
-          />
         </Show>
 
         <Show when={screen().page === "librarian"}>

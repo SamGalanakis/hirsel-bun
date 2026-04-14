@@ -40,7 +40,7 @@ const providerOptions: SelectOption[] = [
   { value: "openrouter", label: "OpenRouter", description: "Custom endpoint / API key" },
 ];
 
-const ROLE_MODEL_KEYS = ["shepherd", "librarian", "thread"] as const;
+const ROLE_MODEL_KEYS = ["shepherd", "librarian", "thread", "search"] as const;
 type RoleModelKey = (typeof ROLE_MODEL_KEYS)[number];
 const DEFAULT_MODEL_SENTINEL = "__default_model__";
 const DEFAULT_VARIANT_SENTINEL = "__default_variant__";
@@ -57,6 +57,10 @@ const ROLE_MODEL_META: Record<RoleModelKey, { label: string; description: string
   thread: {
     label: "Threads",
     description: "Focused execution threads and branch workers.",
+  },
+  search: {
+    label: "Search",
+    description: "Short-lived `search_context` sub-agent for knowledge graph lookups.",
   },
 };
 
@@ -136,6 +140,7 @@ function defaultRoleDraft(): RoleModelDraft {
     shepherd: { model: DEFAULT_MODEL_SENTINEL, model_variant: DEFAULT_VARIANT_SENTINEL },
     librarian: { model: DEFAULT_MODEL_SENTINEL, model_variant: DEFAULT_VARIANT_SENTINEL },
     thread: { model: DEFAULT_MODEL_SENTINEL, model_variant: DEFAULT_VARIANT_SENTINEL },
+    search: { model: DEFAULT_MODEL_SENTINEL, model_variant: DEFAULT_VARIANT_SENTINEL },
   };
 }
 
@@ -202,6 +207,11 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
           model_variant:
             next.role_models.thread.configured_model_variant ?? DEFAULT_VARIANT_SENTINEL,
         },
+        search: {
+          model: next.role_models.search.configured_model ?? DEFAULT_MODEL_SENTINEL,
+          model_variant:
+            next.role_models.search.configured_model_variant ?? DEFAULT_VARIANT_SENTINEL,
+        },
       });
       setError("");
     } catch (err) {
@@ -222,59 +232,25 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
     if (draft.model !== DEFAULT_MODEL_SENTINEL) return draft.model;
     return roleEffective(role)?.effective_model ?? "";
   };
-  const roleModelOptions = createMemo<RoleModelOptionsMap>(() => ({
-    shepherd: [
-      (() => {
-        const effective = roleEffective("shepherd");
-        return {
-          value: DEFAULT_MODEL_SENTINEL,
-          label: "Provider default",
-          description: effective
-            ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
-            : "Use the provider default for this role.",
-        };
-      })(),
-      ...modelOptions().map((option) => ({
-        value: option.value,
-        label: option.label,
-        description: option.description ?? undefined,
-      })),
-    ],
-    librarian: [
-      (() => {
-        const effective = roleEffective("librarian");
-        return {
-          value: DEFAULT_MODEL_SENTINEL,
-          label: "Provider default",
-          description: effective
-            ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
-            : "Use the provider default for this role.",
-        };
-      })(),
-      ...modelOptions().map((option) => ({
-        value: option.value,
-        label: option.label,
-        description: option.description ?? undefined,
-      })),
-    ],
-    thread: [
-      (() => {
-        const effective = roleEffective("thread");
-        return {
-          value: DEFAULT_MODEL_SENTINEL,
-          label: "Provider default",
-          description: effective
-            ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
-            : "Use the provider default for this role.",
-        };
-      })(),
-      ...modelOptions().map((option) => ({
-        value: option.value,
-        label: option.label,
-        description: option.description ?? undefined,
-      })),
-    ],
-  }));
+  const roleModelOptions = createMemo<RoleModelOptionsMap>(() => {
+    const sharedOptions = modelOptions().map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: option.description ?? undefined,
+    }));
+    const entries = ROLE_MODEL_KEYS.map((role) => {
+      const effective = roleEffective(role);
+      const defaultOption = {
+        value: DEFAULT_MODEL_SENTINEL,
+        label: "Provider default",
+        description: effective
+          ? `${effective.effective_model}${effective.effective_model_variant ? ` · ${effective.effective_model_variant}` : ""}`
+          : "Use the provider default for this role.",
+      };
+      return [role, [defaultOption, ...sharedOptions]] as const;
+    });
+    return Object.fromEntries(entries) as RoleModelOptionsMap;
+  });
   const roleVariantOptions = createMemo<RoleModelOptionsMap>(() => {
     const variantsByModel = variantOptionsByModel();
     const defaultsByModel = defaultVariantsByModel();
@@ -302,6 +278,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
       shepherd: buildOptions("shepherd"),
       librarian: buildOptions("librarian"),
       thread: buildOptions("thread"),
+      search: buildOptions("search"),
     };
   });
 
@@ -355,6 +332,13 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
             draft.thread.model_variant === DEFAULT_VARIANT_SENTINEL
               ? null
               : draft.thread.model_variant,
+        },
+        search: {
+          model: draft.search.model === DEFAULT_MODEL_SENTINEL ? null : draft.search.model,
+          model_variant:
+            draft.search.model_variant === DEFAULT_VARIANT_SENTINEL
+              ? null
+              : draft.search.model_variant,
         },
       });
       setModelStatus("Saved");
@@ -627,7 +611,7 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
             <div class="space-y-1">
               <Label>Role Models</Label>
               <p class="text-xs leading-5 text-muted-foreground">
-                Choose different model/variant pairs for the main shepherd, the librarian, and execution threads.
+                Choose model/variant pairs for each distinct runtime role, including the `search_context` sub-agent.
               </p>
             </div>
 

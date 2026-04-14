@@ -24,6 +24,7 @@ export async function saveRoleModels(data: {
   shepherd: { model: string | null; model_variant: string | null };
   librarian: { model: string | null; model_variant: string | null };
   thread: { model: string | null; model_variant: string | null };
+  search: { model: string | null; model_variant: string | null };
 }): Promise<void> {
   const res = await apiFetch("/settings/models", {
     method: "POST",

@@ -50,7 +50,8 @@ export type LiveUpdateKind =
   | "thread_activity_changed"
   | "tasks_changed"
   | "task_changed"
-  | "canvas_layout_changed";
+  | "canvas_layout_changed"
+  | "companion_action";
 
 export interface LiveUpdateEvent {
   projectId: number;
@@ -99,6 +100,7 @@ export interface CanvasNode {
   status?: string | null;
   tags?: string[] | null;
   focused_task_id?: string | null;
+  highlight?: string | null;
   updated_at: string;
 }
 
@@ -313,6 +315,7 @@ export interface SettingsResponse {
     shepherd: RoleModelSettings;
     librarian: RoleModelSettings;
     thread: RoleModelSettings;
+    search: RoleModelSettings;
   };
   model_catalog: ModelCatalogSettings;
   codex_configured: boolean;

@@ -24,6 +24,7 @@ pub enum LiveUpdateKind {
     TasksChanged,
     TaskChanged,
     CanvasLayoutChanged,
+    CompanionAction,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

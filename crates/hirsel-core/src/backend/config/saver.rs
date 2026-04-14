@@ -16,9 +16,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     // Backend connection
     write_backend_section(&mut output, config);
 
-    // LLM section
-    write_llm_section(&mut output, config);
-
     // MCP server imports
     write_mcp_section(&mut output, config)?;
 
@@ -45,18 +42,6 @@ pub fn save_config(config: &Config, config_path: &Path) -> Result<(), ConfigErro
     })?;
 
     Ok(())
-}
-
-fn write_llm_section(output: &mut String, config: &Config) {
-    #[derive(Serialize)]
-    struct LlmSection<'a> {
-        llm: &'a super::LlmConfig,
-    }
-
-    let section = toml::to_string_pretty(&LlmSection { llm: &config.llm })
-        .expect("serializing llm config should succeed");
-    output.push_str(&section);
-    output.push('\n');
 }
 
 fn write_backend_section(output: &mut String, config: &Config) {
@@ -100,7 +85,7 @@ fn write_mcp_section(output: &mut String, config: &Config) -> Result<(), ConfigE
 mod tests {
     use super::save_config;
     use crate::backend::config::loader::load_config_file;
-    use crate::backend::config::{AgentModelOverrides, BackendConfig, Config, LlmConfig};
+    use crate::backend::config::{BackendConfig, Config, McpServerConfig};
     use tempfile::TempDir;
 
     #[test]
@@ -110,19 +95,19 @@ mod tests {
 
         let config = Config {
             root: temp.path().to_path_buf(),
-            llm: LlmConfig {
-                agent_models: Some(AgentModelOverrides {
-                    low: Some("gpt-5-mini".to_string()),
-                    medium: None,
-                    high: Some("gpt-5".to_string()),
-                }),
-                ..Default::default()
-            },
             backend: BackendConfig {
                 url: Some("http://127.0.0.1:8080".to_string()),
                 api_key: Some("dev-test-key".to_string()),
             },
-            mcp_servers: Default::default(),
+            mcp_servers: std::collections::BTreeMap::from([(
+                "example".to_string(),
+                McpServerConfig {
+                    command: vec!["uvx".to_string(), "example-mcp".to_string()],
+                    args: vec![],
+                    env: std::collections::BTreeMap::new(),
+                    cwd: None,
+                },
+            )]),
         };
 
         save_config(&config, &config_path).expect("save config");
@@ -132,17 +117,6 @@ mod tests {
         assert!(warnings.is_empty());
         assert_eq!(loaded.backend.url, config.backend.url);
         assert_eq!(loaded.backend.api_key, config.backend.api_key);
-        assert_eq!(
-            loaded.llm.agent_models.as_ref().and_then(|m| m.low.clone()),
-            Some("gpt-5-mini".to_string())
-        );
-        assert_eq!(
-            loaded
-                .llm
-                .agent_models
-                .as_ref()
-                .and_then(|m| m.high.clone()),
-            Some("gpt-5".to_string())
-        );
+        assert!(loaded.mcp_servers.contains_key("example"));
     }
 }

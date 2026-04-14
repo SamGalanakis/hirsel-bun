@@ -1,8 +1,8 @@
 //! Configuration system for hirsel.
 //!
 //! This module provides the configuration system for hirsel, including:
-//! - Agent container configuration
 //! - Backend connection configuration
+//! - Imported MCP server configuration
 //! - The shared Config struct used by the desktop shell and backend
 
 mod backend;
@@ -19,7 +19,7 @@ use thiserror::Error;
 
 pub use backend::BackendConfig;
 pub use lash::McpServerConfig;
-pub use llm::{AgentModelOverrides, LlmConfig, LlmProvider, RoleModelConfig, RoleModelOverrides};
+pub use llm::{LlmProvider, RoleModelConfig, RoleModelOverrides};
 pub use paths::{global_db_path, hirsel_dir, project_assets_dir, workspace_dir, workspaces_dir};
 
 /// Context window sizes per model (in tokens).
@@ -66,9 +66,6 @@ pub struct Config {
     #[serde(default = "default_root")]
     pub root: PathBuf,
 
-    #[serde(default)]
-    pub llm: LlmConfig,
-
     /// Backend connection used by remote clients.
     #[serde(default)]
     pub backend: BackendConfig,
@@ -82,7 +79,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             root: default_root(),
-            llm: LlmConfig::default(),
             backend: BackendConfig::default(),
             mcp_servers: BTreeMap::new(),
         }
@@ -148,14 +144,14 @@ impl Config {
 ///
 /// let env = TestEnv::builder()
 ///     .with_config(r#"
-///         [sandbox]
-///         image = "hirsel-worker:local"
+///         [backend]
+///         url = "http://127.0.0.1:8080"
 ///     "#)
 ///     .build();
 ///
 /// // HIRSEL_ROOT is now set to a temp directory
 /// let (config, _) = Config::load().unwrap();
-/// assert_eq!(config.sandbox.image, "hirsel-worker:local");
+/// assert_eq!(config.backend.url.as_deref(), Some("http://127.0.0.1:8080"));
 /// ```
 #[cfg(test)]
 pub mod testing {
@@ -241,12 +237,12 @@ mod tests {
     fn test_hirsel_root() {
         let _env = testing::TestEnv::builder()
             .with_config(
-                r#"[sandbox]
-image = "hirsel-worker:local""#,
+                r#"[backend]
+url = "http://127.0.0.1:8080""#,
             )
             .build();
 
         let (config, _) = Config::load().unwrap();
-        assert_eq!(config.sandbox.image, "hirsel-worker:local");
+        assert_eq!(config.backend.url.as_deref(), Some("http://127.0.0.1:8080"));
     }
 }

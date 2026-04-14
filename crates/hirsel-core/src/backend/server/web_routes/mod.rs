@@ -175,6 +175,18 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/api/projects/{project_id}/canvas/layout",
             patch(canvas::patch_layout).delete(canvas::delete_layout),
         )
+        .route(
+            "/api/projects/{project_id}/canvas/node",
+            post(canvas::create_canvas_node),
+        )
+        .route(
+            "/api/projects/{project_id}/canvas/node/{kind}/{node_id}",
+            patch(canvas::update_canvas_node).delete(canvas::delete_canvas_node),
+        )
+        .route(
+            "/api/projects/{project_id}/companion/actions",
+            get(canvas::drain_companion_actions),
+        )
         .route("/api/settings", get(settings::get_settings))
         .route("/api/settings/provider", post(settings::save_llm_provider))
         .route("/api/settings/models", post(settings::save_role_models))

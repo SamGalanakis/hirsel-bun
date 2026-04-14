@@ -920,6 +920,58 @@ impl ToolContext {
             "matches": rows,
         }))
     }
+
+    async fn filter_canvas_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let query = Self::trimmed_string(args, "query")
+            .unwrap_or("")
+            .to_string();
+        crate::backend::companion_actions::enqueue(
+            project_id,
+            crate::backend::companion_actions::CompanionAction {
+                action: "filter_canvas".into(),
+                payload: json!({ "query": query }),
+            },
+        );
+        ToolResult::ok(json!({ "filtered": true, "query": query }))
+    }
+
+    async fn focus_node_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let kind = match Self::trimmed_string(args, "kind") {
+            Some(s) => s.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: kind"),
+        };
+        let node_id = match Self::trimmed_string(args, "node_id") {
+            Some(s) => s.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: node_id"),
+        };
+        crate::backend::companion_actions::enqueue(
+            project_id,
+            crate::backend::companion_actions::CompanionAction {
+                action: "focus_node".into(),
+                payload: json!({ "kind": kind, "node_id": node_id }),
+            },
+        );
+        ToolResult::ok(json!({ "focused": format!("{kind}:{node_id}") }))
+    }
+
+    async fn center_on_node_tool(&self, project_id: i64, args: &Value) -> ToolResult {
+        let kind = match Self::trimmed_string(args, "kind") {
+            Some(s) => s.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: kind"),
+        };
+        let node_id = match Self::trimmed_string(args, "node_id") {
+            Some(s) => s.to_string(),
+            None => return ToolResult::err_fmt("Missing required parameter: node_id"),
+        };
+        crate::backend::companion_actions::enqueue(
+            project_id,
+            crate::backend::companion_actions::CompanionAction {
+                action: "center_on_node".into(),
+                payload: json!({ "kind": kind, "node_id": node_id }),
+            },
+        );
+        ToolResult::ok(json!({ "centered": format!("{kind}:{node_id}") }))
+    }
 }
 
 async fn execute_librarian_tool(
@@ -974,6 +1026,9 @@ async fn execute_shepherd_tool(
         "highlight_thread" => common.highlight_thread_tool(project_id, args).await,
         "dismiss_highlight" => common.dismiss_highlight_tool(project_id, args).await,
         "search_threads" => common.search_threads_tool(project_id, args).await,
+        "filter_canvas" => common.filter_canvas_tool(project_id, args).await,
+        "focus_node" => common.focus_node_tool(project_id, args).await,
+        "center_on_node" => common.center_on_node_tool(project_id, args).await,
         _ => ToolResult::err(json!({ "error": format!("Unknown tool: {}", name) })),
     }
 }
@@ -1398,6 +1453,44 @@ impl ToolProvider for ShepherdToolProvider {
                     ToolParam::typed("query", "str"),
                     ToolParam::optional("thread_id", "str"),
                     ToolParam::optional("limit", "int"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "filter_canvas".to_string(),
+                description: "Filter the user's canvas view to nodes matching a query. Non-matching nodes become hidden while the filter is active. Pass an empty query to clear.".to_string(),
+                params: vec![
+                    ToolParam::typed("query", "str"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "focus_node".to_string(),
+                description: "Open a node in the user's focus view (full-screen markdown + context). Use this when the user asks about something specific — it opens that node for them.".to_string(),
+                params: vec![
+                    ToolParam::typed("kind", "str"),
+                    ToolParam::typed("node_id", "str"),
+                    ToolParam::optional("project_id", "int"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
+                name: "center_on_node".to_string(),
+                description: "Pan the user's canvas camera to center on a specific node (without opening focus). Useful when pointing something out.".to_string(),
+                params: vec![
+                    ToolParam::typed("kind", "str"),
+                    ToolParam::typed("node_id", "str"),
                     ToolParam::optional("project_id", "int"),
                 ],
                 returns: "dict".to_string(),

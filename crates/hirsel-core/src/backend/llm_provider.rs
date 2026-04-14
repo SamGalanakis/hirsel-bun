@@ -3,7 +3,7 @@
 use lash::provider::Provider;
 
 use crate::backend::app_settings::LlmSettings;
-use crate::backend::config::{Config, LlmProvider, RoleModelConfig};
+use crate::backend::config::{LlmProvider, RoleModelConfig};
 use crate::backend::credentials::CodexOAuthCredentials;
 use crate::backend::credentials::{resolve_codex_oauth_credentials, CredentialStore};
 
@@ -94,42 +94,30 @@ fn role_override<'a>(
     settings.role_override(role)
 }
 
-/// Resolve the model and variant from config, falling back to provider defaults.
-pub fn resolve_model(config: &Config, provider: &Provider) -> (String, Option<String>) {
-    // If user explicitly configured a model, use it
-    if let Some(ref model) = config.llm.model {
-        let variant = config
-            .llm
-            .model_variant
-            .clone()
-            .or_else(|| provider.default_model_variant(model).map(str::to_string));
-        return (model.clone(), variant);
+fn default_model_for_role(provider: &Provider, role: RuntimeModelRole) -> (String, Option<String>) {
+    let preferred_tier = match role {
+        RuntimeModelRole::Search => "low",
+        RuntimeModelRole::Shepherd
+        | RuntimeModelRole::Librarian
+        | RuntimeModelRole::Thread => "high",
+    };
+
+    if let Some((model, variant)) = provider.default_agent_model(preferred_tier) {
+        return (model.to_string(), variant.map(str::to_string));
     }
 
-    // Fall back to provider's high-tier default (Shepherd = high intelligence)
-    if let Some((m, variant)) = provider.default_agent_model("high") {
-        return (m.to_string(), variant.map(str::to_string));
-    }
-
-    // Last resort: provider's default model
     let model = provider.default_model().to_string();
-    let variant = config
-        .llm
-        .model_variant
-        .clone()
-        .or_else(|| provider.default_model_variant(&model).map(str::to_string));
+    let variant = provider.default_model_variant(&model).map(str::to_string);
     (model, variant)
 }
 
-/// Resolve model + variant for a specific Hirsel runtime role, falling back to
-/// the legacy global model config and then the provider defaults.
+/// Resolve model + variant for a specific Hirsel runtime role.
 pub fn resolve_model_for_role(
     settings: &LlmSettings,
     provider: &Provider,
     role: RuntimeModelRole,
 ) -> (String, Option<String>) {
-    let config = Config::default();
-    let (fallback_model, fallback_variant) = resolve_model(&config, provider);
+    let (fallback_model, fallback_variant) = default_model_for_role(provider, role);
     let Some(role_cfg) = role_override(settings, role) else {
         return (fallback_model, fallback_variant);
     };
@@ -150,19 +138,6 @@ pub fn resolve_model_for_role(
     });
 
     (model, variant)
-}
-
-/// Resolve the provider's named intelligence tier first, then fall back to the
-/// normal model resolution path.
-pub fn resolve_model_for_tier(
-    config: &Config,
-    provider: &Provider,
-    tier: &str,
-) -> (String, Option<String>) {
-    if let Some((model, variant)) = provider.default_agent_model(tier) {
-        return (model.to_string(), variant.map(str::to_string));
-    }
-    resolve_model(config, provider)
 }
 
 pub async fn resolve_provider(settings: &LlmSettings) -> Result<Provider, String> {
