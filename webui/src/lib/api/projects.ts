@@ -94,14 +94,11 @@ export async function getProjectSurface(projectId: number): Promise<ProjectSurfa
 
 export async function getWorkspaceSnapshot(
   projectId: number,
-  data: { threadId?: string; librarian?: boolean } = {},
+  data: { threadId?: string } = {},
 ): Promise<WorkspaceSnapshot> {
   const params = new URLSearchParams();
   if (data.threadId?.trim()) {
     params.set("thread_id", data.threadId.trim());
-  }
-  if (data.librarian) {
-    params.set("librarian", "true");
   }
   const suffix = params.toString();
   const res = await apiFetch(
@@ -142,39 +139,6 @@ export function subscribeProjectEvents(
   };
 }
 
-export async function getLibrarianActivity(projectId: number): Promise<ScopeActivity> {
-  const res = await apiFetch(`/projects/${projectId}/librarian/activity`);
-  return parseJson<ScopeActivity>(res);
-}
-
-export async function getLibrarianHistory(
-  projectId: number,
-  data: { limit?: number } = {},
-): Promise<ChatMessage[]> {
-  const params = new URLSearchParams();
-  if (Number.isFinite(data.limit) && (data.limit ?? 0) > 0) {
-    params.set("limit", String(data.limit));
-  }
-  const suffix = params.toString();
-  const res = await apiFetch(
-    suffix ? `/projects/${projectId}/librarian/history?${suffix}` : `/projects/${projectId}/librarian/history`,
-  );
-  return parseJson<ChatMessage[]>(res);
-}
-
-export async function sendLibrarianMessage(projectId: number, content: string): Promise<ChatSendResponse> {
-  const res = await apiFetch(`/projects/${projectId}/librarian/chat/send`, {
-    method: "POST",
-    body: JSON.stringify({ content }),
-  });
-  return parseJson<ChatSendResponse>(res);
-}
-
-export async function stopLibrarianChat(projectId: number): Promise<void> {
-  const res = await apiFetch(`/projects/${projectId}/librarian/chat/stop`, { method: "POST" });
-  await parseJson<{ ok: true }>(res);
-}
-
 export async function getKnowledgeGraph(projectId: number): Promise<KnowledgeGraph> {
   const res = await apiFetch(`/projects/${projectId}/knowledge-graph`);
   return parseJson<KnowledgeGraph>(res);
@@ -199,5 +163,17 @@ export async function sendChatMessage(projectId: number, content: string): Promi
 
 export async function stopChat(projectId: number): Promise<void> {
   const res = await apiFetch(`/projects/${projectId}/chat/stop`, { method: "POST" });
+  await parseJson<{ ok: true }>(res);
+}
+
+export async function recordNodeFocus(
+  projectId: number,
+  kind: string,
+  nodeId: string,
+): Promise<void> {
+  const res = await apiFetch(`/projects/${projectId}/focus`, {
+    method: "POST",
+    body: JSON.stringify({ kind, node_id: nodeId }),
+  });
   await parseJson<{ ok: true }>(res);
 }

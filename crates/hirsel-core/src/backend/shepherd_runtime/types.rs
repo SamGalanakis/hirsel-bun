@@ -7,7 +7,6 @@ pub fn scope_key(scope: &ShepherdScope) -> String {
         ShepherdScope::General => "general".to_string(),
         ShepherdScope::Shepherd { project_id, .. } => format!("shepherd-{project_id}"),
         ShepherdScope::Thread { thread_id, .. } => format!("thread-{thread_id}"),
-        ShepherdScope::Librarian { project_id, .. } => format!("librarian-{project_id}"),
     }
 }
 
@@ -124,11 +123,6 @@ pub enum ShepherdScope {
         title: String,
         #[serde(default)]
         focus: Option<ShepherdTaskFocus>,
-    },
-    #[serde(rename = "librarian")]
-    Librarian {
-        #[serde(rename = "projectId")]
-        project_id: i64,
     },
 }
 

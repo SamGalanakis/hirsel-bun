@@ -114,7 +114,10 @@ pub fn format_event_batch(events: &[ShepherdEvent]) -> String {
                 )
             }
             _ => {
-                format!("[{kind}] {}", serde_json::to_string(payload).unwrap_or_default())
+                format!(
+                    "[{kind}] {}",
+                    serde_json::to_string(payload).unwrap_or_default()
+                )
             }
         };
         lines.push(line);
@@ -138,8 +141,7 @@ pub async fn dispatch_shepherd_event_batch(project_id: i64) -> Result<(), String
     let chunks = vec![ShepherdMessageChunk::Text {
         content: batch_text,
     }];
-    let options =
-        crate::backend::shepherd_chat::ShepherdChatMessageOptions::event_batch(preview);
+    let options = crate::backend::shepherd_chat::ShepherdChatMessageOptions::event_batch(preview);
 
     crate::backend::shepherd_runtime::commands::dispatch_scope_message_local(
         scope, chunks, None, &options,

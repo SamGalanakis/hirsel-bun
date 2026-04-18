@@ -14,8 +14,6 @@ pub enum LiveUpdateKind {
     ProjectSurfaceChanged,
     ProjectHistoryChanged,
     ProjectActivityChanged,
-    LibrarianHistoryChanged,
-    LibrarianActivityChanged,
     KnowledgeGraphChanged,
     ThreadsChanged,
     ThreadChanged,
@@ -65,12 +63,6 @@ pub fn scope_project_id(project_id: Option<i64>) -> Option<i64> {
 
 pub fn scope_thread_id(scope_key: Option<&str>) -> Option<&str> {
     scope_key.and_then(|scope_key| scope_key.strip_prefix("__thread__:"))
-}
-
-pub fn scope_is_librarian(scope_key: Option<&str>) -> bool {
-    scope_key
-        .map(|scope_key| scope_key.starts_with("__librarian__:"))
-        .unwrap_or(false)
 }
 
 fn sender() -> &'static broadcast::Sender<LiveUpdateEvent> {

@@ -1,5 +1,6 @@
 import {
   type Component,
+  type JSX,
   For,
   Show,
   createSignal,
@@ -18,9 +19,11 @@ import {
   createCanvasNode,
   updateCanvasNode,
 } from "@/lib/api/canvas";
+import { recordNodeFocus } from "@/lib/api/projects";
 import { dispatchTask, reviewAction } from "@/lib/api/tasks";
 import { cn } from "@/lib/cn";
 import { renderNodeMarkdown } from "@/lib/markdown";
+import TagEditor from "@/components/TagEditor";
 
 interface CanvasViewProps {
   projectId: number;
@@ -34,6 +37,8 @@ interface CanvasViewProps {
   centerRequest?: string | null;
   /** External search query — when non-empty, overrides internal filter for live preview while palette is open */
   externalSearch?: string;
+  /** Rendered on the left side of the focus overlay (chat surface etc). */
+  focusChatSlot?: () => JSX.Element;
   onRequestHandled?: () => void;
   onRequestPalette?: () => void;
 }
@@ -137,7 +142,9 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   const [layoutMode, setLayoutMode] = createSignal<
     "grid" | "grouped" | "force"
   >("force");
-  const [settleActive, setSettleActive] = createSignal(false);
+  const [forceMotionState, setForceMotionState] = createSignal<
+    "paused" | "settling" | "live"
+  >("paused");
 
   // ── Force layout tunables (persisted) ────────────────────────────────────
   const PARAMS_KEY = `hirsel_force_params_${props.projectId}`;
@@ -146,6 +153,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
     spacing: 160, // ideal edge length
     repulsion: 900, // base repulsion coefficient
     crossKindBoost: 2.5, // extra repulsion between different kinds
+    speed: 1, // simulation tempo scalar
   };
   const loadedParams = (() => {
     try {
@@ -435,6 +443,9 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   const nodeByKey = (key: string) => nodes().find((n) => nodeKey(n) === key);
 
   const openFocus = (node: CanvasNode) => {
+    recordNodeFocus(props.projectId, node.kind, node.id).catch((error) => {
+      console.warn("record_focus failed", error);
+    });
     if (node.kind === "thread") {
       props.onOpenThread?.(node.id);
       return;
@@ -628,31 +639,52 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   //   - Gravity toward world origin
   let liveRaf: number | undefined;
   let liveVel = new Map<string, { vx: number; vy: number }>();
-  const stopSettleAnimation = () => {
-    if (liveRaf !== undefined) cancelAnimationFrame(liveRaf);
-    liveRaf = undefined;
-    liveVel.clear();
-    setSettleActive(false);
-  };
-  const startSettleAnimation = () => {
-    stopSettleAnimation();
-    setSettleActive(true);
-    liveVel = new Map();
-    // Seed positions if stacked
+  const seedForcePositionsIfStacked = () => {
     const seed = nodes();
     const allSame =
       seed.length > 1 &&
       seed.every((n) => n.x === seed[0].x && n.y === seed[0].y);
-    if (allSame) {
-      const r = 300;
-      const seeded = seed.map((n, i) => ({
-        ...n,
-        x: Math.cos((i / seed.length) * Math.PI * 2) * r + 400,
-        y: Math.sin((i / seed.length) * Math.PI * 2) * r + 300,
-      }));
-      setNodes(seeded);
-    }
+    if (!allSame) return;
+
+    const r = 300;
+    const seeded = seed.map((n, i) => ({
+      ...n,
+      x: Math.cos((i / seed.length) * Math.PI * 2) * r + 400,
+      y: Math.sin((i / seed.length) * Math.PI * 2) * r + 300,
+    }));
+    setNodes(seeded);
+  };
+  const stopSettleAnimation = (opts?: { persist?: boolean }) => {
+    const wasRunning = liveRaf !== undefined;
+    if (wasRunning) cancelAnimationFrame(liveRaf);
+    liveRaf = undefined;
+    liveVel.clear();
+    setForceMotionState("paused");
+    if (opts?.persist && wasRunning) scheduleSave();
+  };
+  const startSettleAnimation = () => {
+    stopSettleAnimation();
+    setLayoutMode("force");
+    setForceMotionState("settling");
+    liveVel = new Map();
+    seedForcePositionsIfStacked();
     runPhysicsLoop({ stopOnSettle: true });
+  };
+  const startLiveAnimation = () => {
+    stopSettleAnimation();
+    setLayoutMode("force");
+    setForceMotionState("live");
+    liveVel = new Map();
+    seedForcePositionsIfStacked();
+    runPhysicsLoop({ stopOnSettle: false });
+  };
+  const handleForceParamCommit = () => {
+    if (layoutMode() !== "force") return;
+    if (forceMotionState() === "live") {
+      startLiveAnimation();
+      return;
+    }
+    startSettleAnimation();
   };
 
   // Shared physics loop — used by settle animation + (eventually) any other
@@ -680,6 +712,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
       const IDEAL_LEN = params.spacing;
       const KIND_CLUSTER_PULL = params.clustering;
       const CROSS_KIND_BOOST = params.crossKindBoost;
+      const SIM_SPEED = params.speed;
       frames++;
       if (current.length === 0) {
         liveRaf = requestAnimationFrame(tick);
@@ -737,7 +770,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
           const dist = Math.sqrt(dist2);
           const sameKind = a.kind === b.kind;
           const kindMul = sameKind ? 1 : CROSS_KIND_BOOST;
-          const force = (REPULSION * kindMul * deg(ka) * deg(kb)) / dist2;
+          const force = ((REPULSION * kindMul * deg(ka) * deg(kb)) / dist2) * SIM_SPEED;
           const fx = (dx / dist) * force;
           const fy = (dy / dist) * force;
           const va = liveVel.get(ka)!;
@@ -760,7 +793,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
         const dy = b.y - a.y;
         const dist = Math.max(Math.sqrt(dx * dx + dy * dy), MIN_DIST);
         const displacement = dist - IDEAL_LEN;
-        const force = SPRING * displacement;
+        const force = SPRING * displacement * SIM_SPEED;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
         const va = liveVel.get(nodeKey(a))!;
@@ -776,15 +809,15 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
         const c = kindCentroid.get(n.kind);
         if (!c) continue;
         const v = liveVel.get(nodeKey(n))!;
-        v.vx += (c.x - n.x) * KIND_CLUSTER_PULL;
-        v.vy += (c.y - n.y) * KIND_CLUSTER_PULL;
+        v.vx += (c.x - n.x) * KIND_CLUSTER_PULL * SIM_SPEED;
+        v.vy += (c.y - n.y) * KIND_CLUSTER_PULL * SIM_SPEED;
       }
 
       // Center gravity
       for (const n of current) {
         const v = liveVel.get(nodeKey(n))!;
-        v.vx -= n.x * CENTER_GRAVITY;
-        v.vy -= n.y * CENTER_GRAVITY;
+        v.vx -= n.x * CENTER_GRAVITY * SIM_SPEED;
+        v.vy -= n.y * CENTER_GRAVITY * SIM_SPEED;
       }
 
       // Integrate
@@ -801,9 +834,10 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
         v.vx *= DAMPING;
         v.vy *= DAMPING;
         const speed = Math.sqrt(v.vx * v.vx + v.vy * v.vy);
-        if (speed > MAX_VEL) {
-          v.vx = (v.vx / speed) * MAX_VEL;
-          v.vy = (v.vy / speed) * MAX_VEL;
+        const maxVel = MAX_VEL * Math.max(0.65, SIM_SPEED);
+        if (speed > maxVel) {
+          v.vx = (v.vx / speed) * maxVel;
+          v.vy = (v.vy / speed) * maxVel;
         }
         energy += v.vx * v.vx + v.vy * v.vy;
         return { ...n, x: n.x + v.vx, y: n.y + v.vy };
@@ -816,7 +850,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
 
       if (opts.stopOnSettle && (settled || frames >= MAX_FRAMES_HARD)) {
         liveRaf = undefined;
-        setSettleActive(false);
+        setForceMotionState("paused");
         scheduleSave();
         return;
       }
@@ -869,7 +903,9 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   const [newTaskOpen, setNewTaskOpen] = createSignal(false);
   const [newTaskTitle, setNewTaskTitle] = createSignal("");
   const [newTaskBody, setNewTaskBody] = createSignal("");
+  const [newTaskTags, setNewTaskTags] = createSignal<string[]>([]);
   const [newTaskSaving, setNewTaskSaving] = createSignal(false);
+  const [newDocumentSubtype, setNewDocumentSubtype] = createSignal<"markdown" | "html">("markdown");
   const [newMenuOpen, setNewMenuOpen] = createSignal(false);
   let newTaskInputRef: HTMLInputElement | undefined;
 
@@ -877,6 +913,8 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
     setNewKind(kind);
     setNewTaskTitle("");
     setNewTaskBody("");
+    setNewTaskTags([]);
+    setNewDocumentSubtype("markdown");
     setNewMenuOpen(false);
     setNewTaskOpen(true);
     queueMicrotask(() => newTaskInputRef?.focus());
@@ -888,10 +926,13 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
     setNewTaskSaving(true);
     try {
       const body = newTaskBody().trim();
+      const tags = newTaskTags();
       await createCanvasNode(props.projectId, {
         kind: newKind(),
         title,
         ...(body ? { content: body } : {}),
+        ...(newKind() === "document" ? { subtype: newDocumentSubtype() } : {}),
+        ...(tags.length > 0 ? { tags } : {}),
       });
       setNewTaskOpen(false);
       await loadCanvas();
@@ -1182,7 +1223,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                 >
                   <span class="canvas-view-item-label">Force</span>
                   <span class="canvas-view-item-hint">
-                    Clustered by kind · settles on its own
+                    Clustered by kind · settle once or run live
                   </span>
                 </button>
                 <button
@@ -1207,18 +1248,68 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                 <div class="canvas-view-divider" />
                 <div class="canvas-params-panel">
                   <div class="canvas-params-header">
+                    <span>Force motion</span>
+                  </div>
+                  <div class="canvas-force-actions">
+                    <button
+                      type="button"
+                      class="canvas-force-toggle"
+                      data-active={forceMotionState() === "settling"}
+                      aria-pressed={forceMotionState() === "settling"}
+                      onClick={() =>
+                        forceMotionState() === "settling"
+                          ? stopSettleAnimation({ persist: true })
+                          : startSettleAnimation()
+                      }
+                    >
+                      Settle
+                    </button>
+                    <button
+                      type="button"
+                      class="canvas-force-toggle"
+                      data-active={forceMotionState() === "live"}
+                      aria-pressed={forceMotionState() === "live"}
+                      onClick={() =>
+                        forceMotionState() === "live"
+                          ? stopSettleAnimation({ persist: true })
+                          : startLiveAnimation()
+                      }
+                    >
+                      Live
+                    </button>
+                  </div>
+                  <div class="canvas-params-header">
                     <span>Force parameters</span>
                     <button
                       type="button"
                       class="canvas-params-reset"
                       onClick={() => {
                         resetForceParams();
-                        if (layoutMode() === "force") startSettleAnimation();
+                        handleForceParamCommit();
                       }}
                     >
                       reset
                     </button>
                   </div>
+                  <label class="canvas-param">
+                    <div class="canvas-param-row">
+                      <span class="canvas-param-label">Speed</span>
+                      <span class="canvas-param-value">
+                        {forceParams().speed.toFixed(1)}×
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.4"
+                      max="5"
+                      step="0.1"
+                      value={forceParams().speed}
+                      onInput={(e) =>
+                        updateParam("speed", parseFloat(e.currentTarget.value))
+                      }
+                      onChange={() => handleForceParamCommit()}
+                    />
+                  </label>
                   <label class="canvas-param">
                     <div class="canvas-param-row">
                       <span class="canvas-param-label">Clustering</span>
@@ -1229,15 +1320,13 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     <input
                       type="range"
                       min="0"
-                      max="0.12"
+                      max="0.35"
                       step="0.005"
                       value={forceParams().clustering}
                       onInput={(e) =>
                         updateParam("clustering", parseFloat(e.currentTarget.value))
                       }
-                      onChange={() =>
-                        layoutMode() === "force" && startSettleAnimation()
-                      }
+                      onChange={() => handleForceParamCommit()}
                     />
                   </label>
                   <label class="canvas-param">
@@ -1249,16 +1338,14 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     </div>
                     <input
                       type="range"
-                      min="80"
-                      max="320"
-                      step="10"
+                      min="40"
+                      max="1400"
+                      step="20"
                       value={forceParams().spacing}
                       onInput={(e) =>
                         updateParam("spacing", parseFloat(e.currentTarget.value))
                       }
-                      onChange={() =>
-                        layoutMode() === "force" && startSettleAnimation()
-                      }
+                      onChange={() => handleForceParamCommit()}
                     />
                   </label>
                   <label class="canvas-param">
@@ -1271,15 +1358,13 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     <input
                       type="range"
                       min="200"
-                      max="2500"
-                      step="50"
+                      max="20000"
+                      step="250"
                       value={forceParams().repulsion}
                       onInput={(e) =>
                         updateParam("repulsion", parseFloat(e.currentTarget.value))
                       }
-                      onChange={() =>
-                        layoutMode() === "force" && startSettleAnimation()
-                      }
+                      onChange={() => handleForceParamCommit()}
                     />
                   </label>
                   <label class="canvas-param">
@@ -1291,9 +1376,9 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     </div>
                     <input
                       type="range"
-                      min="1"
-                      max="6"
-                      step="0.1"
+                      min="0.25"
+                      max="24"
+                      step="0.25"
                       value={forceParams().crossKindBoost}
                       onInput={(e) =>
                         updateParam(
@@ -1301,9 +1386,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                           parseFloat(e.currentTarget.value),
                         )
                       }
-                      onChange={() =>
-                        layoutMode() === "force" && startSettleAnimation()
-                      }
+                      onChange={() => handleForceParamCommit()}
                     />
                   </label>
                 </div>
@@ -1540,6 +1623,17 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     </Show>
                   </div>
                   <div class="canvas-node-title">{node.label}</div>
+                  <Show when={node.tags && node.tags.length > 0}>
+                    <div class="tag-chip-row canvas-node-tags">
+                      <For each={node.tags ?? []}>
+                        {(tag) => (
+                          <span class="tag-chip">
+                            <span class="tag-chip-label">{tag}</span>
+                          </span>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
                 </Show>
                 <Show when={hasHighlight() && isExpanded()}>
                   <div class="canvas-node-highlight-preview">
@@ -1626,9 +1720,19 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     </Show>
                     <Show when={node.kind !== "task" && node.kind !== "thread"}>
                       <div
-                        class="markdown-body canvas-node-markdown"
+                        class={cn(
+                          "canvas-node-markdown",
+                          node.kind === "document" && node.subtype === "html"
+                            ? "canvas-scope"
+                            : "markdown-body",
+                        )}
+                        data-canvas-project-id={props.projectId}
                         onClick={handleMarkdownClick}
-                        innerHTML={renderNodeMarkdown(node.content ?? "", nodeByKey)}
+                        innerHTML={
+                          node.kind === "document" && node.subtype === "html"
+                            ? (node.content ?? "")
+                            : renderNodeMarkdown(node.content ?? "", nodeByKey)
+                        }
                       />
                     </Show>
                   </div>
@@ -1671,21 +1775,6 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
               />
               <span class="canvas-empty-cta-label">Create a document</span>
               <span class="canvas-empty-cta-hint">Notes, specs, context</span>
-            </button>
-            <button
-              class="canvas-empty-cta"
-              onClick={() =>
-                (window.location.hash = `#librarian/${props.projectId}`)
-              }
-            >
-              <span
-                class="canvas-empty-cta-dot"
-                style={{ background: "oklch(var(--brand))" }}
-              />
-              <span class="canvas-empty-cta-label">Ask the librarian</span>
-              <span class="canvas-empty-cta-hint">
-                Have it learn your project
-              </span>
             </button>
           </div>
         </div>
@@ -1736,6 +1825,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
           onClose={() => setFocusedKey(null)}
           onChange={() => void loadCanvas()}
           onOpenThread={props.onOpenThread}
+          chatSlot={props.focusChatSlot}
         />
       </Show>
 
@@ -1791,8 +1881,55 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                 }
                 onInput={(e) => setNewTaskTitle(e.currentTarget.value)}
               />
+              <Show when={newKind() === "document"}>
+                <label class="canvas-dialog-label">Format</label>
+                <div class="canvas-dialog-segmented" role="radiogroup" aria-label="Document format">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={newDocumentSubtype() === "markdown"}
+                    class={cn(
+                      "canvas-dialog-segmented-btn",
+                      newDocumentSubtype() === "markdown" && "is-active",
+                    )}
+                    onClick={() => setNewDocumentSubtype("markdown")}
+                  >
+                    Markdown
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={newDocumentSubtype() === "html"}
+                    class={cn(
+                      "canvas-dialog-segmented-btn",
+                      newDocumentSubtype() === "html" && "is-active",
+                    )}
+                    onClick={() => setNewDocumentSubtype("html")}
+                  >
+                    HTML
+                  </button>
+                </div>
+              </Show>
+              <label class="canvas-dialog-label">
+                Tags <span class="canvas-dialog-label-hint">optional</span>
+              </label>
+              <TagEditor
+                value={newTaskTags()}
+                onChange={(tags) => {
+                  setNewTaskTags(tags);
+                }}
+                placeholder="add tags…"
+              />
               <label class="canvas-dialog-label" for="canvas-new-task-body">
-                Notes <span class="canvas-dialog-label-hint">optional · markdown</span>
+                Notes{" "}
+                <span class="canvas-dialog-label-hint">
+                  optional ·{" "}
+                  {newKind() === "document"
+                    ? newDocumentSubtype() === "html"
+                      ? "html"
+                      : "markdown"
+                    : "markdown"}
+                </span>
               </label>
               <textarea
                 id="canvas-new-task-body"
@@ -2000,6 +2137,7 @@ const FocusView: Component<{
   onClose: () => void;
   onChange: () => void;
   onOpenThread?: (id: string) => void;
+  chatSlot?: () => JSX.Element;
 }> = (props) => {
   const editable = () =>
     ["task", "document", "goal", "decision"].includes(props.node.kind);
@@ -2072,6 +2210,22 @@ const FocusView: Component<{
           <span class="canvas-focus-kind" style={{ color: style().color }}>
             {props.node.kind}
           </span>
+          <Show when={props.node.kind === "document"}>
+            <button
+              type="button"
+              class="canvas-focus-subtype-toggle"
+              title={`Rendering as ${props.node.subtype === "html" ? "HTML" : "markdown"}. Click to toggle.`}
+              onClick={async () => {
+                const next = props.node.subtype === "html" ? "markdown" : "html";
+                await updateCanvasNode(props.projectId, props.node.kind, props.node.id, {
+                  subtype: next,
+                });
+                props.onChange();
+              }}
+            >
+              {props.node.subtype === "html" ? "html" : "markdown"}
+            </button>
+          </Show>
           <Show when={props.node.status}>
             <span class="canvas-focus-status">{props.node.status}</span>
           </Show>
@@ -2109,19 +2263,48 @@ const FocusView: Component<{
           </button>
         </header>
 
-        <div class="canvas-focus-body">
+        <div
+          class={cn(
+            "canvas-focus-body",
+            props.chatSlot && "canvas-focus-body-split",
+          )}
+        >
+          <Show when={props.chatSlot}>
+            <aside class="canvas-focus-chat">{props.chatSlot!()}</aside>
+          </Show>
           <div class="canvas-focus-inner">
             <h1 class="canvas-focus-title" id="canvas-focus-title">
               {props.node.label}
             </h1>
+            <Show when={editable()}>
+              <div class="canvas-focus-tags">
+                <TagEditor
+                  value={(props.node.tags ?? []) as string[]}
+                  onChange={async (tags) => {
+                    await updateCanvasNode(
+                      props.projectId,
+                      props.node.kind,
+                      props.node.id,
+                      { tags },
+                    );
+                    props.onChange();
+                  }}
+                  placeholder="add tags…"
+                />
+              </div>
+            </Show>
             <Show
               when={editing()}
               fallback={
                 <div
                   class={cn(
-                    "markdown-body canvas-focus-markdown",
+                    "canvas-focus-markdown",
+                    props.node.kind === "document" && props.node.subtype === "html"
+                      ? "canvas-scope"
+                      : "markdown-body",
                     editable() && "is-editable",
                   )}
+                  data-canvas-project-id={props.projectId}
                   onClick={(e) => {
                     const hit = (e.target as HTMLElement | null)?.closest("[data-node-key]");
                     if (hit) {
@@ -2135,7 +2318,9 @@ const FocusView: Component<{
                   }}
                   innerHTML={
                     props.node.content
-                      ? renderNodeMarkdown(props.node.content, props.resolveNode)
+                      ? props.node.kind === "document" && props.node.subtype === "html"
+                        ? props.node.content
+                        : renderNodeMarkdown(props.node.content, props.resolveNode)
                       : editable()
                         ? '<p class="canvas-focus-placeholder">Click to add notes…</p>'
                         : '<p class="canvas-focus-placeholder">No content.</p>'

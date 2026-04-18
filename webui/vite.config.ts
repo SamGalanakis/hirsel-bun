@@ -3,6 +3,8 @@ import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
 import tailwindcss from "@tailwindcss/vite";
 
+const backendPort = Number(process.env.HIRSEL_PORT ?? "8484");
+
 export default defineConfig({
   plugins: [tailwindcss(), solidPlugin()],
   resolve: {
@@ -13,7 +15,7 @@ export default defineConfig({
   server: {
     port: 5199,
     proxy: {
-      "/api": "http://127.0.0.1:8080",
+      "/api": `http://127.0.0.1:${backendPort}`,
     },
   },
   build: {

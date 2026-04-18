@@ -40,9 +40,7 @@ pub async fn create_project(name: String) -> Result<Project, String> {
         }
     }
 
-    let req = CreateProjectRequest {
-        name: project_name,
-    };
+    let req = CreateProjectRequest { name: project_name };
     let store2 = ProjectStore::open().await.map_err(|e| e.to_string())?;
     let project = store2
         .create_project_record(&req)
@@ -59,18 +57,10 @@ pub async fn create_project(name: String) -> Result<Project, String> {
 }
 
 #[tracing::instrument]
-pub async fn update_project_settings(
-    project_id: i64,
-    name: String,
-) -> Result<Project, String> {
+pub async fn update_project_settings(project_id: i64, name: String) -> Result<Project, String> {
     let store = ProjectStore::open().await.map_err(|e| e.to_string())?;
     store
-        .update_project(
-            project_id,
-            &UpdateProjectRequest {
-                name: Some(name),
-            },
-        )
+        .update_project(project_id, &UpdateProjectRequest { name: Some(name) })
         .await
         .map_err(|e| e.to_string())
 }

@@ -10,7 +10,6 @@ const NewProjectPage = lazy(() => import("@/pages/NewProjectPage"));
 type ScreenState =
   | { page: "connect" }
   | { page: "project"; projectId: number }
-  | { page: "librarian"; projectId: number }
   | { page: "settings" }
   | { page: "new" }
   | { page: "loading" };
@@ -33,9 +32,13 @@ function parseHash(hash: string): ScreenState | null {
     return { page: "project", projectId: pid };
   }
 
+  // Legacy librarian route → redirect to project (librarian is now background-only)
   const librarianMatch = h.match(/^librarian\/(\d+)$/);
-  if (librarianMatch)
-    return { page: "librarian", projectId: parseInt(librarianMatch[1], 10) };
+  if (librarianMatch) {
+    const pid = parseInt(librarianMatch[1], 10);
+    window.location.hash = `#project/${pid}`;
+    return { page: "project", projectId: pid };
+  }
 
   return null;
 }
@@ -88,13 +91,6 @@ const App: Component = () => {
 
         <Show when={screen().page === "project"}>
           <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
-        </Show>
-
-        <Show when={screen().page === "librarian"}>
-          <WorkspacePage
-            projectId={(screen() as { projectId: number }).projectId}
-            librarianView={true}
-          />
         </Show>
 
         <Show when={screen().page === "settings"}>

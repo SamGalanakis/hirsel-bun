@@ -18,7 +18,7 @@ use super::runtime::{
     shepherd_prompt_overrides,
 };
 use super::shell::ShepherdShellToolProvider;
-use super::tools::{LibrarianToolProvider, ShepherdToolProvider};
+use super::tools::ShepherdToolProvider;
 use super::types::{
     ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus, TurnResult, WorkerStreamEvent,
 };
@@ -52,12 +52,14 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
             "Retained Context Update".to_string(),
             Some("edit".to_string()),
         ),
-        "graph_surql" => (
-            "Knowledge Graph Query".to_string(),
-            Some("execute".to_string()),
+        "search_graph" => (
+            "Knowledge Graph Search".to_string(),
+            Some("search".to_string()),
         ),
-        "edit_graph_node_text" => (
-            "Knowledge Graph Text Patch".to_string(),
+        "read_node" => ("Knowledge Graph Read".to_string(), Some("read".to_string())),
+        "read_node_property" => ("Knowledge Graph Read".to_string(), Some("read".to_string())),
+        "apply_graph_patch" => (
+            "Knowledge Graph Patch".to_string(),
             Some("edit".to_string()),
         ),
         "patch_canvas_document" => ("Canvas Patch".to_string(), Some("edit".to_string())),
@@ -71,10 +73,7 @@ fn tool_title_kind(name: &str) -> (String, Option<String>) {
         "focus_task" => ("Focus Task".to_string(), Some("execute".to_string())),
         "unfocus_task" => ("Unfocus Task".to_string(), Some("execute".to_string())),
         "patch_task_content" => ("Patch Task".to_string(), Some("edit".to_string())),
-        "submit_completion" => (
-            "Submit Completion".to_string(),
-            Some("execute".to_string()),
-        ),
+        "submit_completion" => ("Submit Completion".to_string(), Some("execute".to_string())),
         "update_plan" => ("Plan Update".to_string(), Some("edit".to_string())),
         _ => (name.to_string(), None),
     }
@@ -237,20 +236,6 @@ async fn build_runtime_services(
                 ),
             }),
         ),
-        ShepherdScope::Librarian { .. } => (
-            EmbeddedToolPreset::Librarian,
-            Some(EmbeddedCustomToolPlugin {
-                id: "hirsel_librarian_tools",
-                provider: Arc::new(LibrarianToolProvider::new(
-                    None,
-                    default_project_id,
-                    workspace_root.clone(),
-                )) as Arc<dyn ToolProvider>,
-                prompt_contributions: Some(
-                    super::tools::librarian_prompt_contributions as fn() -> Vec<PromptContribution>,
-                ),
-            }),
-        ),
     };
     let mut plugin_factories = embedded_tool_plugin_factories(
         tool_preset,
@@ -269,6 +254,7 @@ async fn build_runtime_services(
             plugin_factories.push(super::search_context::search_context_plugin_factory(
                 project_id,
             ));
+            plugin_factories.push(super::focus_prompt::focus_prompt_plugin_factory(project_id));
 
             let thread_id = match scope {
                 ShepherdScope::Thread { thread_id, .. } => Some(thread_id.clone()),
@@ -337,7 +323,6 @@ async fn create_runtime_from_history(
     let role = match scope {
         ShepherdScope::Shepherd { .. } => llm_provider::RuntimeModelRole::Shepherd,
         ShepherdScope::Thread { .. } => llm_provider::RuntimeModelRole::Thread,
-        ShepherdScope::Librarian { .. } => llm_provider::RuntimeModelRole::Librarian,
         ShepherdScope::General => llm_provider::RuntimeModelRole::Shepherd,
     };
     let (model, model_variant) = llm_provider::resolve_model_for_role(&settings, &provider, role);

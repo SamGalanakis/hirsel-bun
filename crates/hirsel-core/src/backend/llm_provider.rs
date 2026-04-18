@@ -97,9 +97,9 @@ fn role_override<'a>(
 fn default_model_for_role(provider: &Provider, role: RuntimeModelRole) -> (String, Option<String>) {
     let preferred_tier = match role {
         RuntimeModelRole::Search => "low",
-        RuntimeModelRole::Shepherd
-        | RuntimeModelRole::Librarian
-        | RuntimeModelRole::Thread => "high",
+        RuntimeModelRole::Shepherd | RuntimeModelRole::Librarian | RuntimeModelRole::Thread => {
+            "high"
+        }
     };
 
     if let Some((model, variant)) = provider.default_agent_model(preferred_tier) {

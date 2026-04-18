@@ -1144,6 +1144,18 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
             </Show>
           </Show>
 
+          <Show when={(selected()!.raw.tags ?? []).length > 0}>
+            <div class="tag-chip-row kg-detail-tags">
+              <For each={selected()!.raw.tags ?? []}>
+                {(tag) => (
+                  <span class="tag-chip">
+                    <span class="tag-chip-label">{tag}</span>
+                  </span>
+                )}
+              </For>
+            </div>
+          </Show>
+
           <div class="kg-detail-meta">
             <Show when={selected()!.source}>
               <div class="kg-detail-field">
@@ -1212,7 +1224,7 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
           </svg>
           <p class="kg-empty-title">Knowledge Graph</p>
           <p class="kg-empty-hint">
-            Run a workspace scan or let the Librarian explore the codebase to seed the graph.
+            Chat with the Shepherd. The Librarian runs in the background and seeds the graph as you work.
           </p>
         </div>
       </Show>
@@ -1235,6 +1247,9 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
               <div class="kg-doc-viewer-title-group">
                 <span class="kg-doc-viewer-kind" style={{ color: KIND_CSS.document }}>document</span>
                 <span class="kg-doc-viewer-title">{doc().label}</span>
+                <span class="kg-doc-viewer-subtype">
+                  {doc().raw.subtype === "html" ? "html" : "markdown"}
+                </span>
               </div>
               <span class="kg-doc-viewer-id">{doc().nodeId}</span>
             </div>
@@ -1253,7 +1268,21 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
                 when={doc().raw.content?.trim()}
                 fallback={<div class="kg-doc-viewer-empty">This document has no content yet.</div>}
               >
-                <div class="kg-doc-viewer-content canvas-scope" data-canvas-project-id={props.projectId} innerHTML={doc().raw.content!} />
+                <Show
+                  when={doc().raw.subtype === "html"}
+                  fallback={
+                    <div
+                      class="kg-doc-viewer-content markdown-body"
+                      innerHTML={renderMarkdown(doc().raw.content!)}
+                    />
+                  }
+                >
+                  <div
+                    class="kg-doc-viewer-content canvas-scope"
+                    data-canvas-project-id={props.projectId}
+                    innerHTML={doc().raw.content!}
+                  />
+                </Show>
               </Show>
             </div>
           </div>

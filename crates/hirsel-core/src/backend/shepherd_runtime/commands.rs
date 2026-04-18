@@ -88,10 +88,6 @@ fn scope_storage_ids(scope: &ShepherdScope) -> (Option<i64>, Option<String>) {
             Some(*project_id),
             Some(ShepherdThreadStore::scope_key(thread_id)),
         ),
-        ShepherdScope::Librarian { project_id, .. } => (
-            Some(*project_id),
-            Some(ShepherdChatStore::librarian_scope_key(*project_id)),
-        ),
     }
 }
 
@@ -454,14 +450,6 @@ pub(super) async fn load_scope_messages_local(
             )
             .await
             .str_err()?,
-        ShepherdScope::Librarian { project_id, .. } => store
-            .get_scope_messages(
-                Some(*project_id),
-                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
-                limit,
-            )
-            .await
-            .str_err()?,
     };
     if let Some(skip_id) = skip_message_id {
         messages.retain(|message| message.id != skip_id);
@@ -781,23 +769,6 @@ pub(crate) async fn dispatch_scope_message_local(
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-pub(crate) async fn enqueue_librarian_automated_message(
-    project_id: i64,
-    prompt: String,
-    preview_text: String,
-) -> Result<(), String> {
-    let scope = ShepherdScope::Librarian { project_id };
-    let options = ShepherdChatMessageOptions::shepherd_sync(preview_text);
-    let _ = dispatch_scope_message_local(
-        scope,
-        vec![ShepherdMessageChunk::Text { content: prompt }],
-        None,
-        &options,
-    )
-    .await?;
-    Ok(())
-}
 
 pub async fn send_scope_message(
     scope: ShepherdScope,

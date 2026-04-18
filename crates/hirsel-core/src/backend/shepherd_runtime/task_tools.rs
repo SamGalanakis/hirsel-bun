@@ -201,7 +201,10 @@ impl TaskToolProvider {
             Ok(s) => s,
             Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
         };
-        if let Err(e) = thread_store.set_focused_task(thread_id, Some(task_id)).await {
+        if let Err(e) = thread_store
+            .set_focused_task(thread_id, Some(task_id))
+            .await
+        {
             return ToolResult::err(json!({ "error": e.to_string() }));
         }
 
@@ -229,7 +232,9 @@ impl TaskToolProvider {
 
     async fn submit_completion(&self, args: &Value) -> ToolResult {
         let Some(thread_id) = &self.thread_id else {
-            return ToolResult::err(json!({ "error": "submit_completion requires a thread context" }));
+            return ToolResult::err(
+                json!({ "error": "submit_completion requires a thread context" }),
+            );
         };
         let Some(summary) = args.get("summary").and_then(|v| v.as_str()) else {
             return ToolResult::err(json!({ "error": "summary is required" }));
@@ -285,7 +290,9 @@ impl TaskToolProvider {
 
     async fn patch_task_content(&self, args: &Value) -> ToolResult {
         let Some(thread_id) = &self.thread_id else {
-            return ToolResult::err(json!({ "error": "patch_task_content requires a thread context" }));
+            return ToolResult::err(
+                json!({ "error": "patch_task_content requires a thread context" }),
+            );
         };
         let Some(patch) = args.get("patch").and_then(|v| v.as_str()) else {
             return ToolResult::err(json!({ "error": "patch is required" }));
@@ -323,7 +330,10 @@ impl TaskToolProvider {
         };
 
         // Save patched content
-        if let Err(e) = task_store.update_task_content(task_id, &patched.new_text).await {
+        if let Err(e) = task_store
+            .update_task_content(task_id, &patched.new_text)
+            .await
+        {
             return ToolResult::err(json!({ "error": e.to_string() }));
         }
 
@@ -356,12 +366,10 @@ pub(super) fn task_tool_plugin_factory(
     Arc::new(StaticPluginFactory::new(
         "task_tools",
         PluginSpec::new()
-            .with_tool_provider(
-                Arc::new(TaskToolProvider {
-                    project_id,
-                    thread_id,
-                }) as Arc<dyn ToolProvider>,
-            )
+            .with_tool_provider(Arc::new(TaskToolProvider {
+                project_id,
+                thread_id,
+            }) as Arc<dyn ToolProvider>)
             .with_prompt_contributor(Arc::new(|_ctx| {
                 Box::pin(async { Ok(task_prompt_contributions()) })
             })),

@@ -103,7 +103,7 @@ impl ProjectStore {
             .bind(("pid", id))
             .await;
 
-        // Seed the knowledge graph index document.
+        // Seed the knowledge graph index document as markdown.
         let _ = db
             .query(
                 "UPSERT type::record('kg_node', [$pid, 'document', 'index']) MERGE {
@@ -112,6 +112,7 @@ impl ProjectStore {
                     node_id: 'index',
                     label: 'Project Index',
                     content: '# Project Index\n\nThis index is maintained by the librarian. It maps the project knowledge graph.\n\n## Components\n\n(none yet)\n\n## Domain Entities\n\n(none yet)\n\n## Conventions\n\n(none yet)\n\n## Decisions\n\n(none yet)\n\n## Facts\n\n(none yet)\n\n## Goals\n\n(none yet)',
+                    subtype: 'markdown',
                     source: 'system',
                     tags: ['index'],
                     metadata: {},
@@ -300,7 +301,7 @@ impl ProjectStore {
 
         // Clean up scope sessions
         let _ = db
-            .query("DELETE FROM shepherd_scope_state WHERE project_id = $pid; DELETE FROM shepherd_session WHERE project_id = $pid; DELETE FROM shepherd_live_turn WHERE project_id = $pid; DELETE FROM librarian_sync_event WHERE project_id = $pid; DELETE FROM librarian_sync_cursor WHERE project_id = $pid;")
+            .query("DELETE FROM shepherd_scope_state WHERE project_id = $pid; DELETE FROM shepherd_session WHERE project_id = $pid; DELETE FROM shepherd_live_turn WHERE project_id = $pid; DELETE FROM librarian_job WHERE project_id = $pid; DELETE FROM librarian_event WHERE project_id = $pid; DELETE FROM project_recent_focus WHERE project_id = $pid;")
             .bind(("pid", id))
             .await;
 

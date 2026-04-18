@@ -18,7 +18,6 @@ type ActionId =
   | "create-document"
   | "create-goal"
   | "create-decision"
-  | "open-librarian"
   | "reset-layout";
 
 interface PaletteItem {
@@ -48,7 +47,6 @@ const ACTION_ENTRIES: Array<{ id: ActionId; label: string; hint: string; aliases
   { id: "create-document", label: "Create document", hint: "Free-form note", aliases: ["new", "note", "add"] },
   { id: "create-goal", label: "Create goal", hint: "Objective or outcome", aliases: ["new", "add"] },
   { id: "create-decision", label: "Create decision", hint: "Captured choice", aliases: ["new", "add"] },
-  { id: "open-librarian", label: "Open librarian", hint: "Project-wide chat", aliases: ["chat"] },
   { id: "reset-layout", label: "Reset canvas layout", hint: "Forget positions", aliases: ["clear"] },
 ];
 
@@ -74,6 +72,7 @@ function scoreMatch(query: string, target: string): number {
 interface CommandPaletteProps {
   projectId: number;
   open: boolean;
+  focusNonce?: number;
   onClose: () => void;
   onSelectThread: (threadId: string) => void;
   onFocusNode: (nodeKey: string) => void;
@@ -85,11 +84,22 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   const [query, setQuery] = createSignal("");
   const [activeIdx, setActiveIdx] = createSignal(0);
   let inputRef: HTMLInputElement | undefined;
+  let focusRaf: number | undefined;
 
   const [view, { refetch }] = createResource(
     () => (props.open ? props.projectId : undefined),
     async (pid) => (pid != null ? await getCanvas(pid) : undefined),
   );
+
+  const focusInput = () => {
+    if (focusRaf !== undefined) cancelAnimationFrame(focusRaf);
+    focusRaf = requestAnimationFrame(() => {
+      if (!props.open) return;
+      inputRef?.focus({ preventScroll: true });
+      const end = inputRef?.value.length ?? 0;
+      inputRef?.setSelectionRange(end, end);
+    });
+  };
 
   createEffect(() => {
     if (props.open) {
@@ -97,10 +107,15 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
       setActiveIdx(0);
       void refetch();
       props.onQueryChange?.("");
-      queueMicrotask(() => inputRef?.focus());
     } else {
       props.onQueryChange?.("");
     }
+  });
+
+  createEffect(() => {
+    if (!props.open) return;
+    props.focusNonce;
+    focusInput();
   });
 
   const items = createMemo<PaletteItem[]>(() => {
@@ -173,16 +188,48 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
     if (e.key === "Escape") {
       e.preventDefault();
       props.onClose();
-    } else if (e.key === "ArrowDown") {
+      return;
+    }
+    if (e.key === "ArrowDown") {
       e.preventDefault();
       setActiveIdx((i) => Math.min(items().length - 1, i + 1));
-    } else if (e.key === "ArrowUp") {
+      return;
+    }
+    if (e.key === "ArrowUp") {
       e.preventDefault();
       setActiveIdx((i) => Math.max(0, i - 1));
-    } else if (e.key === "Enter") {
+      return;
+    }
+    if (e.key === "Enter") {
       e.preventDefault();
       const item = items()[activeIdx()];
       if (item) select(item);
+      return;
+    }
+
+    // Redirect text input to the search box if focus drifted elsewhere
+    // (e.g. to a result item). The input is the single source of truth
+    // for the query, so we funnel printable keys + Backspace there.
+    if (!inputRef || document.activeElement === inputRef) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    if (e.key === "Backspace") {
+      e.preventDefault();
+      const current = query();
+      const next = current.slice(0, Math.max(0, current.length - 1));
+      setQuery(next);
+      props.onQueryChange?.(next);
+      inputRef.focus({ preventScroll: true });
+      inputRef.setSelectionRange(next.length, next.length);
+      return;
+    }
+    if (e.key.length === 1) {
+      e.preventDefault();
+      const next = query() + e.key;
+      setQuery(next);
+      props.onQueryChange?.(next);
+      inputRef.focus({ preventScroll: true });
+      inputRef.setSelectionRange(next.length, next.length);
     }
   };
 
@@ -198,6 +245,9 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
   onMount(() => {
     window.addEventListener("keydown", handleKey);
     window.addEventListener("mousedown", handleOutsideClick);
+    onCleanup(() => {
+      if (focusRaf !== undefined) cancelAnimationFrame(focusRaf);
+    });
     onCleanup(() => window.removeEventListener("keydown", handleKey));
     onCleanup(() => window.removeEventListener("mousedown", handleOutsideClick));
   });
@@ -226,7 +276,18 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
               <path d="M11 11L14 14" />
             </svg>
             <input
-              ref={inputRef}
+              ref={(el) => {
+                inputRef = el;
+                // The input only mounts when the palette opens (Show gate),
+                // so grabbing focus in the ref callback makes opening the
+                // palette feel instant — no need to wait for an effect tick.
+                queueMicrotask(() => {
+                  if (!props.open) return;
+                  el.focus({ preventScroll: true });
+                  const end = el.value.length;
+                  el.setSelectionRange(end, end);
+                });
+              }}
               class="command-palette-input"
               type="text"
               value={query()}

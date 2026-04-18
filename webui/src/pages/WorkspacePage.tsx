@@ -36,8 +36,6 @@ import {
   stopChat,
   stopThreadChat,
   subscribeProjectEvents,
-  sendLibrarianMessage,
-  stopLibrarianChat,
   deleteProject,
   saveProjectSettings,
   addProjectWorkspace,
@@ -52,7 +50,6 @@ const WorkspaceBrowser = lazy(() => import("@/components/WorkspaceBrowser"));
 
 interface WorkspacePageProps {
   projectId: number;
-  librarianView?: boolean;
 }
 
 const ROOT_CHANNEL_LABEL = "Shepherd";
@@ -69,8 +66,6 @@ const SIDEBAR_MIN = 160;
 const SIDEBAR_MAX = 360;
 const MAIN_MIN = 420;
 const SIDEBAR_DEFAULT = 210;
-const LIBRARIAN_FULL_SCAN_MESSAGE =
-  "Full workspace scan.\n\nExplore the current workspace, refresh the graph, lore, and canvas anywhere they are stale or incomplete, and then reply with a concise summary of what you updated or that everything was already up to date.";
 
 type WorkspaceBannerError = {
   message: string;
@@ -264,7 +259,12 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [focusedThreadId, setFocusedThreadId] = createSignal<string | null>(null);
   const threadId = () => focusedThreadId() ?? undefined;
   const [paletteOpen, setPaletteOpen] = createSignal(false);
+  const [paletteFocusNonce, setPaletteFocusNonce] = createSignal(0);
   const [paletteQuery, setPaletteQuery] = createSignal("");
+  const openPalette = () => {
+    setPaletteOpen(true);
+    setPaletteFocusNonce((n) => n + 1);
+  };
   const [shepherdPanelOpen, setShepherdPanelOpen] = createSignal(
     localStorage.getItem(SHEPHERD_OPEN_KEY) === "1",
   );
@@ -295,8 +295,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [threadHistory, setThreadHistory] = createSignal<ApiChatMessage[]>([]);
   const [focusedTask, setFocusedTask] = createSignal<import("@/lib/api/types").Task | null>(null);
   const [canvasReloadNonce, setCanvasReloadNonce] = createSignal(0);
-  const [librarianActivity, setLibrarianActivity] = createSignal<ScopeActivity | null>(null);
-  const [librarianHistory, setLibrarianHistory] = createSignal<ApiChatMessage[]>([]);
   const [error, setError] = createSignal("");
   const [connectionOk, setConnectionOk] = createSignal(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = createSignal(false);
@@ -336,7 +334,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [expandedProjects, setExpandedProjects] = createSignal<Set<number>>(new Set());
   const [otherProjectThreads, setOtherProjectThreads] = createSignal<Map<number, ThreadSummary[]>>(new Map());
   const [dismissedRuntimeErrorRaw, setDismissedRuntimeErrorRaw] = createSignal<string | null>(null);
-  const [scanning, setScanning] = createSignal(false);
   const [terminalOpen, setTerminalOpen] = createSignal(false);
   const [terminalHeight, setTerminalHeight] = createSignal(
     Math.max(150, Number(localStorage.getItem("hirsel_terminal_height")) || 250),
@@ -404,7 +401,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         listProjects(),
         getWorkspaceSnapshot(props.projectId, {
           threadId: threadId(),
-          librarian: props.librarianView,
         }),
       ]);
       setProjects(projectList);
@@ -416,8 +412,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       setThreadDetail(snapshot.thread_detail);
       setThreadHistory(snapshot.thread_history);
       setFocusedTask(snapshot.focused_task);
-      setLibrarianActivity(snapshot.librarian_activity);
-      setLibrarianHistory(snapshot.librarian_history);
       setConnectionOk(true);
       return true;
     } catch (err) {
@@ -456,8 +450,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       case "project_surface_changed":
       case "project_history_changed":
       case "project_activity_changed":
-      case "librarian_history_changed":
-      case "librarian_activity_changed":
         scheduleRefresh("workspace", refreshWorkspace, 0);
         break;
       case "knowledge_graph_changed":
@@ -525,8 +517,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         setThreads([]);
         setThreadDetail(null);
         setThreadHistory([]);
-        setLibrarianActivity(null);
-        setLibrarianHistory([]);
         setError("");
         setInput("");
         clearOptimisticTurn();
@@ -551,7 +541,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       const isPaletteShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k";
       if (isPaletteShortcut) {
         event.preventDefault();
-        setPaletteOpen((v) => !v);
+        openPalette();
         return;
       }
       const isShepherdShortcut = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j";
@@ -653,21 +643,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     const startedAt = optimisticTurnStartedAt();
     if (!optimistic || !startedAt) return;
 
-    const backendLiveTurn = props.librarianView
-      ? librarianActivity()?.live_turn
-      : threadId()
-        ? threadDetail()?.activity.live_turn
-        : projectActivity()?.live_turn;
-    const backendHasActiveTurn = props.librarianView
-      ? librarianActivity()?.has_active_turn ?? false
-      : threadId()
-        ? threadDetail()?.activity.has_active_turn ?? false
-        : projectActivity()?.has_active_turn ?? false;
-    const backendSessionStatus = props.librarianView
-      ? librarianActivity()?.session?.status ?? null
-      : threadId()
-        ? threadDetail()?.activity.session?.status ?? null
-        : projectActivity()?.session?.status ?? null;
+    const backendLiveTurn = threadId()
+      ? threadDetail()?.activity.live_turn
+      : projectActivity()?.live_turn;
+    const backendHasActiveTurn = threadId()
+      ? threadDetail()?.activity.has_active_turn ?? false
+      : projectActivity()?.has_active_turn ?? false;
+    const backendSessionStatus = threadId()
+      ? threadDetail()?.activity.session?.status ?? null
+      : projectActivity()?.session?.status ?? null;
 
     if (backendLiveTurn || backendHasActiveTurn) {
       clearOptimisticTurn();
@@ -680,11 +664,9 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
       return;
     }
 
-    const runtimeError = props.librarianView
-      ? librarianActivity()?.session?.last_error
-      : threadId()
-        ? threadDetail()?.activity.session?.last_error
-        : projectActivity()?.session?.last_error;
+    const runtimeError = threadId()
+      ? threadDetail()?.activity.session?.last_error
+      : projectActivity()?.session?.last_error;
     if (runtimeError) {
       clearOptimisticTurn();
       return;
@@ -731,7 +713,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const activeModel = () => {
     const models = roleModels();
     if (!models) return "";
-    const role = props.librarianView ? models.librarian : threadId() ? models.thread : models.shepherd;
+    const role = threadId() ? models.thread : models.shepherd;
     const model = role.effective_model;
     const variant = role.effective_model_variant;
     if (!model) return "";
@@ -745,7 +727,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const activeTitle = () => {
     if (settingsOpen()) return "Settings";
     if (projectSettingsOpen()) return "Project Settings";
-    if (props.librarianView) return "Librarian";
     if (!threadId()) return ROOT_CHANNEL_LABEL;
     return threadDetail()?.thread.title || activeThreadPanel()?.thread.title || "Untitled Thread";
   };
@@ -754,15 +735,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     const sessionStatus = activeSessionStatus();
     if (sessionStatus) return sessionStatus;
     if (activeExecutionStatus()) return "running";
-    if (!threadId() && !props.librarianView) return "ready";
+    if (!threadId()) return "ready";
     return threadDetail()?.thread.status || activeThreadPanel()?.thread.status || "active";
   };
 
   const projectScopeStatus = () =>
-    !threadId() && !props.librarianView && isRunning() ? "running" : "ready";
+    !threadId() && isRunning() ? "running" : "ready";
 
   const activeMessages = () => {
-    const history = (props.librarianView ? librarianHistory() : (threadId() ? threadHistory() : projectHistory())).filter(
+    const history = (threadId() ? threadHistory() : projectHistory()).filter(
       (message) => message.role !== "system",
     );
     const optimistic = optimisticUserMessage();
@@ -776,11 +757,9 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   };
 
   const activeLiveTurn = () => {
-    const backendLiveTurn = props.librarianView
-      ? librarianActivity()?.live_turn ?? null
-      : threadId()
-        ? threadDetail()?.activity.live_turn ?? null
-        : projectActivity()?.live_turn ?? null;
+    const backendLiveTurn = threadId()
+      ? threadDetail()?.activity.live_turn ?? null
+      : projectActivity()?.live_turn ?? null;
     return backendLiveTurn ?? optimisticLiveTurn();
   };
 
@@ -793,18 +772,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   };
 
   const activeSessionStatus = () => {
-    if (props.librarianView) return librarianActivity()?.session?.status ?? null;
     if (threadId()) return threadDetail()?.activity.session?.status ?? activeThreadPanel()?.activity.session?.status ?? null;
     return projectActivity()?.session?.status ?? null;
   };
 
   const activeRuntimeError = () =>
     classifyWorkspaceError(
-      props.librarianView
-        ? librarianActivity()?.session?.last_error
-        : threadId()
-          ? threadDetail()?.activity.session?.last_error
-          : projectActivity()?.session?.last_error,
+      threadId()
+        ? threadDetail()?.activity.session?.last_error
+        : projectActivity()?.session?.last_error,
     );
   const visibleRuntimeError = () => {
     const banner = activeRuntimeError();
@@ -882,48 +858,13 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     // Clear the live turn immediately so the UI doesn't show a lingering "Stopping" bubble.
     // The backend will persist the interrupted message into history via SSE.
     setOptimisticLiveTurn(null);
-    if (props.librarianView) {
-      await stopLibrarianChat(props.projectId);
-    } else if (threadId()) {
+    if (threadId()) {
       await stopThreadChat(props.projectId, threadId()!);
     } else {
       await stopChat(props.projectId);
     }
     setJustStopped(true);
     setTimeout(() => setJustStopped(false), 3000);
-  };
-
-  const handleKnowledgeScan = async () => {
-    if (scanning()) return;
-    setScanning(true);
-    setError("");
-    setStickToBottom(true);
-    setJustStopped(false);
-    setOptimisticUserMessage({
-      id: -1,
-      role: "user",
-      message_kind: "chat",
-      preview_text: null,
-      collapsed_by_default: false,
-      chunks_json: JSON.stringify([{ type: "text", content: LIBRARIAN_FULL_SCAN_MESSAGE }]),
-      timestamp: new Date().toISOString(),
-    });
-    const shouldStartOptimisticTurn = !isRunning();
-    if (shouldStartOptimisticTurn) {
-      beginOptimisticTurn("running");
-    }
-    try {
-      const response = await sendLibrarianMessage(props.projectId, LIBRARIAN_FULL_SCAN_MESSAGE);
-      if (shouldStartOptimisticTurn && !response.started) {
-        clearOptimisticTurn();
-      }
-    } catch (err) {
-      clearOptimisticTurn();
-      setOptimisticUserMessage(null);
-      setError(err instanceof Error ? err.message : "Failed to start librarian scan");
-    } finally {
-      setScanning(false);
-    }
   };
 
   const handleRootSubmit = async () => {
@@ -969,11 +910,9 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
     }
 
     try {
-      const response = props.librarianView
-        ? await sendLibrarianMessage(props.projectId, content)
-        : threadId()
-          ? await sendThreadMessage(props.projectId, threadId()!, content)
-          : await sendChatMessage(props.projectId, content);
+      const response = threadId()
+        ? await sendThreadMessage(props.projectId, threadId()!, content)
+        : await sendChatMessage(props.projectId, content);
       if (shouldStartOptimisticTurn && !response.started) {
         clearOptimisticTurn();
       }
@@ -1068,11 +1007,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
               </span>
               <span class="hidden max-w-[280px] truncate text-[13px] text-foreground/80 md:inline">
                 {activeTitle()}
-              </span>
-            </Show>
-            <Show when={props.librarianView}>
-              <span class="hidden font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70 md:inline">
-                Librarian
               </span>
             </Show>
           </div>
@@ -1280,17 +1214,17 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                         <Show when={expanded()}>
                           <div class="ml-[10px] border-l border-border/40 pl-1 pb-1">
 
-                            {/* Shepherd + Librarian (compact, only when current project) */}
+                            {/* Canvas (compact, only when current project) */}
                             <Show when={isCurrent()}>
                               <a
                                 href={`#project/${project.id}`}
                                 class={cn(
                                   "flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                  !threadId() && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                  !threadId() && !settingsOpen() && !projectSettingsOpen()
                                     ? "text-foreground"
                                     : "text-muted-foreground hover:text-foreground",
                                 )}
-                                style={!threadId() && !props.librarianView && !settingsOpen() && !projectSettingsOpen()
+                                style={!threadId() && !settingsOpen() && !projectSettingsOpen()
                                   ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" }
                                   : undefined}
                                 onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
@@ -1302,25 +1236,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                                   <rect x="9" y="9" width="5" height="5" />
                                 </svg>
                                 <span class="flex-1 truncate">Canvas</span>
-                              </a>
-                              <a
-                                href={`#librarian/${project.id}`}
-                                class={cn(
-                                  "flex items-center gap-2 px-2 py-1.5 text-xs transition-colors",
-                                  props.librarianView && !settingsOpen() && !projectSettingsOpen()
-                                    ? "text-foreground"
-                                    : "text-muted-foreground hover:text-foreground",
-                                )}
-                                style={props.librarianView && !settingsOpen() && !projectSettingsOpen()
-                                  ? { "background": "color-mix(in oklch, oklch(var(--brand)) 6%, transparent)" }
-                                  : undefined}
-                                onClick={() => { setMobileSidebarOpen(false); setSettingsOpen(false); setProjectSettingsOpen(false); }}
-                              >
-                                <span class={cn(
-                                  "h-1.5 w-1.5 shrink-0 rounded-full",
-                                  librarianActivity()?.has_active_turn ? "bg-signal-amber animate-pulse-dot" : "bg-muted-foreground/30",
-                                )} />
-                                <span class="flex-1 truncate">Librarian</span>
                               </a>
                             </Show>
 
@@ -1891,44 +1806,8 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   </div>
                 }
               >
-                <Show
-                  when={!props.librarianView}
-                  fallback={
-                    <ChatSurface
-                      variant="main"
-                      scope="librarian"
-                      projectId={props.projectId}
-                      title={activeTitle()}
-                      loaded={!!project()}
-                      messages={activeMessages()}
-                      liveTurn={activeLiveTurn()}
-                      runtimeError={visibleRuntimeError()}
-                      scanning={scanning()}
-                      stickToBottom={stickToBottom()}
-                      inputValue={input()}
-                      running={isRunning()}
-                      justStopped={justStopped()}
-                      composerFocusNonce={composerFocusNonce()}
-                      onInputChange={setInput}
-                      onSubmit={() => void handleSubmit()}
-                      onStop={() => void handleStop()}
-                      onTranscriptRef={(el) => {
-                        transcriptRef = el;
-                      }}
-                      onScroll={updateStickinessFromScroll}
-                      onScrollToBottom={() => {
-                        setStickToBottom(true);
-                        if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
-                      }}
-                      onKnowledgeScan={() => void handleKnowledgeScan()}
-                      onOpenSettings={() => setSettingsOpen(true)}
-                      onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
-                      onSuggestion={useSuggestion}
-                    />
-                  }
-                >
-                  {/* Canvas view — the project home. Always resident when not in librarian mode. */}
-                  <Suspense
+                {/* Canvas view — the project home. */}
+                <Suspense
                     fallback={
                       <div class="flex h-full items-center justify-center text-xs font-mono text-muted-foreground">
                         loading canvas...
@@ -1945,12 +1824,54 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                       externalSearch={
                         paletteOpen() ? paletteQuery() : canvasCompanionQuery()
                       }
+                      focusChatSlot={() => {
+                        let focusTranscriptRef: HTMLDivElement | undefined;
+                        return (
+                          <ChatSurface
+                            variant="panel"
+                            scope="root"
+                            projectId={props.projectId}
+                            title={ROOT_CHANNEL_LABEL}
+                            loaded={!!project()}
+                            messages={projectHistory().filter((m) => m.role !== "system")}
+                            liveTurn={projectActivity()?.live_turn ?? null}
+                            runtimeError={null}
+                            stickToBottom={rootStickToBottom()}
+                            inputValue={rootInput()}
+                            running={projectActivity()?.has_active_turn ?? false}
+                            justStopped={false}
+                            composerFocusNonce={rootComposerFocusNonce()}
+                            onInputChange={setRootInput}
+                            onSubmit={() => void handleRootSubmit()}
+                            onStop={() => void handleRootStop()}
+                            onTranscriptRef={(el) => {
+                              focusTranscriptRef = el;
+                            }}
+                            onScroll={() => {
+                              if (!focusTranscriptRef) return;
+                              const el = focusTranscriptRef;
+                              const atBottom =
+                                el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+                              setRootStickToBottom(atBottom);
+                            }}
+                            onScrollToBottom={() => {
+                              setRootStickToBottom(true);
+                              if (focusTranscriptRef)
+                                focusTranscriptRef.scrollTop =
+                                  focusTranscriptRef.scrollHeight;
+                            }}
+                            onOpenSettings={() => setSettingsOpen(true)}
+                            onDismissRuntimeError={() => {}}
+                            onSuggestion={(text) => setRootInput(text)}
+                          />
+                        );
+                      }}
                       onRequestHandled={() => {
                         setCanvasFocusRequest(null);
                         setCanvasCreateRequest(null);
                         setCanvasCenterRequest(null);
                       }}
-                      onRequestPalette={() => setPaletteOpen(true)}
+                      onRequestPalette={openPalette}
                     />
                   </Suspense>
 
@@ -1995,7 +1916,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                         messages={activeMessages()}
                         liveTurn={activeLiveTurn()}
                         runtimeError={visibleRuntimeError()}
-                        scanning={scanning()}
                         stickToBottom={stickToBottom()}
                         inputValue={input()}
                         running={isRunning()}
@@ -2012,7 +1932,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                           setStickToBottom(true);
                           if (transcriptRef) transcriptRef.scrollTop = transcriptRef.scrollHeight;
                         }}
-                        onKnowledgeScan={() => void handleKnowledgeScan()}
                         onOpenSettings={() => setSettingsOpen(true)}
                         onDismissRuntimeError={(raw) => setDismissedRuntimeErrorRaw(raw)}
                         onSuggestion={useSuggestion}
@@ -2020,7 +1939,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                       />
                     </div>
                   </Show>
-                </Show>
               </Show>
             </main>
 
@@ -2107,7 +2025,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                   messages={projectHistory().filter((m) => m.role !== "system")}
                   liveTurn={projectActivity()?.live_turn ?? null}
                   runtimeError={null}
-                  scanning={false}
                   stickToBottom={rootStickToBottom()}
                   inputValue={rootInput()}
                   running={projectActivity()?.has_active_turn ?? false}
@@ -2131,7 +2048,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     if (rootTranscriptRef)
                       rootTranscriptRef.scrollTop = rootTranscriptRef.scrollHeight;
                   }}
-                  onKnowledgeScan={() => void handleKnowledgeScan()}
                   onOpenSettings={() => setSettingsOpen(true)}
                   onDismissRuntimeError={() => {}}
                   onSuggestion={(text) => setRootInput(text)}
@@ -2142,6 +2058,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
             <CommandPalette
               projectId={props.projectId}
               open={paletteOpen()}
+              focusNonce={paletteFocusNonce()}
               onClose={() => setPaletteOpen(false)}
               onQueryChange={setPaletteQuery}
               onSelectThread={(tid) => setFocusedThreadId(tid)}
@@ -2151,8 +2068,6 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 else if (action === "create-document") setCanvasCreateRequest("document");
                 else if (action === "create-goal") setCanvasCreateRequest("goal");
                 else if (action === "create-decision") setCanvasCreateRequest("decision");
-                else if (action === "open-librarian")
-                  window.location.hash = `#librarian/${props.projectId}`;
                 else if (action === "reset-layout") {
                   void resetCanvasLayout(props.projectId).then(() =>
                     setCanvasReloadNonce((n) => n + 1),

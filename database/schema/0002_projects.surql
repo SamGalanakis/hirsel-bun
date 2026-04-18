@@ -1,0 +1,22 @@
+DEFINE TABLE IF NOT EXISTS project SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE project TYPE int;
+DEFINE FIELD IF NOT EXISTS name ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS name_lower ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS created_at ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS icon ON TABLE project TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS workspaces ON TABLE project TYPE array<object>;
+DEFINE FIELD IF NOT EXISTS workspaces[*].id ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS workspaces[*].kind ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS workspaces[*].label ON TABLE project TYPE string;
+DEFINE FIELD IF NOT EXISTS workspaces[*].path ON TABLE project TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS workspaces[*].url ON TABLE project TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS workspaces[*].branch ON TABLE project TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS shepherd_cwd ON TABLE project TYPE option<string>;
+DEFINE INDEX IF NOT EXISTS project_name_lower_idx ON TABLE project FIELDS name_lower UNIQUE;
+
+DEFINE TABLE IF NOT EXISTS project_retained_context SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE project_retained_context TYPE int;
+DEFINE FIELD IF NOT EXISTS markdown ON TABLE project_retained_context TYPE string;
+DEFINE FIELD IF NOT EXISTS source ON TABLE project_retained_context TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS updated_at ON TABLE project_retained_context TYPE string;
