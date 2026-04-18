@@ -1,12 +1,13 @@
 pub mod commands;
+mod focus_prompt;
 mod history;
 mod preview;
 mod queries;
 mod runtime;
 mod search_context;
 mod session;
-mod task_tools;
 mod shell;
+mod task_tools;
 mod tools;
 pub mod types;
 mod worker;

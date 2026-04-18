@@ -13,7 +13,6 @@ use lash::{
 pub(crate) enum EmbeddedToolPreset {
     General,
     Shepherd,
-    Librarian,
 }
 
 pub(crate) struct EmbeddedCustomToolPlugin {
@@ -129,15 +128,6 @@ fn shepherd_tool_plugin_factories(
     factories
 }
 
-fn librarian_tool_plugin_factories(
-    custom_plugin: EmbeddedCustomToolPlugin,
-) -> Vec<Arc<dyn PluginFactory>> {
-    vec![
-        builtin_projection_plugin_factory(),
-        custom_tool_plugin_factory(custom_plugin),
-    ]
-}
-
 pub(crate) fn embedded_tool_plugin_factories(
     preset: EmbeddedToolPreset,
     custom_plugin: Option<EmbeddedCustomToolPlugin>,
@@ -151,9 +141,6 @@ pub(crate) fn embedded_tool_plugin_factories(
         EmbeddedToolPreset::Shepherd => shepherd_tool_plugin_factories(
             shell_tool_provider,
             tavily_api_key,
-            custom_plugin.expect("custom tool preset requires a custom tool plugin"),
-        ),
-        EmbeddedToolPreset::Librarian => librarian_tool_plugin_factories(
             custom_plugin.expect("custom tool preset requires a custom tool plugin"),
         ),
     }

@@ -98,24 +98,12 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             get(projects::get_knowledge_graph),
         )
         .route(
-            "/api/projects/{project_id}/librarian/activity",
-            get(projects::get_librarian_activity),
-        )
-        .route(
-            "/api/projects/{project_id}/librarian/history",
-            get(projects::get_librarian_history),
-        )
-        .route(
-            "/api/projects/{project_id}/librarian/chat/send",
-            post(projects::send_librarian_message),
-        )
-        .route(
-            "/api/projects/{project_id}/librarian/chat/stop",
-            post(projects::stop_librarian_chat),
-        )
-        .route(
             "/api/projects/{project_id}/settings",
             post(projects::save_project_settings),
+        )
+        .route(
+            "/api/projects/{project_id}/focus",
+            post(projects::record_project_focus),
         )
         .route(
             "/api/projects/{project_id}/chat/send",
@@ -167,10 +155,7 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             post(tasks::review_action),
         )
         // Canvas
-        .route(
-            "/api/projects/{project_id}/canvas",
-            get(canvas::get_canvas),
-        )
+        .route("/api/projects/{project_id}/canvas", get(canvas::get_canvas))
         .route(
             "/api/projects/{project_id}/canvas/layout",
             patch(canvas::patch_layout).delete(canvas::delete_layout),

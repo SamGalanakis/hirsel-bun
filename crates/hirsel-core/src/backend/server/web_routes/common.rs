@@ -93,8 +93,6 @@ pub struct ApiWorkspaceSnapshot {
     pub thread_history: Vec<ApiChatMessage>,
     pub focused_task: Option<crate::backend::tasks::Task>,
     pub tasks: Vec<crate::backend::tasks::Task>,
-    pub librarian_activity: ApiScopeActivity,
-    pub librarian_history: Vec<ApiChatMessage>,
 }
 
 pub fn to_api_project(project: &Project) -> ApiProject {

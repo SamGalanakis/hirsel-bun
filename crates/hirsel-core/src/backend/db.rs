@@ -20,7 +20,52 @@ pub type DbClient = Surreal<Db>;
 static GLOBAL_DB: OnceCell<DbClient> = OnceCell::const_new();
 static COUNTER_LOCK: Mutex<()> = Mutex::const_new(());
 
-const APP_SCHEMA: &str = include_str!("../../../../db/schema/current.surql");
+/// Schema migrations applied in lexicographic order at boot. Each file holds
+/// one topical cluster of table/field/index definitions; surrealkit's
+/// `sync`/`rollout` workflows operate on the same directory during dev and
+/// deploy, so there is a single source of truth.
+const SCHEMA_MIGRATIONS: &[(&str, &str)] = &[
+    (
+        "0001_core",
+        include_str!("../../../../database/schema/0001_core.surql"),
+    ),
+    (
+        "0002_projects",
+        include_str!("../../../../database/schema/0002_projects.surql"),
+    ),
+    (
+        "0003_shepherd_chat",
+        include_str!("../../../../database/schema/0003_shepherd_chat.surql"),
+    ),
+    (
+        "0004_shepherd_thread",
+        include_str!("../../../../database/schema/0004_shepherd_thread.surql"),
+    ),
+    (
+        "0005_shepherd_session",
+        include_str!("../../../../database/schema/0005_shepherd_session.surql"),
+    ),
+    (
+        "0006_knowledge_graph",
+        include_str!("../../../../database/schema/0006_knowledge_graph.surql"),
+    ),
+    (
+        "0007_canvas",
+        include_str!("../../../../database/schema/0007_canvas.surql"),
+    ),
+    (
+        "0008_tasks",
+        include_str!("../../../../database/schema/0008_tasks.surql"),
+    ),
+    (
+        "0009_queues",
+        include_str!("../../../../database/schema/0009_queues.surql"),
+    ),
+    (
+        "0010_project_recent_focus",
+        include_str!("../../../../database/schema/0010_project_recent_focus.surql"),
+    ),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]
 struct CounterRecord {
@@ -28,17 +73,22 @@ struct CounterRecord {
 }
 
 async fn apply_schema(db: &DbClient) -> Result<(), String> {
-    let mut response = db
-        .query(APP_SCHEMA)
-        .await
-        .map_err(|error| format!("failed to apply SurrealDB schema: {}", error))?;
-    let errors = response.take_errors();
-    if !errors.is_empty() {
-        let msgs: Vec<String> = errors
-            .into_iter()
-            .map(|(i, e)| format!("statement {i}: {e}"))
-            .collect();
-        return Err(format!("SurrealDB schema errors:\n{}", msgs.join("\n")));
+    for (name, body) in SCHEMA_MIGRATIONS {
+        let mut response = db
+            .query(*body)
+            .await
+            .map_err(|error| format!("failed to apply schema migration {name}: {error}"))?;
+        let errors = response.take_errors();
+        if !errors.is_empty() {
+            let msgs: Vec<String> = errors
+                .into_iter()
+                .map(|(i, e)| format!("statement {i}: {e}"))
+                .collect();
+            return Err(format!(
+                "SurrealDB schema errors in migration {name}:\n{}",
+                msgs.join("\n")
+            ));
+        }
     }
     Ok(())
 }

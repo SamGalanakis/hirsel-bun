@@ -16,7 +16,15 @@ use crate::backend::tasks::TaskStore;
 use crate::backend::ShepherdThreadStore;
 
 const USER_KIND_KG: &[&str] = &["document", "goal", "decision"];
-const EDITABLE_KG: &[&str] = &["document", "goal", "decision", "component", "entity", "convention", "fact"];
+const EDITABLE_KG: &[&str] = &[
+    "document",
+    "goal",
+    "decision",
+    "component",
+    "entity",
+    "convention",
+    "fact",
+];
 
 const LAYOUT_TABLE: &str = "project_canvas_layout";
 
@@ -33,6 +41,8 @@ pub struct CanvasNode {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subtype: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -79,6 +89,7 @@ pub async fn get_canvas(
                     id: task.id.clone(),
                     label: task.title.clone(),
                     content: task.content.clone(),
+                    subtype: None,
                     status: Some(task.status.clone()),
                     tags: None,
                     focused_task_id: None,
@@ -101,6 +112,7 @@ pub async fn get_canvas(
                     id: thread.id.clone(),
                     label: thread.title.clone(),
                     content: Some(thread.summary.clone()),
+                    subtype: None,
                     status: Some(thread.status.clone()),
                     tags: None,
                     focused_task_id: thread.focused_task_id.clone(),
@@ -129,6 +141,7 @@ pub async fn get_canvas(
                 kg.label.clone()
             },
             content: kg.content.clone(),
+            subtype: kg.subtype.clone(),
             status: None,
             tags: kg.tags.clone(),
             focused_task_id: None,
@@ -151,11 +164,31 @@ pub async fn get_canvas(
     if let Ok(ref mut r) = edge_response {
         let rows: Vec<serde_json::Value> = r.take(0).unwrap_or_default();
         for row in rows {
-            let relation = row.get("relation").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let in_kind = row.get("in_kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let in_id = row.get("in_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let out_kind = row.get("out_kind").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let out_id = row.get("out_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let relation = row
+                .get("relation")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let in_kind = row
+                .get("in_kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let in_id = row
+                .get("in_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let out_kind = row
+                .get("out_kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let out_id = row
+                .get("out_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             if !in_kind.is_empty() && !out_kind.is_empty() {
                 edges.push(CanvasEdge {
                     from: format!("{in_kind}:{in_id}"),
@@ -219,8 +252,8 @@ pub async fn patch_layout(
     for (key, pos) in body.positions {
         layout.insert(key, pos);
     }
-    let json =
-        serde_json::to_string(&layout).map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let json = serde_json::to_string(&layout)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     let _ = db
         .query("UPSERT type::record('project_canvas_layout', $pid) MERGE { project_id: $pid, layout_json: $json }")
@@ -252,6 +285,12 @@ pub struct CreateCanvasNodeBody {
     pub title: String,
     #[serde(default)]
     pub content: Option<String>,
+    /// For `kind = "document"`: either `"markdown"` (default) or `"html"`.
+    /// Ignored for other kinds.
+    #[serde(default)]
+    pub subtype: Option<String>,
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 pub async fn create_canvas_node(
@@ -265,32 +304,53 @@ pub async fn create_canvas_node(
     let node_id: String;
     match body.kind.as_str() {
         "task" => {
-            let store = TaskStore::open()
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("open tasks: {e}")))?;
+            let store = TaskStore::open().await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("open tasks: {e}"),
+                )
+            })?;
             let task = store
                 .create_task(project_id, &title, body.content.as_deref())
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("create task: {e}")))?;
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("create task: {e}"),
+                    )
+                })?;
             node_id = task.id;
             live_updates::publish_project(project_id, LiveUpdateKind::TasksChanged);
         }
         k if USER_KIND_KG.contains(&k) => {
             node_id = slugify_with_hash(&title);
+            let subtype: Option<String> = if k == "document" {
+                Some(normalize_document_subtype(body.subtype.as_deref()))
+            } else {
+                None
+            };
+            let tags = normalize_tags(body.tags.clone().unwrap_or_default());
             let db = global_db().await;
             let _ = db
                 .query(
                     "UPSERT type::record('kg_node', [$pid, $kind, $nid]) MERGE { \
                        project_id: $pid, kind: $kind, node_id: $nid, label: $label, \
-                       content: $content, source: 'user', tags: [] }",
+                       content: $content, subtype: $subtype, source: 'user', tags: $tags }",
                 )
                 .bind(("pid", project_id))
                 .bind(("kind", k.to_string()))
                 .bind(("nid", node_id.clone()))
                 .bind(("label", title.clone()))
                 .bind(("content", body.content.clone().unwrap_or_default()))
+                .bind(("subtype", subtype))
+                .bind(("tags", tags))
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("create kg_node: {e}")))?;
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("create kg_node: {e}"),
+                    )
+                })?;
             live_updates::publish_project(project_id, LiveUpdateKind::KnowledgeGraphChanged);
         }
         other => {
@@ -307,7 +367,9 @@ pub async fn create_canvas_node(
         serde_json::json!({ "kind": body.kind, "node_id": node_id, "title": title }),
     )
     .await;
-    Ok(Json(serde_json::json!({ "ok": true, "id": node_id, "kind": body.kind })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "id": node_id, "kind": body.kind }),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -318,6 +380,12 @@ pub struct UpdateCanvasNodeBody {
     pub content: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+    /// For `kind = "document"`: switch rendering between `"markdown"` and `"html"`.
+    #[serde(default)]
+    pub subtype: Option<String>,
+    /// Replace the node's tags entirely. Normalized (trim/lowercase/dedupe) server-side.
+    #[serde(default)]
+    pub tags: Option<Vec<String>>,
 }
 
 pub async fn update_canvas_node(
@@ -326,9 +394,12 @@ pub async fn update_canvas_node(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     match kind.as_str() {
         "task" => {
-            let store = TaskStore::open()
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("open tasks: {e}")))?;
+            let store = TaskStore::open().await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("open tasks: {e}"),
+                )
+            })?;
             let content_arg: Option<Option<&str>> = body.content.as_deref().map(Some);
             store
                 .update_task(
@@ -338,7 +409,12 @@ pub async fn update_canvas_node(
                     content_arg,
                 )
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("update task: {e}")))?;
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("update task: {e}"),
+                    )
+                })?;
             live_updates::publish_project(project_id, LiveUpdateKind::TasksChanged);
         }
         k if EDITABLE_KG.contains(&k) => {
@@ -350,6 +426,25 @@ pub async fn update_canvas_node(
             }
             if let Some(c) = &body.content {
                 merge.insert("content".into(), serde_json::Value::String(c.clone()));
+            }
+            if let Some(s) = body.subtype.as_deref() {
+                if k == "document" {
+                    merge.insert(
+                        "subtype".into(),
+                        serde_json::Value::String(normalize_document_subtype(Some(s))),
+                    );
+                }
+            }
+            if let Some(tags) = body.tags.clone() {
+                merge.insert(
+                    "tags".into(),
+                    serde_json::Value::Array(
+                        normalize_tags(tags)
+                            .into_iter()
+                            .map(serde_json::Value::String)
+                            .collect(),
+                    ),
+                );
             }
             if merge.is_empty() {
                 return Ok(Json(serde_json::json!({ "ok": true })));
@@ -363,7 +458,12 @@ pub async fn update_canvas_node(
                 .bind(("kind", kind.clone()))
                 .bind(("nid", node_id.clone()))
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("update kg_node: {e}")))?;
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("update kg_node: {e}"),
+                    )
+                })?;
             live_updates::publish_project(project_id, LiveUpdateKind::KnowledgeGraphChanged);
         }
         other => {
@@ -387,20 +487,30 @@ pub async fn delete_canvas_node(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     match kind.as_str() {
         "task" => {
-            let store = TaskStore::open()
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("open tasks: {e}")))?;
-            store
-                .delete_task(&node_id)
-                .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("delete task: {e}")))?;
+            let store = TaskStore::open().await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("open tasks: {e}"),
+                )
+            })?;
+            store.delete_task(&node_id).await.map_err(|e| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("delete task: {e}"),
+                )
+            })?;
             live_updates::publish_project(project_id, LiveUpdateKind::TasksChanged);
             live_updates::publish_project(project_id, LiveUpdateKind::CanvasLayoutChanged);
         }
         "thread" => {
             crate::backend::shepherd_runtime::archive_thread(project_id, &node_id)
                 .await
-                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("archive thread: {e}")))?;
+                .map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("archive thread: {e}"),
+                    )
+                })?;
             live_updates::publish_project(project_id, LiveUpdateKind::ThreadsChanged);
             live_updates::publish_project(project_id, LiveUpdateKind::CanvasLayoutChanged);
         }
@@ -433,6 +543,32 @@ pub async fn delete_canvas_node(
     )
     .await;
     Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Validate a document subtype, defaulting to `"markdown"` for missing or unknown values.
+/// Only `"markdown"` and `"html"` are accepted.
+fn normalize_document_subtype(raw: Option<&str>) -> String {
+    match raw.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("html") => "html".to_string(),
+        _ => "markdown".to_string(),
+    }
+}
+
+/// Normalize a list of tags: trim, lowercase, drop empties, dedupe while
+/// preserving first-seen order. Keeps tags short and comparable across the app.
+pub(crate) fn normalize_tags(raw: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(raw.len());
+    for tag in raw {
+        let normalized = tag.trim().to_ascii_lowercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        if seen.insert(normalized.clone()) {
+            out.push(normalized);
+        }
+    }
+    out
 }
 
 fn slugify_with_hash(title: &str) -> String {

@@ -135,10 +135,6 @@ impl ShepherdChatStore {
         format!("__shepherd__:{project_id}")
     }
 
-    pub fn librarian_scope_key(project_id: i64) -> String {
-        format!("__librarian__:{project_id}")
-    }
-
     pub fn thread_scope_key(thread_id: &str) -> String {
         format!("__thread__:{thread_id}")
     }
@@ -621,8 +617,6 @@ fn publish_history_event(project_id: Option<i64>, scope_key: Option<&str>) {
             thread_id.to_string(),
             LiveUpdateKind::ThreadHistoryChanged,
         );
-    } else if live_updates::scope_is_librarian(scope_key) {
-        live_updates::publish_project(project_id, LiveUpdateKind::LibrarianHistoryChanged);
     } else {
         live_updates::publish_project(project_id, LiveUpdateKind::ProjectHistoryChanged);
     }
@@ -638,8 +632,6 @@ fn publish_activity_event(project_id: Option<i64>, scope_key: Option<&str>) {
             thread_id.to_string(),
             LiveUpdateKind::ThreadActivityChanged,
         );
-    } else if live_updates::scope_is_librarian(scope_key) {
-        live_updates::publish_project(project_id, LiveUpdateKind::LibrarianActivityChanged);
     } else {
         live_updates::publish_project(project_id, LiveUpdateKind::ProjectActivityChanged);
     }

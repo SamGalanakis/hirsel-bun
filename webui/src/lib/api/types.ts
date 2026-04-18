@@ -32,8 +32,6 @@ export interface WorkspaceSnapshot {
   thread_history: ChatMessage[];
   focused_task: Task | null;
   tasks: Task[];
-  librarian_activity: ScopeActivity;
-  librarian_history: ChatMessage[];
 }
 
 export type LiveUpdateKind =
@@ -41,8 +39,6 @@ export type LiveUpdateKind =
   | "project_surface_changed"
   | "project_history_changed"
   | "project_activity_changed"
-  | "librarian_history_changed"
-  | "librarian_activity_changed"
   | "knowledge_graph_changed"
   | "threads_changed"
   | "thread_changed"
@@ -92,11 +88,15 @@ export interface CanvasPosition {
   y: number;
 }
 
+export type DocumentSubtype = "markdown" | "html";
+
 export interface CanvasNode {
   kind: string;
   id: string;
   label: string;
   content?: string | null;
+  /** Only meaningful when `kind === "document"`. "markdown" | "html". */
+  subtype?: DocumentSubtype | string | null;
   status?: string | null;
   tags?: string[] | null;
   focused_task_id?: string | null;
@@ -286,6 +286,9 @@ export interface KnowledgeGraphNode {
   label: string;
   summary?: string;
   content?: string;
+  /** Only meaningful when `kind === "document"`. "markdown" | "html". */
+  subtype?: DocumentSubtype | string | null;
+  tags?: string[] | null;
   confidence?: string;
   source: string;
   metadata: Record<string, unknown>;

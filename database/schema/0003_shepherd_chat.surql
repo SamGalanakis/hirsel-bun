@@ -1,0 +1,30 @@
+DEFINE TABLE IF NOT EXISTS shepherd_chat_message SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS message_id ON TABLE shepherd_chat_message TYPE int;
+DEFINE FIELD IF NOT EXISTS lookup_key ON TABLE shepherd_chat_message TYPE string;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE shepherd_chat_message TYPE option<int>;
+DEFINE FIELD IF NOT EXISTS scope_key ON TABLE shepherd_chat_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS role ON TABLE shepherd_chat_message TYPE string;
+DEFINE FIELD IF NOT EXISTS timestamp ON TABLE shepherd_chat_message TYPE string;
+DEFINE FIELD IF NOT EXISTS message_kind ON TABLE shepherd_chat_message TYPE string;
+DEFINE FIELD IF NOT EXISTS preview_text ON TABLE shepherd_chat_message TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS collapsed_by_default ON TABLE shepherd_chat_message TYPE bool;
+DEFINE FIELD IF NOT EXISTS chunks_json ON TABLE shepherd_chat_message TYPE string;
+DEFINE INDEX IF NOT EXISTS shepherd_chat_lookup_idx ON TABLE shepherd_chat_message FIELDS lookup_key;
+
+DEFINE TABLE IF NOT EXISTS shepherd_live_turn SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS lookup_key ON TABLE shepherd_live_turn TYPE string;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE shepherd_live_turn TYPE option<int>;
+DEFINE FIELD IF NOT EXISTS scope_key ON TABLE shepherd_live_turn TYPE string;
+DEFINE FIELD IF NOT EXISTS role ON TABLE shepherd_live_turn TYPE string;
+DEFINE FIELD IF NOT EXISTS chunks_json ON TABLE shepherd_live_turn TYPE string;
+DEFINE FIELD IF NOT EXISTS status ON TABLE shepherd_live_turn TYPE string;
+DEFINE FIELD IF NOT EXISTS error ON TABLE shepherd_live_turn TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS started_at ON TABLE shepherd_live_turn TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at ON TABLE shepherd_live_turn TYPE string;
+
+DEFINE TABLE IF NOT EXISTS shepherd_scope_state SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS lookup_key ON TABLE shepherd_scope_state TYPE string;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE shepherd_scope_state TYPE int;
+DEFINE FIELD IF NOT EXISTS scope_key ON TABLE shepherd_scope_state TYPE string;
+DEFINE FIELD IF NOT EXISTS state_json ON TABLE shepherd_scope_state TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at ON TABLE shepherd_scope_state TYPE string;

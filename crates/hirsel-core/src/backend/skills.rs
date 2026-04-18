@@ -198,9 +198,9 @@ async fn scope_workspace_root(scope: &ShepherdScope) -> Option<PathBuf> {
 
     let project_id = match scope {
         ShepherdScope::General => return None,
-        ShepherdScope::Shepherd { project_id, .. }
-        | ShepherdScope::Thread { project_id, .. }
-        | ShepherdScope::Librarian { project_id, .. } => *project_id,
+        ShepherdScope::Shepherd { project_id, .. } | ShepherdScope::Thread { project_id, .. } => {
+            *project_id
+        }
     };
     let path = resolve_project_root(project_id).await.ok()?;
     if path.is_dir() {

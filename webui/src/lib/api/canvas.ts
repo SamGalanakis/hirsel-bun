@@ -38,7 +38,13 @@ export async function deleteCanvasNode(
 
 export async function createCanvasNode(
   projectId: number,
-  data: { kind: string; title: string; content?: string },
+  data: {
+    kind: string;
+    title: string;
+    content?: string;
+    subtype?: string;
+    tags?: string[];
+  },
 ): Promise<{ ok: true; id: string; kind: string }> {
   const res = await apiFetch(`/projects/${projectId}/canvas/node`, {
     method: "POST",
@@ -64,7 +70,13 @@ export async function updateCanvasNode(
   projectId: number,
   kind: string,
   nodeId: string,
-  data: { title?: string; content?: string; status?: string },
+  data: {
+    title?: string;
+    content?: string;
+    status?: string;
+    subtype?: string;
+    tags?: string[];
+  },
 ): Promise<void> {
   const res = await apiFetch(
     `/projects/${projectId}/canvas/node/${encodeURIComponent(kind)}/${encodeURIComponent(nodeId)}`,

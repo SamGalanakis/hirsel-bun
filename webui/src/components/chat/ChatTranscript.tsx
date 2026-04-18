@@ -1,6 +1,5 @@
 import { type Component, For, Show } from "solid-js";
 import ChatMessage from "@/components/ChatMessage";
-import Button from "@/components/ui/button";
 import type { ChatMessage as ApiChatMessage, LiveTurn } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
@@ -13,17 +12,14 @@ export interface ChatRuntimeBanner {
 interface ChatTranscriptProps {
   title: string;
   threadId?: string;
-  librarianView?: boolean;
   loaded: boolean;
   messages: ApiChatMessage[];
   liveTurn: LiveTurn | null;
   runtimeError: ChatRuntimeBanner | null;
-  scanning: boolean;
   stickToBottom: boolean;
   onTranscriptRef?: (element: HTMLDivElement) => void;
   onScroll: () => void;
   onScrollToBottom: () => void;
-  onKnowledgeScan: () => void | Promise<void>;
   onOpenSettings: () => void;
   onDismissRuntimeError: (raw: string) => void;
   onSuggestion?: (text: string) => void;
@@ -40,11 +36,6 @@ const THREAD_SUGGESTIONS = [
   "Pick up where we left off",
 ];
 
-const LIBRARIAN_SUGGESTIONS = [
-  "What do you know about this project?",
-  "Show me what's in the knowledge graph",
-];
-
 const ChatTranscript: Component<ChatTranscriptProps> = (props) => {
   const hasContent = () => props.messages.length > 0 || !!props.liveTurn;
 
@@ -54,15 +45,11 @@ const ChatTranscript: Component<ChatTranscriptProps> = (props) => {
     if (props.threadId) {
       return "A thread is a focused branch of work — one task, one conversation, one agent. The shepherd oversees.";
     }
-    if (props.librarianView) {
-      return "The librarian keeps the project's memory. It builds a knowledge graph, lore, and a canvas as you work together.";
-    }
     return "The shepherd is your main collaborator. Ask questions, start tasks, and spin off threads when something becomes its own piece of work.";
   };
 
   const suggestions = () => {
     if (props.threadId) return THREAD_SUGGESTIONS;
-    if (props.librarianView) return LIBRARIAN_SUGGESTIONS;
     return SHEPHERD_SUGGESTIONS;
   };
 
@@ -95,7 +82,7 @@ const ChatTranscript: Component<ChatTranscriptProps> = (props) => {
                   {/* Engraved scope label — positioned like a typewriter slug */}
                   <div class="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40 flex items-center gap-2">
                     <span class="inline-block h-px w-6 bg-muted-foreground/30" />
-                    <span>{props.threadId ? "Thread" : props.librarianView ? "Librarian" : "Shepherd"}</span>
+                    <span>{props.threadId ? "Thread" : "Shepherd"}</span>
                   </div>
 
                   {/* Display name in display serif, no italics — feels like a chapter heading */}
@@ -105,27 +92,6 @@ const ChatTranscript: Component<ChatTranscriptProps> = (props) => {
 
                   {/* Body copy in proper reading width */}
                   <p class="max-w-md text-[13px] leading-[1.7] text-muted-foreground/70">{emptyBody()}</p>
-                  <Show when={props.librarianView}>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      class={cn("mt-2 gap-2", props.scanning && "text-signal-amber")}
-                      disabled={props.scanning}
-                      onClick={() => void props.onKnowledgeScan()}
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        class={cn("h-3.5 w-3.5", props.scanning && "animate-spin")}
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="2"
-                      >
-                        <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                        <path d="M21 3v6h-6" />
-                      </svg>
-                      {props.scanning ? "Scanning..." : "Scan Workspace"}
-                    </Button>
-                  </Show>
                   <Show when={props.onSuggestion}>
                     <div class="mt-2 w-full">
                       <div class="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground/40 mb-3">

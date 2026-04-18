@@ -4,8 +4,8 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
 
-use crate::backend::tasks::TaskStore;
 use crate::backend::shepherd_runtime;
+use crate::backend::tasks::TaskStore;
 
 #[derive(Deserialize)]
 pub struct CreateTaskBody {
@@ -133,13 +133,11 @@ pub async fn dispatch_task(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     match body.mode.as_str() {
-        "continue" => {
-            Ok(Json(serde_json::json!({
-                "mode": "continue",
-                "task_id": task_id,
-                "thread_id": body.thread_id,
-            })))
-        }
+        "continue" => Ok(Json(serde_json::json!({
+            "mode": "continue",
+            "task_id": task_id,
+            "thread_id": body.thread_id,
+        }))),
         "new_thread" => {
             let thread = shepherd_runtime::create_thread(project_id, &task.title, &task.title)
                 .await
@@ -156,13 +154,9 @@ pub async fn dispatch_task(
                     "# Task: {}\n\n## Plan\n\n{}\n\n---\n\nImplement this plan.",
                     task.title, content
                 );
-                let _ = shepherd_runtime::send_thread_message(
-                    project_id,
-                    &thread.id,
-                    Some(msg),
-                    None,
-                )
-                .await;
+                let _ =
+                    shepherd_runtime::send_thread_message(project_id, &thread.id, Some(msg), None)
+                        .await;
             }
 
             Ok(Json(serde_json::json!({
@@ -171,7 +165,10 @@ pub async fn dispatch_task(
                 "thread_id": thread.id,
             })))
         }
-        _ => Err((StatusCode::BAD_REQUEST, "mode must be 'continue' or 'new_thread'".to_string())),
+        _ => Err((
+            StatusCode::BAD_REQUEST,
+            "mode must be 'continue' or 'new_thread'".to_string(),
+        )),
     }
 }
 
@@ -200,5 +197,7 @@ pub async fn review_action(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    Ok(Json(serde_json::json!({ "ok": true, "status": new_status })))
+    Ok(Json(
+        serde_json::json!({ "ok": true, "status": new_status }),
+    ))
 }

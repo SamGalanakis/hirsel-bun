@@ -132,8 +132,6 @@ fn publish_session_activity(project_id: Option<i64>, scope_key: &str) {
             thread_id.to_string(),
             LiveUpdateKind::ThreadActivityChanged,
         );
-    } else if live_updates::scope_is_librarian(Some(scope_key)) {
-        live_updates::publish_project(project_id, LiveUpdateKind::LibrarianActivityChanged);
     } else {
         live_updates::publish_project(project_id, LiveUpdateKind::ProjectActivityChanged);
     }

@@ -7,13 +7,6 @@ fn render_template<T: Template>(label: &str, template: &T) -> Result<String, Str
 }
 
 #[derive(Template)]
-#[template(path = "prompts/librarian_scope_guidance.txt", escape = "none")]
-struct LibrarianScopeGuidanceTemplate<'a> {
-    project_id: i64,
-    workspace_root: &'a str,
-}
-
-#[derive(Template)]
 #[template(path = "prompts/thread_scope_guidance.txt", escape = "none")]
 struct ThreadScopeGuidanceTemplate<'a> {
     title: &'a str,
@@ -70,27 +63,6 @@ struct WorkspaceFileContentTemplate<'a> {
     line_end: usize,
     truncated: bool,
     content: &'a str,
-}
-
-#[derive(Template)]
-#[template(path = "prompts/librarian_sync.txt", escape = "none")]
-struct LibrarianSyncTemplate<'a> {
-    source_label: &'a str,
-    user_message: &'a str,
-    assistant_message: &'a str,
-}
-
-pub(crate) fn render_librarian_scope_guidance(
-    project_id: i64,
-    workspace_root: &str,
-) -> Result<String, String> {
-    render_template(
-        "librarian scope guidance template",
-        &LibrarianScopeGuidanceTemplate {
-            project_id,
-            workspace_root,
-        },
-    )
 }
 
 pub(crate) fn render_thread_scope_guidance(
@@ -196,21 +168,6 @@ pub(crate) fn render_workspace_file_content(
             line_end,
             truncated,
             content,
-        },
-    )
-}
-
-pub(crate) fn render_librarian_sync(
-    source_label: &str,
-    user_message: &str,
-    assistant_message: &str,
-) -> Result<String, String> {
-    render_template(
-        "librarian sync template",
-        &LibrarianSyncTemplate {
-            source_label,
-            user_message,
-            assistant_message,
         },
     )
 }

@@ -72,12 +72,7 @@ fn spawn_shepherd_event_consumer() {
 
         loop {
             // Check for new events (non-blocking with timeout)
-            match tokio::time::timeout(
-                std::time::Duration::from_secs(1),
-                receiver.recv(),
-            )
-            .await
-            {
+            match tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv()).await {
                 Ok(Ok(event)) => {
                     let dominated_by_thread = matches!(
                         event.kind,
@@ -106,27 +101,9 @@ fn spawn_shepherd_event_consumer() {
                 .collect();
             for project_id in expired {
                 debounce.remove(&project_id);
-                let _ =
-                    crate::backend::shepherd_events::dispatch_shepherd_event_batch(project_id)
-                        .await;
+                let _ = crate::backend::shepherd_events::dispatch_shepherd_event_batch(project_id)
+                    .await;
             }
-        }
-    });
-}
-
-fn spawn_librarian_lint_worker() {
-    tokio::spawn(async {
-        // Initial delay before first lint pass
-        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-        loop {
-            if let Ok(store) = crate::backend::project::ProjectStore::open().await {
-                if let Ok(projects) = store.list_projects().await {
-                    for project in projects {
-                        let _ = crate::backend::librarian::enqueue_librarian_lint(project.id).await;
-                    }
-                }
-            }
-            tokio::time::sleep(std::time::Duration::from_secs(1800)).await;
         }
     });
 }
@@ -150,7 +127,8 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
         .map_err(|error| anyhow::anyhow!("Failed to scrub stale shepherd state: {}", error))?;
 
     spawn_shepherd_event_consumer();
-    spawn_librarian_lint_worker();
+    crate::backend::librarian::spawn_worker();
+    crate::backend::librarian::spawn_periodic_lint();
 
     // Resolve SPA directory
     let webui_dir = resolve_webui_dist();

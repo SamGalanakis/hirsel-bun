@@ -637,7 +637,7 @@ const ChatMessage: Component<{
 
   // Role label — shown as a tiny engraved slug, not gutter mark
   const roleDisplay = createMemo(() => {
-    if (systemMessage()) return "Librarian sync";
+    if (systemMessage()) return "System";
     if (userMessage()) return "You";
     return "Shepherd";
   });

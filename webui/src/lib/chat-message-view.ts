@@ -120,9 +120,10 @@ const PREVIEW_TOOLS = new Set([
 ]);
 
 const TOOL_LABELS: Record<string, string> = {
-  graph_surql: "Knowledge Graph Query",
-  KnowledgeGraphQuery: "Knowledge Graph Query",
-  edit_graph_node_text: "Knowledge Graph Text Patch",
+  search_graph: "Knowledge Graph Search",
+  read_node: "Knowledge Graph Read",
+  read_node_property: "Knowledge Graph Read",
+  apply_graph_patch: "Knowledge Graph Patch",
   patch_canvas_document: "Canvas Patch",
   list_threads: "List threads",
   create_thread: "Create thread",

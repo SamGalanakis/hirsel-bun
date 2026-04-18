@@ -16,7 +16,6 @@ fn scope_label(scope: &ShepherdScope) -> String {
             thread_id,
             ..
         } => format!("thread:{}:{}", project_id, thread_id),
-        ShepherdScope::Librarian { project_id, .. } => format!("librarian:{}", project_id),
     }
 }
 
@@ -33,9 +32,6 @@ async fn build_scope_guidance(
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M %Z").to_string();
 
     let scope_header = match scope {
-        ShepherdScope::Librarian { project_id, .. } => {
-            prompts::render_librarian_scope_guidance(*project_id, &workspace_root)?
-        }
         ShepherdScope::Thread {
             thread_id, title, ..
         } => prompts::render_thread_scope_guidance(title, thread_id, &focus_line, &workspace_root)?,
@@ -98,7 +94,6 @@ pub(super) async fn resolve_scope_project_id(scope: &ShepherdScope) -> Option<i6
         ShepherdScope::General => None,
         ShepherdScope::Shepherd { project_id, .. } => Some(*project_id),
         ShepherdScope::Thread { project_id, .. } => Some(*project_id),
-        ShepherdScope::Librarian { project_id, .. } => Some(*project_id),
     }
 }
 
@@ -141,10 +136,7 @@ pub(super) async fn resolve_scope_workspace(scope: &ShepherdScope) -> Result<Pat
 
     match scope {
         ShepherdScope::General => Ok(dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"))),
-        ShepherdScope::Shepherd { project_id, .. }
-        | ShepherdScope::Librarian { project_id, .. } => {
-            resolve_project_workspace(*project_id).await
-        }
+        ShepherdScope::Shepherd { project_id, .. } => resolve_project_workspace(*project_id).await,
         ShepherdScope::Thread {
             project_id,
             thread_id,

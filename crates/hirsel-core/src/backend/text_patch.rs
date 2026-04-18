@@ -14,8 +14,6 @@ Rules:
 - Multiple update hunks are allowed.
 - This tool edits one existing text field only. It does not create or delete graph nodes."#;
 
-use regex::Regex;
-
 const BEGIN_PATCH_MARKER: &str = "*** Begin Patch";
 const END_PATCH_MARKER: &str = "*** End Patch";
 const EOF_MARKER: &str = "*** End of File";
@@ -339,12 +337,6 @@ fn normalize_for_match(text: &str) -> String {
             other => other,
         })
         .collect()
-}
-
-pub(crate) fn is_safe_patch_field_name(field: &str) -> bool {
-    Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*$")
-        .expect("valid field-name regex")
-        .is_match(field)
 }
 
 #[cfg(test)]

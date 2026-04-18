@@ -49,14 +49,41 @@ dev:
 
     echo "Building hirsel..."
     cargo build -p hirsel-cli 2>&1 | tee {{ log_file }}
-    cd {{ repo_root }}/webui && bun run build 2>&1 | tee -a {{ log_file }}
+
+    backend_pid=""
+    vite_pid=""
+    cleanup() {
+        local code=$?
+        trap - EXIT INT TERM
+        if [[ -n "${vite_pid:-}" ]] && kill -0 "$vite_pid" 2>/dev/null; then
+            kill "$vite_pid" 2>/dev/null || true
+        fi
+        if [[ -n "${backend_pid:-}" ]] && kill -0 "$backend_pid" 2>/dev/null; then
+            kill "$backend_pid" 2>/dev/null || true
+        fi
+        wait "${vite_pid:-}" 2>/dev/null || true
+        wait "${backend_pid:-}" 2>/dev/null || true
+        exit "$code"
+    }
+    trap cleanup EXIT INT TERM
 
     echo
-    echo "Starting hirsel on port {{ port }}"
+    echo "Starting hirsel dev stack"
     echo "  Root: $HIRSEL_ROOT"
-    echo "  URL:  http://127.0.0.1:{{ port }}"
+    echo "  API:  http://127.0.0.1:{{ port }}"
+    echo "  UI:   http://127.0.0.1:5199"
     echo
-    exec {{ bin }} serve --port {{ port }}
+
+    {{ bin }} serve --port {{ port }} 2>&1 | tee -a {{ log_file }} &
+    backend_pid=$!
+
+    (
+        cd {{ repo_root }}/webui
+        HIRSEL_PORT={{ port }} bun run dev -- --host 127.0.0.1
+    ) 2>&1 | tee -a {{ log_file }} &
+    vite_pid=$!
+
+    wait -n "$backend_pid" "$vite_pid"
 
 # Stop any running hirsel processes.
 stop:

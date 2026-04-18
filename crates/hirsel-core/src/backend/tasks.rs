@@ -75,7 +75,10 @@ impl TaskStore {
             .query("SELECT sort_order FROM task WHERE project_id = $pid ORDER BY sort_order DESC LIMIT 1")
             .bind(("pid", project_id))
             .await?;
-        let max_order: Option<TaskRecord> = response.take(0).ok().and_then(|v: Vec<TaskRecord>| v.into_iter().next());
+        let max_order: Option<TaskRecord> = response
+            .take(0)
+            .ok()
+            .and_then(|v: Vec<TaskRecord>| v.into_iter().next());
         let next_order = max_order.map(|r| r.sort_order + 1).unwrap_or(0);
 
         let record = TaskRecord {
@@ -165,20 +168,12 @@ impl TaskStore {
         Ok(record.into_task())
     }
 
-    pub async fn update_task_content(
-        &self,
-        task_id: &str,
-        content: &str,
-    ) -> TaskResult<Task> {
+    pub async fn update_task_content(&self, task_id: &str, content: &str) -> TaskResult<Task> {
         self.update_task(task_id, None, None, Some(Some(content)))
             .await
     }
 
-    pub async fn set_review(
-        &self,
-        task_id: &str,
-        review_json: &str,
-    ) -> TaskResult<Task> {
+    pub async fn set_review(&self, task_id: &str, review_json: &str) -> TaskResult<Task> {
         let db = self.db().await;
         let mut record: TaskRecord = db
             .select((TASK_TABLE, task_id))
@@ -211,16 +206,14 @@ impl TaskStore {
         Ok(())
     }
 
-    pub async fn reorder_tasks(
-        &self,
-        project_id: i64,
-        task_ids: &[String],
-    ) -> TaskResult<()> {
+    pub async fn reorder_tasks(&self, project_id: i64, task_ids: &[String]) -> TaskResult<()> {
         let db = self.db().await;
         for (idx, task_id) in task_ids.iter().enumerate() {
             let tid = task_id.clone();
             let _ = db
-                .query("UPDATE type::record('task', $tid) SET sort_order = $order, updated_at = $now")
+                .query(
+                    "UPDATE type::record('task', $tid) SET sort_order = $order, updated_at = $now",
+                )
                 .bind(("tid", tid))
                 .bind(("order", idx as i64))
                 .bind(("now", utc_now()))

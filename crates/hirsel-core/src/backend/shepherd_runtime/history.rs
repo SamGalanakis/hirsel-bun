@@ -301,21 +301,11 @@ pub(super) async fn load_scope_messages(
             )
             .await
             .str_err()?,
-        ShepherdScope::Librarian { project_id, .. } => store
-            .get_scope_messages(
-                Some(*project_id),
-                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
-                limit,
-            )
-            .await
-            .str_err()?,
     };
 
     if !matches!(
         scope,
-        ShepherdScope::Shepherd { .. }
-            | ShepherdScope::Thread { .. }
-            | ShepherdScope::Librarian { .. }
+        ShepherdScope::Shepherd { .. } | ShepherdScope::Thread { .. }
     ) && messages.len() > limit
     {
         let start = messages.len().saturating_sub(limit);
@@ -369,16 +359,6 @@ pub(super) async fn save_message_with_options(
             )
             .await
             .str_err(),
-        ShepherdScope::Librarian { project_id, .. } => store
-            .save_scope_message_with_options(
-                Some(*project_id),
-                Some(&ShepherdChatStore::librarian_scope_key(*project_id)),
-                role,
-                chunks_json,
-                options,
-            )
-            .await
-            .str_err(),
     }
 }
 
@@ -403,13 +383,6 @@ pub(super) async fn load_scope_live_turn(
             .get_live_turn(
                 Some(*project_id),
                 &ShepherdChatStore::thread_scope_key(thread_id),
-            )
-            .await
-            .str_err(),
-        ShepherdScope::Librarian { project_id, .. } => store
-            .get_live_turn(
-                Some(*project_id),
-                &ShepherdChatStore::librarian_scope_key(*project_id),
             )
             .await
             .str_err(),

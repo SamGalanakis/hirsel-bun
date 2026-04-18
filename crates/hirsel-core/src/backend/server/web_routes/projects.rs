@@ -32,7 +32,6 @@ pub struct ApiProjectSurface {
 #[derive(Deserialize)]
 pub struct WorkspaceSnapshotQuery {
     thread_id: Option<String>,
-    librarian: Option<bool>,
 }
 
 async fn load_project(project_id: i64) -> Result<crate::backend::Project, (StatusCode, String)> {
@@ -63,6 +62,12 @@ pub struct CreateProjectBody {
 #[derive(Deserialize)]
 pub struct SaveProjectSettingsBody {
     name: String,
+}
+
+#[derive(Deserialize)]
+pub struct RecordFocusBody {
+    kind: String,
+    node_id: String,
 }
 
 pub async fn list_projects() -> Result<impl IntoResponse, (StatusCode, String)> {
@@ -239,31 +244,13 @@ pub async fn get_workspace_snapshot(
         None
     };
 
-    let librarian_activity =
-        shepherd_runtime::get_scope_activity(shepherd_runtime::ShepherdScope::Librarian {
-            project_id,
-        })
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let librarian_history = if query.librarian.unwrap_or(false) {
-        shepherd_runtime::get_shepherd_history(
-            shepherd_runtime::ShepherdScope::Librarian { project_id },
-            200,
-        )
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?
-    } else {
-        Vec::new()
-    };
-
     // Load tasks for the project
     let tasks = crate::backend::tasks::TaskStore::open()
         .await
         .ok()
         .map(|store| {
             tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current()
-                    .block_on(store.list_project_tasks(project_id))
+                tokio::runtime::Handle::current().block_on(store.list_project_tasks(project_id))
             })
         })
         .and_then(|r| r.ok())
@@ -294,62 +281,7 @@ pub async fn get_workspace_snapshot(
             .unwrap_or_default(),
         focused_task,
         tasks,
-        librarian_activity: to_api_activity(&librarian_activity),
-        librarian_history: librarian_history.iter().map(to_api_message).collect(),
     }))
-}
-
-pub async fn get_librarian_activity(
-    Path(project_id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let activity =
-        shepherd_runtime::get_scope_activity(shepherd_runtime::ShepherdScope::Librarian {
-            project_id,
-        })
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    Ok(Json::<ApiScopeActivity>(to_api_activity(&activity)))
-}
-
-pub async fn get_librarian_history(
-    Path(project_id): Path<i64>,
-    Query(query): Query<HistoryQuery>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let limit = query.limit.unwrap_or(100).clamp(1, 500);
-    let history = shepherd_runtime::get_shepherd_history(
-        shepherd_runtime::ShepherdScope::Librarian { project_id },
-        limit,
-    )
-    .await
-    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    let out: Vec<ApiChatMessage> = history.iter().map(to_api_message).collect();
-    Ok(Json(out))
-}
-
-pub async fn send_librarian_message(
-    Path(project_id): Path<i64>,
-    Json(body): Json<ChatSendBody>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let response = shepherd_runtime::send_scope_message(
-        shepherd_runtime::ShepherdScope::Librarian { project_id },
-        Some(body.content),
-        None,
-        None,
-    )
-    .await
-    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    Ok(Json(response))
-}
-
-pub async fn stop_librarian_chat(
-    Path(project_id): Path<i64>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    shepherd_runtime::interrupt_scope_turn(shepherd_runtime::ShepherdScope::Librarian {
-        project_id,
-    })
-    .await
-    .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
-    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn get_knowledge_graph(
@@ -461,4 +393,14 @@ pub async fn save_project_settings(
         .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
 
     Ok(Json(to_api_project(&project)))
+}
+
+pub async fn record_project_focus(
+    Path(project_id): Path<i64>,
+    Json(body): Json<RecordFocusBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    crate::backend::project_focus::record_focus(project_id, &body.kind, &body.node_id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }

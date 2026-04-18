@@ -1,0 +1,18 @@
+DEFINE TABLE IF NOT EXISTS shepherd_thread SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS thread_id ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE shepherd_thread TYPE int;
+DEFINE FIELD IF NOT EXISTS title ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS title_lower ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS objective ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS summary ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS status ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS workspace_path ON TABLE shepherd_thread TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS checkout_name ON TABLE shepherd_thread TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS created_at ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS last_activity_at ON TABLE shepherd_thread TYPE string;
+DEFINE FIELD IF NOT EXISTS archived_at ON TABLE shepherd_thread TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS highlight ON TABLE shepherd_thread TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS focused_task_id ON TABLE shepherd_thread TYPE option<string>;
+DEFINE INDEX IF NOT EXISTS shepherd_thread_project_idx ON TABLE shepherd_thread FIELDS project_id;
+DEFINE INDEX IF NOT EXISTS shepherd_thread_title_idx ON TABLE shepherd_thread FIELDS project_id, title_lower;

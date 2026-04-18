@@ -1,0 +1,14 @@
+DEFINE TABLE IF NOT EXISTS shepherd_session SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS project_id ON TABLE shepherd_session TYPE option<int>;
+DEFINE FIELD IF NOT EXISTS scope_key ON TABLE shepherd_session TYPE string;
+DEFINE FIELD IF NOT EXISTS scope_json ON TABLE shepherd_session TYPE string;
+DEFINE FIELD IF NOT EXISTS workspace_path ON TABLE shepherd_session TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS env_fingerprint ON TABLE shepherd_session TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS runtime_fingerprint ON TABLE shepherd_session TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS status ON TABLE shepherd_session TYPE string;
+DEFINE FIELD IF NOT EXISTS container_name ON TABLE shepherd_session TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS socket_path ON TABLE shepherd_session TYPE string;
+DEFINE FIELD IF NOT EXISTS last_error ON TABLE shepherd_session TYPE option<string>;
+DEFINE FIELD IF NOT EXISTS created_at ON TABLE shepherd_session TYPE string;
+DEFINE FIELD IF NOT EXISTS updated_at ON TABLE shepherd_session TYPE string;
+DEFINE FIELD IF NOT EXISTS last_seen_at ON TABLE shepherd_session TYPE option<string>;
