@@ -346,6 +346,18 @@ export interface WorkspaceDiffFile {
   right: WorkspaceDiffFileSide | null;
 }
 
+export interface LibrarianJobSummary {
+  id: string;
+  project_id: number;
+  kind: string;
+  status: string;
+  last_error: string | null;
+  prompt: string;
+  prompt_truncated: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export type StalenessTier =
   | "fresh"
   | "stable"

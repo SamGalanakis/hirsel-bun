@@ -198,3 +198,14 @@ export async function runStalenessSweep(projectId: number): Promise<void> {
   });
   await parseJson<{ ok: true }>(res);
 }
+
+/** Recent librarian jobs for this project (newest first). */
+export async function listLibrarianJobs(
+  projectId: number,
+  limit = 50,
+): Promise<import("@/lib/api/types").LibrarianJobSummary[]> {
+  const res = await apiFetch(
+    `/projects/${projectId}/librarian-jobs?limit=${limit}`,
+  );
+  return parseJson<import("@/lib/api/types").LibrarianJobSummary[]>(res);
+}

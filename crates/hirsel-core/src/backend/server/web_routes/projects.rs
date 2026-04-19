@@ -447,3 +447,23 @@ pub async fn run_staleness_sweep(
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+#[derive(Deserialize, Default)]
+pub struct ListLibrarianJobsQuery {
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// Recent librarian jobs for this project — newest first. Used by the
+/// canvas "Jobs" inspector to surface what the background agent is doing.
+pub async fn list_librarian_jobs(
+    Path(project_id): Path<i64>,
+    axum::extract::Query(query): axum::extract::Query<ListLibrarianJobsQuery>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    const PROMPT_CHAR_BUDGET: usize = 2_000;
+    let limit = query.limit.unwrap_or(50).clamp(1, 200);
+    let jobs = crate::backend::librarian::list_recent_jobs(project_id, limit, PROMPT_CHAR_BUDGET)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(jobs))
+}
