@@ -555,6 +555,12 @@ pub async fn poll_codex_device_flow(
     }))
 }
 
+/// Persist the OpenRouter API key and (optional) base URL.
+///
+/// Note: the caller controls the active LLM provider via
+/// `save_llm_provider`. Saving an OpenRouter key here does NOT flip the
+/// provider, so a Codex-native user can configure the key purely for
+/// semantic-retrieval embeddings without disturbing their chat setup.
 pub async fn save_openrouter_key(
     State(_state): State<Arc<AppState>>,
     Json(body): Json<SaveOpenrouterKeyBody>,
@@ -566,12 +572,18 @@ pub async fn save_openrouter_key(
         .load_llm_settings()
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
-    settings.provider = LlmProvider::Openrouter;
-    settings.openrouter_base_url = body.base_url.filter(|value| !value.trim().is_empty());
-    settings_store
-        .save_llm_settings(&settings)
-        .await
-        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    if let Some(base_url) = body.base_url {
+        let trimmed = base_url.trim();
+        settings.openrouter_base_url = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
+        settings_store
+            .save_llm_settings(&settings)
+            .await
+            .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
+    }
 
     let store = CredentialStore::open()
         .await

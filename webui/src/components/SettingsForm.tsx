@@ -167,6 +167,9 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
   const [githubToken, setGithubToken] = createSignal("");
   const [githubSaving, setGithubSaving] = createSignal(false);
   const [githubStatus, setGithubStatus] = createSignal("");
+  const [embedKey, setEmbedKey] = createSignal("");
+  const [embedSaving, setEmbedSaving] = createSignal(false);
+  const [embedStatus, setEmbedStatus] = createSignal("");
   let codexPollTimer: number | undefined;
 
   const { theme, setTheme } = useTheme();
@@ -431,6 +434,23 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
       setTavilyStatus(err instanceof Error ? err.message : "Save failed");
     } finally {
       setTavilySaving(false);
+    }
+  };
+
+  const handleSaveEmbedKey = async () => {
+    setEmbedSaving(true);
+    setEmbedStatus("");
+    try {
+      await saveOpenRouterSettings({ api_key: embedKey().trim() });
+      setEmbedKey("");
+      setEmbedStatus("Saved");
+      setTimeout(() => setEmbedStatus(""), 2000);
+      dispatchSettingsChanged();
+      await reloadSettings();
+    } catch (err) {
+      setEmbedStatus(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setEmbedSaving(false);
     }
   };
 
@@ -779,10 +799,44 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
             </div>
             <p class="text-xs leading-5 text-muted-foreground">
               Hybrid retrieval (BM25 + HNSW) uses OpenRouter for embeddings and chunk
-              contextualisation. Without a key, <code class="mx-0.5 bg-muted px-1 py-px text-[11px]">search_context</code>{" "}
-              falls back to plain BM25 and no new nodes get embedded. Add your key in the LLM
-              Provider tab to enable it.
+              contextualisation. The key below is required even when your chat provider is
+              Codex — embeddings always go through OpenRouter.
             </p>
+
+            <div class="space-y-1.5">
+              <Label for="embed-or-key">OpenRouter API Key</Label>
+              <Show when={settings()?.openrouter_key_masked}>
+                <p class="font-mono text-xs text-muted-foreground">
+                  Current: {settings()!.openrouter_key_masked}
+                </p>
+              </Show>
+              <Input
+                id="embed-or-key"
+                type="password"
+                placeholder="sk-or-..."
+                value={embedKey()}
+                onInput={(e) => setEmbedKey(e.currentTarget.value)}
+              />
+              <p class="text-xs text-muted-foreground">
+                Or set{" "}
+                <code class="mx-0.5 bg-muted px-1 py-px text-[11px]">OPENROUTER_API_KEY</code>{" "}
+                in the environment.
+              </p>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <Button
+                size="sm"
+                loading={embedSaving()}
+                onClick={handleSaveEmbedKey}
+                disabled={!embedKey().trim()}
+              >
+                Save
+              </Button>
+              <Show when={embedStatus()}>
+                <span class="text-xs text-muted-foreground">{embedStatus()}</span>
+              </Show>
+            </div>
           </div>
         </TabsContent>
 
