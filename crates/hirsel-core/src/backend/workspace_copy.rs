@@ -1,14 +1,19 @@
-//! Per-thread workspace copies and merge helpers.
+//! Per-thread workspace worktrees.
 //!
-//! A thread with `workspace_write` in its caps gets a full CoW-reflinked
-//! copy of the canonical workspace at its own directory. The copy is
-//! self-contained: tools, shells, editors, and reviewers can all operate
-//! against it without touching the canonical state.
+//! Each thread with `workspace_write` in its caps gets its own
+//! **git worktree** on a thread-scoped branch (`hirsel-thread/{id}`).
+//! The worktree is a real, checked-out copy of the canonical workspace
+//! — tools, shells, editors, and reviewers can all operate inside it
+//! without touching the canonical state.
 //!
-//! Merging writes the copy's working-tree delta back onto the canonical
-//! workspace using git's 3-way merge (when the workspace is a git repo).
-//! Conflicts are surfaced structurally so the parent thread (or user) can
-//! resolve them in-place via `apply_patch` + `merge_retry`.
+//! Merging is `git merge hirsel-thread/{id}` in the canonical workspace.
+//! Conflicts leave canonical in git's standard merging state; the parent
+//! (or user) resolves via `apply_patch` + [`merge_retry`], which stages
+//! the resolved files and finalises the merge commit.
+//!
+//! Requires the canonical workspace to be a git repository. Non-git
+//! workspaces are no longer supported — the diff/apply fallback has been
+//! retired in favour of native `git merge`.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -19,49 +24,6 @@ use tokio::sync::Mutex;
 
 use super::runtime_settings::{keys, Defaults, RuntimeSettings};
 
-/// Controls the CoW behaviour for a copy. Callers resolve the effective
-/// value (from settings or overrides) and pass it in; this module stays
-/// pure so unit tests don't need the global DB.
-#[derive(Debug, Clone, Copy, Default)]
-pub enum CowMode {
-    #[default]
-    /// Use `cp --reflink=auto` (reflink if the FS supports it, else copy).
-    Auto,
-    /// Force `cp --reflink=always` — error if unsupported.
-    On,
-    /// Force `cp --reflink=never`.
-    Off,
-}
-
-impl CowMode {
-    fn flag(self) -> &'static str {
-        match self {
-            CowMode::Auto => "--reflink=auto",
-            CowMode::On => "--reflink=always",
-            CowMode::Off => "--reflink=never",
-        }
-    }
-
-    pub fn from_setting_value(value: &str) -> Self {
-        match value {
-            "on" => CowMode::On,
-            "off" => CowMode::Off,
-            _ => CowMode::Auto,
-        }
-    }
-}
-
-/// Resolve the CoW mode from runtime settings. Intended for tool handlers;
-/// tests should pass an explicit `CowMode` to `create_copy_with_mode`.
-pub async fn resolve_cow_mode() -> CowMode {
-    let value = RuntimeSettings::get_or(
-        keys::WORKSPACE_COPY_COW_MODE,
-        Defaults::WORKSPACE_COPY_COW_MODE.to_string(),
-    )
-    .await;
-    CowMode::from_setting_value(&value)
-}
-
 /// Resolve whether to prune on successful merge. Tool-handler convenience.
 pub async fn resolve_prune_after_merge() -> bool {
     RuntimeSettings::get_or(
@@ -71,7 +33,7 @@ pub async fn resolve_prune_after_merge() -> bool {
     .await
 }
 
-/// Resolve the base directory for thread workspace copies.
+/// Resolve the base directory for thread worktrees.
 pub async fn resolve_base_dir() -> PathBuf {
     if let Ok(Some(custom)) = RuntimeSettings::load::<String>("workspace.copy.base_dir").await {
         let path = PathBuf::from(custom);
@@ -85,11 +47,11 @@ pub async fn resolve_base_dir() -> PathBuf {
 fn default_base_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join(".hirsel/workspaces")
+        .join(".hirsel/worktrees")
 }
 
 /// Per-canonical-workspace lock. Held while a merge is in-flight so two
-/// concurrent `merge_thread` calls against the same workspace serialise.
+/// concurrent `merge` calls against the same workspace serialise.
 fn merge_locks() -> &'static StdMutex<Vec<(PathBuf, Arc<Mutex<()>>)>> {
     static MERGE_LOCKS: OnceLock<StdMutex<Vec<(PathBuf, Arc<Mutex<()>>)>>> = OnceLock::new();
     MERGE_LOCKS.get_or_init(|| StdMutex::new(Vec::new()))
@@ -106,39 +68,35 @@ fn lock_for(canonical: &Path) -> Arc<Mutex<()>> {
     lock
 }
 
-/// Handle to a thread's workspace copy. Cheap to clone; the filesystem does
-/// the heavy lifting.
+/// Branch name used for a thread's worktree.
+fn branch_name(thread_id: &str) -> String {
+    format!("hirsel-thread/{thread_id}")
+}
+
+/// Handle to a thread's worktree.
 #[derive(Debug, Clone)]
 pub struct WorkspaceCopy {
     pub thread_id: String,
     /// Absolute path to the canonical workspace (the user's original).
     pub canonical: PathBuf,
-    /// Absolute path to the thread's CoW copy.
+    /// Absolute path to the thread's worktree.
     pub copy_dir: PathBuf,
-    /// Commit SHA at HEAD when the copy was taken (None for non-git
-    /// workspaces).
+    /// Commit SHA at HEAD when the worktree was created.
     pub base_commit: Option<String>,
 }
 
-/// Create a CoW copy of `canonical` for the given thread. Convenience
-/// wrapper that resolves CoW mode + base dir from runtime settings.
-///
-/// Layout: `{base_dir}/{thread_id}/`. Uses `cp --reflink=auto` so on
-/// btrfs/apfs/xfs/zfs the copy is near-instant and shares storage until
-/// divergence.
+/// Create a git worktree for `thread_id` rooted at the canonical workspace.
+/// Resolves `base_dir` from settings.
 pub async fn create_copy(thread_id: &str, canonical: &Path) -> Result<WorkspaceCopy, String> {
     let base_dir = resolve_base_dir().await;
-    let mode = resolve_cow_mode().await;
-    create_copy_with_mode(thread_id, canonical, &base_dir, mode).await
+    create_copy_at(thread_id, canonical, &base_dir).await
 }
 
-/// Lower-level: make a copy with explicit base dir + mode. Settings-free,
-/// suitable for unit tests.
-pub async fn create_copy_with_mode(
+/// Lower-level: create a worktree with an explicit base dir. Settings-free.
+pub async fn create_copy_at(
     thread_id: &str,
     canonical: &Path,
     base_dir: &Path,
-    mode: CowMode,
 ) -> Result<WorkspaceCopy, String> {
     if !canonical.is_dir() {
         return Err(format!(
@@ -146,40 +104,46 @@ pub async fn create_copy_with_mode(
             canonical.display()
         ));
     }
-    tokio::fs::create_dir_all(base_dir)
-        .await
-        .map_err(|e| format!("create workspace copy root: {e}"))?;
-
-    let copy_dir = base_dir.join(thread_id);
-    if copy_dir.exists() {
-        tokio::fs::remove_dir_all(&copy_dir)
-            .await
-            .map_err(|e| format!("prune stale copy dir: {e}"))?;
-    }
-
-    let canonical_arg = {
-        let mut s = canonical.as_os_str().to_os_string();
-        s.push("/.");
-        s
-    };
-
-    let output = Command::new("cp")
-        .arg("-a")
-        .arg(mode.flag())
-        .arg(&canonical_arg)
-        .arg(&copy_dir)
-        .output()
-        .await
-        .map_err(|e| format!("cp failed to start: {e}"))?;
-    if !output.status.success() {
+    if !is_git_repo(canonical).await {
         return Err(format!(
-            "cp failed ({}): {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            "worktree spawn requires a git repo at {}; run `git init` first",
+            canonical.display()
         ));
     }
 
-    let base_commit = git_rev_parse_head(&copy_dir).await.ok();
+    tokio::fs::create_dir_all(base_dir)
+        .await
+        .map_err(|e| format!("create worktree base dir: {e}"))?;
+
+    let copy_dir = base_dir.join(thread_id);
+    let branch = branch_name(thread_id);
+
+    // Clean up any stale state from a previous spawn with the same id.
+    let _ = remove_worktree_if_present(canonical, &copy_dir).await;
+    let _ = delete_branch_if_present(canonical, &branch).await;
+    if copy_dir.exists() {
+        tokio::fs::remove_dir_all(&copy_dir)
+            .await
+            .map_err(|e| format!("prune stale worktree dir: {e}"))?;
+    }
+
+    let base_commit = git_rev_parse_head(canonical).await.ok();
+
+    // `git worktree add -b {branch} {path}` — creates the branch from HEAD
+    // and checks it out into the target directory.
+    let output = Command::new("git")
+        .current_dir(canonical)
+        .args(["worktree", "add", "-b", &branch])
+        .arg(&copy_dir)
+        .output()
+        .await
+        .map_err(|e| format!("git worktree add spawn: {e}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git worktree add failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
 
     Ok(WorkspaceCopy {
         thread_id: thread_id.to_string(),
@@ -189,12 +153,18 @@ pub async fn create_copy_with_mode(
     })
 }
 
-/// Delete the copy directory. Safe to call on a copy that's already gone.
+/// Remove the worktree and delete its branch. Safe to call on a worktree
+/// that's already gone.
 pub async fn discard(copy: &WorkspaceCopy) -> Result<(), String> {
+    // Abort any pending merge in canonical first — if the user discarded
+    // the source mid-conflict we don't want canonical stuck.
+    if is_merge_in_progress(&copy.canonical).await {
+        let _ = run_git(&copy.canonical, &["merge", "--abort"]).await;
+    }
+    let _ = remove_worktree_if_present(&copy.canonical, &copy.copy_dir).await;
+    let _ = delete_branch_if_present(&copy.canonical, &branch_name(&copy.thread_id)).await;
     if copy.copy_dir.exists() {
-        tokio::fs::remove_dir_all(&copy.copy_dir)
-            .await
-            .map_err(|e| format!("discard workspace copy: {e}"))?;
+        let _ = tokio::fs::remove_dir_all(&copy.copy_dir).await;
     }
     Ok(())
 }
@@ -218,14 +188,16 @@ pub struct DiffStats {
     pub total_deletions: u64,
 }
 
-/// Inspect the working-tree delta between the thread's copy and the base
-/// commit it was taken from.
+/// Inspect the working-tree delta between the thread's worktree and the
+/// base commit the worktree was created from.
 pub async fn inspect(copy: &WorkspaceCopy) -> Result<DiffStats, String> {
-    if copy.base_commit.is_none() {
-        return Err("workspace is not a git repo; diff/merge requires git".to_string());
-    }
-    git_stage_intent_to_add(&copy.copy_dir).await?;
-    let files = git_numstat(&copy.copy_dir, "HEAD").await?;
+    let Some(base) = &copy.base_commit else {
+        return Err("worktree has no base commit to diff against".to_string());
+    };
+    // `git add --intent-to-add` surfaces untracked files in diff output as
+    // additions; harmless otherwise.
+    let _ = run_git(&copy.copy_dir, &["add", "--intent-to-add", "--all", "."]).await;
+    let files = git_numstat(&copy.copy_dir, base).await?;
     let total_additions = files.iter().map(|f| f.additions).sum();
     let total_deletions = files.iter().map(|f| f.deletions).sum();
     Ok(DiffStats {
@@ -249,59 +221,129 @@ pub async fn merge(copy: &WorkspaceCopy) -> Result<MergeOutcome, String> {
     merge_with(copy, prune).await
 }
 
-/// Merge the thread's workspace-copy delta back onto the canonical
-/// workspace using git's 3-way merge.
+/// Merge the thread's worktree branch into the canonical workspace using
+/// `git merge`. Serialises per-canonical-workspace via an in-process
+/// mutex. `prune_on_success` is resolved by the caller — tests pass
+/// `false` to keep the worktree for inspection.
 ///
-/// Serialises per-canonical-workspace via an in-process mutex. `prune_on_success`
-/// is resolved by the caller — tests pass `false` to keep the copy dir for
-/// inspection.
+/// If the thread has uncommitted working-tree changes, they are snapshot
+/// into a single commit on the thread's branch first so `git merge`
+/// actually sees them.
+///
+/// Conflicts leave canonical in git's standard merging state
+/// (`MERGE_HEAD` present); the caller resolves with `apply_patch` and
+/// calls [`merge_retry`] to finalise.
 pub async fn merge_with(
     copy: &WorkspaceCopy,
     prune_on_success: bool,
 ) -> Result<MergeOutcome, String> {
-    let Some(base_commit) = copy.base_commit.clone() else {
-        return Err("workspace is not a git repo; diff/merge requires git".to_string());
-    };
-
     let lock = lock_for(&copy.canonical);
     let _guard = lock.lock().await;
 
-    // Include any untracked files as additions in the diff.
-    git_stage_intent_to_add(&copy.copy_dir).await?;
+    let branch = branch_name(&copy.thread_id);
 
-    // Build a patch from the copy's working tree vs its base commit.
-    let patch = git_diff_text(&copy.copy_dir, &base_commit).await?;
-    if patch.trim().is_empty() {
-        return Ok(MergeOutcome::Merged);
+    if is_merge_in_progress(&copy.canonical).await {
+        return Err("a merge is already in progress in the canonical workspace".to_string());
     }
 
-    // Apply with 3-way merge on the canonical side so local advances are
-    // reconciled.
-    let apply = Command::new("git")
-        .current_dir(&copy.canonical)
-        .args(["apply", "--3way", "--index"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("git apply spawn: {e}"))?;
+    snapshot_worktree_if_dirty(&copy.copy_dir, &copy.thread_id).await?;
 
-    let apply_with_stdin = async move {
-        let mut child = apply;
-        if let Some(mut stdin) = child.stdin.take() {
-            use tokio::io::AsyncWriteExt;
-            stdin
-                .write_all(patch.as_bytes())
-                .await
-                .map_err(|e| format!("write patch to git apply stdin: {e}"))?;
-        }
-        child
-            .wait_with_output()
-            .await
-            .map_err(|e| format!("git apply wait: {e}"))
+    let output = run_git_raw(
+        &copy.canonical,
+        &["merge", "--no-ff", "--no-edit", &branch],
+    )
+    .await?;
+
+    finalise_merge_outcome(&copy.canonical, output, prune_on_success, copy).await
+}
+
+/// Retry a merge after the parent has written resolved file contents in
+/// the canonical workspace.
+///
+/// If canonical is in an in-progress merge state we stage the resolved
+/// files and complete the merge commit. Otherwise we fall through to a
+/// fresh `merge`.
+pub async fn merge_retry(copy: &WorkspaceCopy) -> Result<MergeOutcome, String> {
+    let lock = lock_for(&copy.canonical);
+    let _guard = lock.lock().await;
+
+    if !is_merge_in_progress(&copy.canonical).await {
+        drop(_guard);
+        return merge(copy).await;
+    }
+
+    let _ = run_git(&copy.canonical, &["add", "--all"]).await;
+    let unmerged = git_unmerged(&copy.canonical).await.unwrap_or_default();
+    if !unmerged.is_empty() {
+        return Ok(MergeOutcome::Conflict { files: unmerged });
+    }
+
+    // No conflicts left — finalise the merge commit.
+    let output = run_git_raw(&copy.canonical, &["commit", "--no-edit"]).await?;
+    if !output.status.success() {
+        return Err(format!(
+            "git commit (merge finalise) failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let prune = resolve_prune_after_merge().await;
+    if prune {
+        let _ = discard(copy).await;
+    }
+    Ok(MergeOutcome::Merged)
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// internals
+// ─────────────────────────────────────────────────────────────────────
+
+async fn is_git_repo(dir: &Path) -> bool {
+    run_git(dir, &["rev-parse", "--git-dir"])
+        .await
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+}
+
+async fn is_merge_in_progress(dir: &Path) -> bool {
+    let out = match Command::new("git")
+        .current_dir(dir)
+        .args(["rev-parse", "--verify", "MERGE_HEAD"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(_) => return false,
     };
-    let output = apply_with_stdin.await?;
+    out.status.success()
+}
 
+async fn snapshot_worktree_if_dirty(worktree: &Path, thread_id: &str) -> Result<(), String> {
+    let _ = run_git(worktree, &["add", "--all"]).await;
+    // `status --porcelain` lines present iff the worktree (now staged) has
+    // any changes to commit.
+    let status = run_git(worktree, &["status", "--porcelain"])
+        .await
+        .unwrap_or_default();
+    if status.trim().is_empty() {
+        return Ok(());
+    }
+    let msg = format!("hirsel-thread/{thread_id}: snapshot");
+    let output = run_git_raw(worktree, &["commit", "-m", &msg]).await?;
+    if !output.status.success() {
+        return Err(format!(
+            "git commit (snapshot) failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(())
+}
+
+async fn finalise_merge_outcome(
+    canonical: &Path,
+    output: Output,
+    prune_on_success: bool,
+    copy: &WorkspaceCopy,
+) -> Result<MergeOutcome, String> {
     if output.status.success() {
         if prune_on_success {
             let _ = discard(copy).await;
@@ -309,41 +351,43 @@ pub async fn merge_with(
         return Ok(MergeOutcome::Merged);
     }
 
-    // Parse conflict file list from stderr. `git apply --3way` prints lines
-    // like "Applied patch to 'foo.rs' with conflicts." and "error:
-    // conflicts found in foo.rs".
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let mut files: Vec<String> = Vec::new();
-    for line in stderr.lines() {
-        if let Some(rest) = line.strip_prefix("U\t") {
-            files.push(rest.trim().to_string());
-        } else if let Some(rest) = line.strip_prefix("Applied patch to '") {
-            if let Some(end) = rest.find('\'') {
-                files.push(rest[..end].to_string());
-            }
-        }
+    // Either conflict or a hard error. Inspect unmerged paths to decide.
+    let unmerged = git_unmerged(canonical).await.unwrap_or_default();
+    if !unmerged.is_empty() {
+        return Ok(MergeOutcome::Conflict { files: unmerged });
     }
-    // Fallback: ask git for unmerged paths.
-    if files.is_empty() {
-        if let Ok(unmerged) = git_unmerged(&copy.canonical).await {
-            files = unmerged;
-        }
-    }
-    if files.is_empty() {
-        return Err(format!("git apply failed: {}", stderr.trim()));
-    }
-    Ok(MergeOutcome::Conflict { files })
+
+    Err(format!(
+        "git merge failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    ))
 }
 
-/// Retry `merge` after the parent has written resolved file contents in the
-/// canonical workspace.
-pub async fn merge_retry(copy: &WorkspaceCopy) -> Result<MergeOutcome, String> {
-    merge(copy).await
+async fn remove_worktree_if_present(canonical: &Path, path: &Path) -> Result<(), String> {
+    // `git worktree remove --force` is a no-op if the path isn't a
+    // registered worktree, but it errors out. Run and ignore.
+    let _ = Command::new("git")
+        .current_dir(canonical)
+        .args(["worktree", "remove", "--force"])
+        .arg(path)
+        .output()
+        .await;
+    let _ = Command::new("git")
+        .current_dir(canonical)
+        .args(["worktree", "prune"])
+        .output()
+        .await;
+    Ok(())
 }
 
-// ─────────────────────────────────────────────────────────────────────
-// internals
-// ─────────────────────────────────────────────────────────────────────
+async fn delete_branch_if_present(canonical: &Path, branch: &str) -> Result<(), String> {
+    let _ = Command::new("git")
+        .current_dir(canonical)
+        .args(["branch", "-D", branch])
+        .output()
+        .await;
+    Ok(())
+}
 
 async fn git_rev_parse_head(dir: &Path) -> Result<String, String> {
     let output = Command::new("git")
@@ -354,29 +398,6 @@ async fn git_rev_parse_head(dir: &Path) -> Result<String, String> {
         .map_err(|e| format!("git rev-parse spawn: {e}"))?;
     require_success(&output)?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// `git add --intent-to-add .` — makes untracked files visible to `git diff`
-/// as additions without committing their content.
-async fn git_stage_intent_to_add(dir: &Path) -> Result<(), String> {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(["add", "--intent-to-add", "--all", "."])
-        .output()
-        .await
-        .map_err(|e| format!("git add -N spawn: {e}"))?;
-    require_success(&output)
-}
-
-async fn git_diff_text(dir: &Path, base: &str) -> Result<String, String> {
-    let output = Command::new("git")
-        .current_dir(dir)
-        .args(["diff", "--binary", base])
-        .output()
-        .await
-        .map_err(|e| format!("git diff spawn: {e}"))?;
-    require_success(&output)?;
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 async fn git_numstat(dir: &Path, base: &str) -> Result<Vec<FileChange>, String> {
@@ -430,6 +451,23 @@ async fn git_unmerged(dir: &Path) -> Result<Vec<String>, String> {
         .collect())
 }
 
+async fn run_git(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let output = run_git_raw(dir, args).await?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+async fn run_git_raw(dir: &Path, args: &[&str]) -> Result<Output, String> {
+    Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| format!("git {} spawn: {e}", args.first().copied().unwrap_or("?")))
+}
+
 fn require_success(output: &Output) -> Result<(), String> {
     if output.status.success() {
         Ok(())
@@ -451,7 +489,7 @@ mod tests {
                 .output()
                 .unwrap();
         };
-        run(&["init", "-q"]);
+        run(&["init", "-q", "-b", "main"]);
         run(&["config", "user.email", "test@example.com"]);
         run(&["config", "user.name", "Test"]);
         std::fs::write(dir.join("README.md"), "hello\n").unwrap();
@@ -460,21 +498,21 @@ mod tests {
         dir
     }
 
-    async fn test_copy_dir() -> PathBuf {
+    async fn test_base_dir() -> PathBuf {
         tempfile::tempdir().unwrap().keep()
     }
 
     #[tokio::test]
-    async fn cow_copy_and_merge_roundtrip() {
+    async fn worktree_create_merge_roundtrip() {
         let source = init_git_dir().await;
-        let base = test_copy_dir().await;
-        let copy = create_copy_with_mode("thread-A", &source, &base, CowMode::Auto)
+        let base = test_base_dir().await;
+        let copy = create_copy_at("thread-A", &source, &base)
             .await
             .expect("create");
         assert!(copy.copy_dir.exists());
         assert!(copy.base_commit.is_some());
 
-        // Write a change in the copy; verify inspect() reports it.
+        // Make changes inside the worktree.
         std::fs::write(copy.copy_dir.join("NEW.md"), "from thread\n").unwrap();
         std::fs::write(copy.copy_dir.join("README.md"), "hello world\n").unwrap();
 
@@ -482,11 +520,10 @@ mod tests {
         assert!(stats.files.iter().any(|f| f.path == "NEW.md"));
         assert!(stats.files.iter().any(|f| f.path == "README.md"));
 
-        // Merge back into source without auto-pruning, so we can assert.
+        // Merge back into source (don't prune so we can keep asserting).
         let result = merge_with(&copy, false).await.expect("merge");
         assert!(matches!(result, MergeOutcome::Merged));
 
-        // Canonical should now contain the thread's work.
         let readme = std::fs::read_to_string(source.join("README.md")).unwrap();
         assert_eq!(readme, "hello world\n");
         let new_file = std::fs::read_to_string(source.join("NEW.md")).unwrap();
@@ -494,14 +531,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn merge_conflict_is_surfaced_structurally() {
+    async fn merge_conflict_then_retry() {
         let source = init_git_dir().await;
-        let base = test_copy_dir().await;
-        let copy = create_copy_with_mode("thread-B", &source, &base, CowMode::Auto)
+        let base = test_base_dir().await;
+        let copy = create_copy_at("thread-B", &source, &base)
             .await
             .expect("create");
 
-        // Same line edited differently on both sides — guaranteed conflict.
+        // Diverge: canonical edits README differently, then so does the
+        // worktree — same file, same area, guaranteed conflict.
         std::fs::write(source.join("README.md"), "canonical change\n").unwrap();
         std::process::Command::new("git")
             .current_dir(&source)
@@ -512,11 +550,39 @@ mod tests {
         std::fs::write(copy.copy_dir.join("README.md"), "thread change\n").unwrap();
 
         let result = merge_with(&copy, false).await.expect("merge");
-        match result {
-            MergeOutcome::Conflict { files } => {
-                assert!(files.iter().any(|f| f.ends_with("README.md")));
-            }
-            MergeOutcome::Merged => panic!("expected conflict"),
-        }
+        let files = match result {
+            MergeOutcome::Conflict { files } => files,
+            _ => panic!("expected conflict"),
+        };
+        assert!(files.iter().any(|f| f.ends_with("README.md")));
+        assert!(is_merge_in_progress(&source).await);
+
+        // Parent resolves the conflict by writing a merged version.
+        std::fs::write(source.join("README.md"), "resolved content\n").unwrap();
+        let finalised = merge_retry(&copy).await.expect("retry");
+        assert!(matches!(finalised, MergeOutcome::Merged));
+        assert!(!is_merge_in_progress(&source).await);
+
+        let readme = std::fs::read_to_string(source.join("README.md")).unwrap();
+        assert_eq!(readme, "resolved content\n");
+    }
+
+    #[tokio::test]
+    async fn discard_cleans_up_worktree_and_branch() {
+        let source = init_git_dir().await;
+        let base = test_base_dir().await;
+        let copy = create_copy_at("thread-C", &source, &base)
+            .await
+            .expect("create");
+        assert!(copy.copy_dir.exists());
+
+        discard(&copy).await.expect("discard");
+        assert!(!copy.copy_dir.exists());
+
+        // Branch is gone too.
+        let branches = run_git(&source, &["branch", "--list", "hirsel-thread/thread-C"])
+            .await
+            .unwrap();
+        assert!(branches.trim().is_empty(), "branch should be deleted");
     }
 }
