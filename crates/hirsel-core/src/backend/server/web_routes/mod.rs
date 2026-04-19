@@ -168,6 +168,11 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/api/projects/{project_id}/nodes/{kind}/{node_id}/verify",
             post(projects::request_node_verify),
         )
+        // Staleness: on-demand ambient sweep (A1–A4) for this project
+        .route(
+            "/api/projects/{project_id}/staleness/sweep",
+            post(projects::run_staleness_sweep),
+        )
         // Tasks
         .route(
             "/api/projects/{project_id}/tasks",

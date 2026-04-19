@@ -435,3 +435,15 @@ pub async fn request_node_verify(
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
+
+/// Kick the A1–A4 ambient staleness sweep for this project right now,
+/// instead of waiting for the 30-minute cadence. Useful when the user
+/// wants an on-demand "refresh staleness" pass after bulk edits.
+pub async fn run_staleness_sweep(
+    Path(project_id): Path<i64>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    crate::backend::librarian::run_ambient_staleness_sweep(project_id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
