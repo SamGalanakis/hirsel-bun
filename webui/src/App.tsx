@@ -6,10 +6,12 @@ import { listProjects } from "@/lib/api";
 const WorkspacePage = lazy(() => import("@/pages/WorkspacePage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
 const NewProjectPage = lazy(() => import("@/pages/NewProjectPage"));
+const ThreadTreePanel = lazy(() => import("@/components/ThreadTreePanel"));
 
 type ScreenState =
   | { page: "connect" }
   | { page: "project"; projectId: number }
+  | { page: "threads"; projectId: number }
   | { page: "settings" }
   | { page: "new" }
   | { page: "loading" };
@@ -23,6 +25,9 @@ function parseHash(hash: string): ScreenState | null {
 
   const projectMatch = h.match(/^project\/(\d+)$/);
   if (projectMatch) return { page: "project", projectId: parseInt(projectMatch[1], 10) };
+
+  const threadsMatch = h.match(/^threads\/(\d+)$/);
+  if (threadsMatch) return { page: "threads", projectId: parseInt(threadsMatch[1], 10) };
 
   // Legacy thread route → redirect to project (thread becomes an overlay)
   const threadMatch = h.match(/^thread\/(\d+)\/(.+)$/);
@@ -91,6 +96,33 @@ const App: Component = () => {
 
         <Show when={screen().page === "project"}>
           <WorkspacePage projectId={(screen() as { projectId: number }).projectId} />
+        </Show>
+
+        <Show when={screen().page === "threads"}>
+          <div class="flex h-screen w-screen flex-col bg-background">
+            <div class="flex items-center justify-between border-b border-border px-3 py-2">
+              <div class="font-mono text-xs uppercase tracking-wider text-muted-foreground">
+                Thread tree · project {(screen() as { projectId: number }).projectId}
+              </div>
+              <button
+                type="button"
+                class="text-xs text-muted-foreground hover:text-foreground font-mono"
+                onClick={() => {
+                  window.location.hash = `#project/${(screen() as { projectId: number }).projectId}`;
+                }}
+              >
+                ← back
+              </button>
+            </div>
+            <div class="flex-1 overflow-auto">
+              <ThreadTreePanel
+                projectId={(screen() as { projectId: number }).projectId}
+                onOpenThread={() => {
+                  // Could wire into WorkspacePage to open a specific thread.
+                }}
+              />
+            </div>
+          </div>
         </Show>
 
         <Show when={screen().page === "settings"}>

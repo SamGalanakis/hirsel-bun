@@ -261,6 +261,24 @@ async fn build_runtime_services(
                 _ => None,
             };
             plugin_factories.push(super::task_tools::task_tool_plugin_factory(
+                project_id,
+                thread_id.clone(),
+            ));
+            plugin_factories.push(super::spawn_tools::spawn_tool_plugin_factory(
+                project_id,
+                thread_id.clone(),
+            ));
+            plugin_factories.push(
+                crate::backend::nonws_instrumentation::audit_plugin_factory(Some(project_id)),
+            );
+            let author = thread_id
+                .clone()
+                .unwrap_or_else(|| "shepherd".to_string());
+            plugin_factories.push(super::comment_tools::comment_tool_plugin_factory(
+                project_id,
+                author,
+            ));
+            plugin_factories.push(super::comment_prompt::comment_prompt_plugin_factory(
                 project_id, thread_id,
             ));
         }

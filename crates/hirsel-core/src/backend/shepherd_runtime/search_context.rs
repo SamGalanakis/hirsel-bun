@@ -88,18 +88,21 @@ impl ToolProvider for ReadOnlyGraphToolProvider {
 impl ReadOnlyGraphToolProvider {
     fn bump_read_timestamps(&self, rows: &[Value]) {
         let mut node_keys: Vec<Value> = Vec::new();
+        let mut pairs: Vec<(String, String)> = Vec::new();
         for row in rows {
             if let (Some(kind), Some(node_id)) = (
                 row.get("kind").and_then(|v| v.as_str()),
                 row.get("node_id").and_then(|v| v.as_str()),
             ) {
                 node_keys.push(json!([self.project_id, kind, node_id]));
+                pairs.push((kind.to_string(), node_id.to_string()));
             }
         }
         if node_keys.is_empty() {
             return;
         }
         let project_id = self.project_id;
+        let pairs_clone = pairs.clone();
         tokio::spawn(async move {
             let Ok(db) = librarian_db(project_id).await else {
                 return;
@@ -108,6 +111,16 @@ impl ReadOnlyGraphToolProvider {
                 let _ = db
                     .query("UPDATE type::record('kg_node', $key) SET read_by_search_context = time::now()")
                     .bind(("key", key))
+                    .await;
+            }
+        });
+        // Append implicit read-marks so other threads can see who touched
+        // these nodes. Thread_id is not available here (search_context runs
+        // inside a short-lived sub-runtime), so we log project-scoped reads.
+        tokio::spawn(async move {
+            if let Ok(store) = crate::backend::kg_read::ReadStore::open().await {
+                store
+                    .record_batch(project_id, &pairs_clone, None, None)
                     .await;
             }
         });

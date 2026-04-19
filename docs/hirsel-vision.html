@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hirsel Vision — concrete</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@400;500;600&family=Chivo+Mono:wght@400;500;600&family=Spectral:ital,wght@0,300;0,400;0,500;1,400&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"></script>
+<style>
+  :root {
+    --bg: #0d0d0c;
+    --panel: rgba(20, 20, 18, 0.92);
+    --panel-soft: rgba(30, 30, 27, 0.9);
+    --panel-recessed: rgba(12, 12, 10, 0.6);
+    --line: rgba(232, 228, 208, 0.12);
+    --line-strong: rgba(232, 163, 60, 0.28);
+    --text: #ece7dc;
+    --muted: #b2ac9e;
+    --dim: #7a7a6e;
+    --accent: #d7a84a;
+    --green: #92b276;
+    --red: #c87c67;
+    --blue: #87abc5;
+    --purple: #a890c4;
+    --font-display: "Azeret Mono", monospace;
+    --font-ui: "Chivo Mono", monospace;
+    --font-body: "Spectral", serif;
+  }
+  * { box-sizing: border-box; min-width: 0; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-ui);
+    color: var(--text);
+    background: linear-gradient(180deg, #090908, var(--bg));
+    background-image:
+      radial-gradient(ellipse at 20% -10%, rgba(215, 168, 74, 0.08) 0%, transparent 55%),
+      radial-gradient(ellipse at 85% 110%, rgba(135, 171, 197, 0.06) 0%, transparent 55%),
+      linear-gradient(180deg, #090908, var(--bg));
+    min-height: 100vh;
+    padding: 60px 24px 120px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  .eyebrow { color: var(--accent); text-transform: uppercase; letter-spacing: 0.22em; font-size: 11px; font-weight: 500; margin-bottom: 14px; }
+  h1 { font-family: var(--font-display); font-size: clamp(2.2rem, 5vw, 3.2rem); line-height: 0.98; margin: 0 0 10px; font-weight: 500; }
+  h1 + .sub { font-family: var(--font-body); font-style: italic; color: var(--muted); font-size: 1.15rem; margin-bottom: 40px; }
+  h2 { font-family: var(--font-display); font-size: 1.1rem; margin: 0 0 18px; font-weight: 500; letter-spacing: 0.02em; color: var(--text); }
+  h3 { font-family: var(--font-display); font-size: 0.85rem; margin: 0 0 10px; font-weight: 500; color: var(--accent); letter-spacing: 0.08em; text-transform: uppercase; }
+  section { padding: 32px 36px; border: 1px solid var(--line); background: var(--panel); backdrop-filter: blur(10px); border-radius: 18px; margin-bottom: 24px; }
+  section > .section-num { display: inline-block; font-family: var(--font-display); font-size: 11px; color: var(--dim); letter-spacing: 0.2em; margin-bottom: 14px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+  p, li { color: var(--muted); font-family: var(--font-body); line-height: 1.55; }
+  p { margin: 8px 0; }
+  code { color: var(--accent); background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); border-radius: 6px; padding: 1px 7px; font-family: var(--font-ui); font-size: 0.88em; }
+  pre { background: var(--panel-recessed); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; overflow-x: auto; font-family: var(--font-ui); font-size: 0.82rem; line-height: 1.6; color: var(--text); margin: 10px 0; white-space: pre; }
+  pre code { background: none; border: none; padding: 0; color: inherit; font-size: inherit; border-radius: 0; }
+  .kw { color: var(--purple); }
+  .str { color: var(--green); }
+  .cmt { color: var(--dim); font-style: italic; }
+  .num { color: var(--blue); }
+  .fn { color: var(--accent); }
+  .pill { display: inline-block; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 11px; background: rgba(255,255,255,0.03); font-family: var(--font-ui); letter-spacing: 0.04em; }
+
+  /* Section 1: collapse */
+  .collapse-diagram { display: grid; grid-template-columns: 1fr auto 1fr; gap: 24px; align-items: center; margin-top: 12px; }
+  .before, .after { display: flex; flex-direction: column; gap: 12px; }
+  .entity { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--panel-soft); }
+  .entity-head { font-family: var(--font-display); font-size: 0.85rem; color: var(--text); margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .entity-head .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); }
+  .entity.strike .entity-head .dot { background: var(--red); }
+  .entity small { font-family: var(--font-body); font-size: 0.82rem; color: var(--dim); font-style: italic; }
+  .entity.keep { border-color: var(--line-strong); background: rgba(215, 168, 74, 0.06); }
+  .entity.keep .entity-head { color: var(--accent); }
+  .entity.keep .entity-head .dot { background: var(--accent); }
+  .arrow { font-family: var(--font-display); color: var(--accent); font-size: 1.4rem; text-align: center; }
+
+  /* Fields list */
+  .fields { margin-top: 18px; padding: 16px 18px; background: var(--panel-recessed); border: 1px solid var(--line); border-radius: 10px; }
+  .fields-head { font-family: var(--font-display); font-size: 0.78rem; color: var(--dim); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 10px; }
+  .field-row { display: grid; grid-template-columns: 160px 1fr; gap: 16px; padding: 6px 0; border-bottom: 1px dashed rgba(232, 228, 208, 0.06); font-size: 0.86rem; }
+  .field-row:last-child { border: none; }
+  .field-name { font-family: var(--font-ui); color: var(--accent); }
+  .field-desc { font-family: var(--font-body); color: var(--muted); }
+
+  /* Examples table */
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  th, td { text-align: left; padding: 12px 14px; vertical-align: top; border-top: 1px solid var(--line); font-size: 0.85rem; }
+  th { color: var(--text); font-family: var(--font-display); font-size: 0.78rem; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+  td { color: var(--muted); font-family: var(--font-body); }
+  td code { font-size: 0.82em; }
+  tr:first-child th { border-top: none; }
+
+  /* Caps grid */
+  .caps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; margin: 12px 0 24px; }
+  .cap { padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-soft); }
+  .cap-name { font-family: var(--font-ui); font-size: 0.85rem; color: var(--accent); }
+  .cap-desc { font-family: var(--font-body); font-size: 0.78rem; color: var(--dim); margin-top: 3px; }
+  .preset-row { display: grid; grid-template-columns: 140px 1fr; gap: 14px; padding: 10px 0; border-top: 1px dashed rgba(232, 228, 208, 0.08); font-size: 0.86rem; }
+  .preset-row:first-child { border: none; }
+  .preset-name { font-family: var(--font-display); color: var(--text); }
+  .preset-caps { display: flex; flex-wrap: wrap; gap: 6px; }
+  .preset-caps .pill { font-size: 10.5px; padding: 3px 8px; background: rgba(215, 168, 74, 0.08); color: var(--muted); border-color: var(--line-strong); }
+
+  /* Exec mode decision */
+  .exec-flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 14px; align-items: center; margin: 10px 0; }
+  .exec-node { padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); text-align: center; }
+  .exec-node .label { font-family: var(--font-display); font-size: 0.78rem; color: var(--dim); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 6px; }
+  .exec-node .value { font-family: var(--font-ui); font-size: 0.95rem; color: var(--text); }
+  .exec-node.decision { background: rgba(215, 168, 74, 0.06); border-color: var(--line-strong); }
+  .exec-node.decision .value { color: var(--accent); }
+  .exec-arrow { font-family: var(--font-display); color: var(--dim); font-size: 1rem; text-align: center; }
+  .exec-label { font-family: var(--font-ui); font-size: 0.72rem; color: var(--accent); text-align: center; letter-spacing: 0.1em; }
+
+  /* Primitives grid */
+  .prims { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .prim { border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; background: var(--panel-soft); }
+  .prim-name { font-family: var(--font-display); font-size: 1rem; color: var(--accent); margin-bottom: 4px; }
+  .prim-tag { font-family: var(--font-body); font-style: italic; color: var(--dim); font-size: 0.85rem; margin-bottom: 10px; }
+  .prim pre { margin: 0; font-size: 0.78rem; }
+
+  /* Memory tiers */
+  .tiers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  .tier { border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; background: var(--panel-soft); }
+  .tier.ephemeral { border-left: 3px solid var(--blue); }
+  .tier.durable { border-left: 3px solid var(--accent); }
+  .tier-label { font-family: var(--font-display); font-size: 0.72rem; color: var(--dim); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 4px; }
+  .tier-name { font-family: var(--font-display); font-size: 1.1rem; color: var(--text); margin-bottom: 12px; }
+  .tier ul { margin: 0; padding-left: 18px; font-size: 0.88rem; }
+  .tier li { margin: 4px 0; }
+  .rule { margin-top: 16px; padding: 14px 18px; border-left: 3px solid var(--accent); background: rgba(215, 168, 74, 0.04); font-family: var(--font-body); font-size: 0.95rem; color: var(--text); border-radius: 0 8px 8px 0; }
+  .rule strong { color: var(--accent); font-style: italic; }
+
+  /* Built vs new */
+  .inventory { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .col { border: 1px solid var(--line); border-radius: 12px; padding: 20px 22px; background: var(--panel-soft); }
+  .col.built { border-top: 2px solid var(--green); }
+  .col.new { border-top: 2px solid var(--accent); }
+  .col-head { font-family: var(--font-display); font-size: 0.78rem; color: var(--dim); letter-spacing: 0.15em; text-transform: uppercase; margin-bottom: 14px; }
+  .col.built .col-head::before { content: "●  "; color: var(--green); }
+  .col.new .col-head::before { content: "●  "; color: var(--accent); }
+  .col ul { margin: 0; padding-left: 18px; font-family: var(--font-body); font-size: 0.9rem; }
+  .col li { margin: 6px 0; color: var(--muted); }
+  .col li code { font-size: 0.85em; }
+
+  /* Phase timeline */
+  .phases { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; margin-top: 18px; position: relative; }
+  .phase { padding: 18px 20px; border: 1px solid var(--line); border-left-width: 3px; background: var(--panel-soft); position: relative; }
+  .phase:nth-child(1) { border-left-color: var(--green); border-top-left-radius: 10px; border-bottom-left-radius: 10px; }
+  .phase:nth-child(2) { border-left-color: var(--accent); border-left-width: 3px; }
+  .phase:nth-child(3) { border-left-color: var(--blue); border-left-width: 3px; }
+  .phase:nth-child(4) { border-left-color: var(--purple); border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-left-width: 3px; }
+  .phase:not(:last-child) { border-right: none; }
+  .phase-num { font-family: var(--font-display); font-size: 0.7rem; color: var(--dim); letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 8px; }
+  .phase-title { font-family: var(--font-display); font-size: 0.95rem; color: var(--text); margin-bottom: 10px; line-height: 1.3; }
+  .phase ul { margin: 0; padding-left: 16px; font-family: var(--font-body); font-size: 0.82rem; }
+  .phase li { margin: 3px 0; color: var(--muted); }
+
+  /* Mermaid */
+  .mermaid-wrap { background: var(--panel-recessed); border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow: auto; margin-top: 12px; }
+  .mermaid { background: transparent; text-align: center; }
+
+  @media (max-width: 860px) {
+    .collapse-diagram { grid-template-columns: 1fr; }
+    .arrow { transform: rotate(90deg); }
+    .prims, .tiers, .inventory { grid-template-columns: 1fr; }
+    .phases { grid-template-columns: 1fr; }
+    .phase { border-radius: 0 !important; border-left-width: 3px !important; border-right: 1px solid var(--line) !important; }
+    .phase:first-child { border-top-left-radius: 10px !important; border-top-right-radius: 10px !important; }
+    .phase:last-child { border-bottom-left-radius: 10px !important; border-bottom-right-radius: 10px !important; }
+    .exec-flow { grid-template-columns: 1fr; }
+    .exec-arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="eyebrow">Hirsel · Vision · internal</div>
+  <h1>Threads, primitives, and the thing underneath</h1>
+  <div class="sub">Concrete design for a unified thread model with compositional decomposition. No metaphors, just types and flows.</div>
+
+  <!-- 1 -->
+  <section>
+    <div class="section-num">01 · collapse</div>
+    <h2>Three entities become one</h2>
+    <div class="collapse-diagram">
+      <div class="before">
+        <div class="entity strike">
+          <div class="entity-head"><span class="dot"></span>shepherd</div>
+          <small>project-level chat · one per project</small>
+        </div>
+        <div class="entity strike">
+          <div class="entity-head"><span class="dot"></span>thread</div>
+          <small>scoped chat with objective + focus</small>
+        </div>
+        <div class="entity strike">
+          <div class="entity-head"><span class="dot"></span>task</div>
+          <small>planning doc · title · status · order</small>
+        </div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="after">
+        <div class="entity keep">
+          <div class="entity-head"><span class="dot"></span>Thread</div>
+          <small>one table, one lifecycle, one UI</small>
+        </div>
+      </div>
+    </div>
+    <div class="fields">
+      <div class="fields-head">thread row</div>
+      <div class="field-row"><span class="field-name">id</span><span class="field-desc">stable identifier</span></div>
+      <div class="field-row"><span class="field-name">project_id</span><span class="field-desc">owning project</span></div>
+      <div class="field-row"><span class="field-name">parent_id</span><span class="field-desc">null for root, set for spawned children</span></div>
+      <div class="field-row"><span class="field-name">title</span><span class="field-desc">auto-generated, refreshed on debounce</span></div>
+      <div class="field-row"><span class="field-name">objective</span><span class="field-desc">the goal (what, not how)</span></div>
+      <div class="field-row"><span class="field-name">binding</span><span class="field-desc">Free · Node · File · Task-replacement · Workspace</span></div>
+      <div class="field-row"><span class="field-name">capabilities[]</span><span class="field-desc">permitted tool atoms</span></div>
+      <div class="field-row"><span class="field-name">skills[]</span><span class="field-desc">attached behavior fragments</span></div>
+      <div class="field-row"><span class="field-name">status</span><span class="field-desc">queued · running · done · blocked · archived</span></div>
+      <div class="field-row"><span class="field-name">sort_order</span><span class="field-desc">for list/board display</span></div>
+      <div class="field-row"><span class="field-name">workspace_path</span><span class="field-desc">optional isolated worktree</span></div>
+      <div class="field-row"><span class="field-name">created_at / updated_at</span><span class="field-desc">timestamps</span></div>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section>
+    <div class="section-num">02 · axes</div>
+    <h2>Four orthogonal axes define a thread</h2>
+    <table>
+      <tr>
+        <th style="width: 130px;">axis</th>
+        <th style="width: 90px;">role</th>
+        <th>what it answers</th>
+      </tr>
+      <tr>
+        <td><code>binding</code></td>
+        <td>subject</td>
+        <td>What is this thread attached to? A node, a file, a workspace, or nothing.</td>
+      </tr>
+      <tr>
+        <td><code>objective</code></td>
+        <td>goal</td>
+        <td>What should this thread achieve? Free-form text.</td>
+      </tr>
+      <tr>
+        <td><code>capabilities[]</code></td>
+        <td>permission</td>
+        <td>Which tools are in the runtime. Hard boundary.</td>
+      </tr>
+      <tr>
+        <td><code>skills[]</code></td>
+        <td>behavior</td>
+        <td>Which instruction fragments steer the LLM. Soft steering.</td>
+      </tr>
+    </table>
+    <h3 style="margin-top: 26px;">Three example threads</h3>
+    <table>
+      <tr>
+        <th></th>
+        <th>coder</th>
+        <th>reviewer</th>
+        <th>coordinator</th>
+      </tr>
+      <tr>
+        <td><code>binding</code></td>
+        <td>Task-rewrite</td>
+        <td>File(src/auth.rs)</td>
+        <td>Free</td>
+      </tr>
+      <tr>
+        <td><code>objective</code></td>
+        <td>"Implement the new auth flow"</td>
+        <td>"Review for CVE-style leaks"</td>
+        <td>"Refactor the shepherd_runtime module"</td>
+      </tr>
+      <tr>
+        <td><code>capabilities</code></td>
+        <td><code>workspace_read</code> <code>workspace_write</code> <code>shell</code></td>
+        <td><code>workspace_read</code> <code>graph_read</code></td>
+        <td><code>spawn_thread</code> <code>graph_read</code></td>
+      </tr>
+      <tr>
+        <td><code>skills</code></td>
+        <td>tdd-first, code-style</td>
+        <td>security-first, readability</td>
+        <td>(none; plans in lashlang)</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- 3 -->
+  <section>
+    <div class="section-num">03 · capabilities</div>
+    <h2>Atoms, not roles</h2>
+    <p style="margin-bottom: 14px;">Capabilities are the unit. Presets are UI convenience that expand into caps at spawn time. No role enum stored on the thread.</p>
+    <div class="caps-grid">
+      <div class="cap"><div class="cap-name">workspace_read</div><div class="cap-desc">list, read, search files</div></div>
+      <div class="cap"><div class="cap-name">workspace_write</div><div class="cap-desc">apply_patch, save file</div></div>
+      <div class="cap"><div class="cap-name">graph_read</div><div class="cap-desc">search_context, query kg_node</div></div>
+      <div class="cap"><div class="cap-name">graph_edit</div><div class="cap-desc">upsert_node, relate edges</div></div>
+      <div class="cap"><div class="cap-name">shell</div><div class="cap-desc">execute shell commands</div></div>
+      <div class="cap"><div class="cap-name">web_search</div><div class="cap-desc">tavily + fetch url</div></div>
+      <div class="cap"><div class="cap-name">spawn_thread</div><div class="cap-desc">launch + await child threads</div></div>
+      <div class="cap"><div class="cap-name">mcp</div><div class="cap-desc">attach project MCP servers</div></div>
+    </div>
+    <h3>Preset expansions (UI-only, not stored)</h3>
+    <div class="preset-row"><span class="preset-name">coder</span><span class="preset-caps"><span class="pill">workspace_read</span><span class="pill">workspace_write</span><span class="pill">shell</span></span></div>
+    <div class="preset-row"><span class="preset-name">researcher</span><span class="preset-caps"><span class="pill">workspace_read</span><span class="pill">graph_read</span><span class="pill">web_search</span></span></div>
+    <div class="preset-row"><span class="preset-name">reviewer</span><span class="preset-caps"><span class="pill">workspace_read</span><span class="pill">graph_read</span></span></div>
+    <div class="preset-row"><span class="preset-name">planner</span><span class="preset-caps"><span class="pill">graph_read</span><span class="pill">graph_edit</span><span class="pill">spawn_thread</span></span></div>
+    <div class="preset-row"><span class="preset-name">coordinator</span><span class="preset-caps"><span class="pill">spawn_thread</span><span class="pill">graph_read</span></span></div>
+  </section>
+
+  <!-- 4 -->
+  <section>
+    <div class="section-num">04 · execution mode</div>
+    <h2>Derived, not stored</h2>
+    <p>Execution mode is a lash-runtime internal. Hirsel picks it at thread spawn based on whether the cap set includes a meta-capability. Nobody stores it. Nobody picks it in the UI.</p>
+    <div class="exec-flow">
+      <div class="exec-node">
+        <div class="label">caps</div>
+        <div class="value">capabilities[]</div>
+      </div>
+      <div class="exec-arrow">→</div>
+      <div class="exec-node decision">
+        <div class="label">contains</div>
+        <div class="value">spawn_thread?</div>
+      </div>
+      <div class="exec-arrow">→</div>
+      <div class="exec-node">
+        <div class="label">mode</div>
+        <div class="value" id="mode-out">Rlm · Standard</div>
+      </div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px;">
+      <div style="padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-recessed);">
+        <div style="font-family: var(--font-display); font-size: 0.8rem; color: var(--accent); margin-bottom: 4px;">yes → Rlm</div>
+        <div style="font-family: var(--font-body); font-size: 0.87rem; color: var(--muted);">LLM emits lashlang programs. Runtime parses, compiles, executes. Tool calls become lashlang <code>call</code> statements; <code>spawn_thread</code> becomes <code>start call spawn_agent</code>.</div>
+      </div>
+      <div style="padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-recessed);">
+        <div style="font-family: var(--font-display); font-size: 0.8rem; color: var(--blue); margin-bottom: 4px;">no → Standard</div>
+        <div style="font-family: var(--font-body); font-size: 0.87rem; color: var(--muted);">LLM uses native tool-call protocol. Same path as today's shepherd/thread runtime. Nothing changes.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5 -->
+  <section>
+    <div class="section-num">05 · coordinator flow</div>
+    <h2>From chat to child threads and back</h2>
+    <div class="mermaid-wrap">
+      <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  actor U as user
+  participant C as coordinator thread
+  participant L as lash runtime
+  participant H as Hirsel SubagentHost
+  participant K1 as child thread A
+  participant K2 as child thread B
+  participant KG as knowledge graph
+
+  U->>C: open chat · pick "coordinator" · write objective
+  C->>L: turn begins (Rlm mode, spawn_thread in caps)
+  L->>C: emit lashlang program
+  Note over C,L: for t in tasks { h = start call spawn_agent ... }
+  L->>H: spawn_agent{task_name, capability}
+  H->>K1: create thread row (parent_id = C.id, binding, caps)
+  H->>K2: create thread row (parent_id = C.id, binding, caps)
+  K1-->>H: finish {artifact_a}
+  K2-->>H: finish {artifact_b}
+  H-->>L: results available
+  L->>C: results = await handles
+  C->>C: reduce / merge
+  C->>KG: (optional) curated kg.upsert for durable findings
+  C-->>U: final output
+      </pre>
+    </div>
+    <p style="margin-top: 14px; font-size: 0.9rem;">Every child is a real thread row — observable, resumable, inspectable in the UI during and after the run. Parent–child relationships persist in the thread table. Every transcript flows into the KG via the librarian as usual.</p>
+  </section>
+
+  <!-- 6 -->
+  <section>
+    <div class="section-num">06 · primitives</div>
+    <h2>Four decompositions beyond spawn+await</h2>
+    <p style="margin-bottom: 18px;">These are additions to the lashlang stdlib. Each widens the decomposition space in a way a tree of spawns cannot.</p>
+    <div class="prims">
+      <div class="prim">
+        <div class="prim-name">quorum</div>
+        <div class="prim-tag">best-of-N with agreement</div>
+<pre><span class="cmt">// spawn N variants, keep k that agree, merge.</span>
+<span class="kw">let</span> winners = <span class="fn">quorum</span>(
+  k_of_n: <span class="num">3</span>/<span class="num">5</span>,
+  prompt: <span class="str">"classify this node's kind"</span>,
+  agree_by: <span class="str">"exact-match"</span>
+)
+<span class="kw">finish</span> winners.majority()</pre>
+      </div>
+      <div class="prim">
+        <div class="prim-name">merge</div>
+        <div class="prim-tag">DAG recombination</div>
+<pre><span class="cmt">// two branches explored, recombine into one artifact.</span>
+a = <span class="kw">start call</span> <span class="fn">spawn_agent</span> { task: <span class="str">"approach-A"</span> }
+b = <span class="kw">start call</span> <span class="fn">spawn_agent</span> { task: <span class="str">"approach-B"</span> }
+[ra, rb] = <span class="kw">await</span> [a, b]
+synth = <span class="fn">merge</span>([ra, rb], strategy: <span class="str">"synthesize"</span>)
+<span class="kw">finish</span> synth</pre>
+      </div>
+      <div class="prim">
+        <div class="prim-name">fix</div>
+        <div class="prim-tag">iterate to stability</div>
+<pre><span class="cmt">// run step until the join of prev+next == prev.</span>
+answer = <span class="fn">fix</span>(state: seed) {
+  next = <span class="kw">call</span> <span class="fn">refine</span> { state }
+  state = <span class="fn">join</span>(state, next)
+} <span class="kw">until</span> stable
+<span class="kw">finish</span> answer</pre>
+      </div>
+      <div class="prim">
+        <div class="prim-name">graph.pheromones</div>
+        <div class="prim-tag">lock-free KG coordination</div>
+<pre><span class="cmt">// sub-threads annotate, others read, decay clears stale.</span>
+graph.<span class="fn">mark</span>(node, scent: <span class="str">"needs_review"</span>, weight: <span class="num">0.7</span>)
+hot = graph.<span class="fn">sniff</span>(scent: <span class="str">"needs_review"</span>, top: <span class="num">5</span>)
+<span class="kw">for</span> n <span class="kw">in</span> hot { <span class="kw">call</span> <span class="fn">spawn_agent</span> { binding: n } }
+graph.<span class="fn">evaporate</span>(half_life: <span class="str">"1h"</span>)</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- 7 -->
+  <section>
+    <div class="section-num">07 · memory</div>
+    <h2>Two tiers, one rule</h2>
+    <div class="tiers">
+      <div class="tier ephemeral">
+        <div class="tier-label">tier · ephemeral</div>
+        <div class="tier-name">lashlang VM</div>
+        <ul>
+          <li>Variables, handles, loop accumulators</li>
+          <li>Lives for one coordinator turn</li>
+          <li>In-process, typed</li>
+          <li>How children pass results to parents</li>
+        </ul>
+      </div>
+      <div class="tier durable">
+        <div class="tier-label">tier · durable</div>
+        <div class="tier-name">knowledge graph</div>
+        <ul>
+          <li>Facts, decisions, documents, relations</li>
+          <li>Survives threads, shared across them</li>
+          <li>Searchable via <code>search_context</code></li>
+          <li>Librarian ingests transcripts passively</li>
+        </ul>
+      </div>
+    </div>
+    <div class="rule">
+      <strong>Rule.</strong> Children return via <code>finish</code>, not via KG writes. KG writes are intentional and curated — "this fact matters beyond this run." Otherwise the graph bloats and decomposition slows down.
+    </div>
+  </section>
+
+  <!-- 8 -->
+  <section>
+    <div class="section-num">08 · inventory</div>
+    <h2>What's built vs what's new</h2>
+    <div class="inventory">
+      <div class="col built">
+        <div class="col-head">already built</div>
+        <ul>
+          <li>Knowledge graph (<code>kg_node</code>, <code>kg_edge</code>, FT/vec indexes)</li>
+          <li>Librarian (event queue, job runner, ingestion)</li>
+          <li>Threads and tasks (separate tables today)</li>
+          <li>Focus tracking (<code>project_recent_focus</code> + prompt contributor)</li>
+          <li>Shepherd runtime (Lash embed, plugin registry)</li>
+          <li>Prompt contributors (per-turn refresh in Lash)</li>
+          <li>Lashlang DSL (in <code>lash/lashlang</code>)</li>
+          <li>Subagent protocol (<code>spawn_agent</code>, <code>wait_agent</code>, … in <code>lash-subagents</code>)</li>
+          <li>Skills system (attach, render in prompt)</li>
+          <li>Canvas + worktree plumbing</li>
+        </ul>
+      </div>
+      <div class="col new">
+        <div class="col-head">new work</div>
+        <ul>
+          <li>Collapse <code>thread</code> + <code>task</code> into one table</li>
+          <li>Promote <code>capabilities[]</code> and <code>skills[]</code> to thread columns</li>
+          <li>Preset expansion at spawn time (coordinator, coder, reviewer, …)</li>
+          <li>Auto-derive execution mode from caps (<code>Rlm</code> vs <code>Standard</code>)</li>
+          <li>Implement <code>SubagentHost</code> against Hirsel thread rows</li>
+          <li>Forward lash <code>spawn_agent</code> → create thread row + runtime</li>
+          <li>Lashlang stdlib: <code>quorum</code>, <code>merge</code></li>
+          <li>Graph pheromones: <code>mark / sniff / evaporate</code> + decay worker</li>
+          <li>Lashlang stdlib: <code>fix</code> + explicit join lattice</li>
+          <li>UI: thread tree view (parent/child) + live child status</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 9 -->
+  <section>
+    <div class="section-num">09 · phased work</div>
+    <h2>Order of operations</h2>
+    <div class="phases">
+      <div class="phase">
+        <div class="phase-num">phase 1</div>
+        <div class="phase-title">Unify &amp; wire lash RLM</div>
+        <ul>
+          <li>Merge <code>task</code> into <code>thread</code></li>
+          <li>Add <code>capabilities[]</code>, <code>skills[]</code>, <code>parent_id</code></li>
+          <li>Presets in UI spawn dialog</li>
+          <li>Impl <code>SubagentHost</code> → thread rows</li>
+          <li>Auto-enable <code>Rlm</code> when spawn_thread in caps</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <div class="phase-num">phase 2</div>
+        <div class="phase-title">Quorum &amp; merge</div>
+        <ul>
+          <li>Add <code>quorum(k_of_n, ...)</code> to lashlang</li>
+          <li>Add <code>merge(artifacts, strategy)</code></li>
+          <li>Thread tree UI with live status</li>
+          <li>Reducer patterns in coordinator skills</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <div class="phase-num">phase 3</div>
+        <div class="phase-title">Graph pheromones</div>
+        <ul>
+          <li>Typed scent table (node, scent, weight, at)</li>
+          <li><code>mark / sniff / evaporate</code> primitives</li>
+          <li>Background decay worker</li>
+          <li>UI overlay: hot nodes on canvas</li>
+        </ul>
+      </div>
+      <div class="phase">
+        <div class="phase-num">phase 4</div>
+        <div class="phase-title">Fix + join lattice</div>
+        <ul>
+          <li>Add <code>fix / join</code> to lashlang</li>
+          <li>Monotonicity checker (detect oscillation)</li>
+          <li>Coordinator skill: when to iterate</li>
+          <li>Optional: decomposition-trace export for future training</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: "base",
+    themeVariables: {
+      fontFamily: "Chivo Mono, monospace",
+      fontSize: "13px",
+      primaryColor: "#1d1d1a",
+      primaryTextColor: "#ece7dc",
+      primaryBorderColor: "rgba(232, 228, 208, 0.18)",
+      lineColor: "rgba(232, 228, 208, 0.35)",
+      actorBorder: "rgba(215, 168, 74, 0.5)",
+      actorBkg: "#1d1d1a",
+      actorTextColor: "#ece7dc",
+      actorLineColor: "rgba(215, 168, 74, 0.35)",
+      signalColor: "#d7a84a",
+      signalTextColor: "#ece7dc",
+      labelBoxBkgColor: "#1d1d1a",
+      labelBoxBorderColor: "rgba(215, 168, 74, 0.4)",
+      labelTextColor: "#ece7dc",
+      loopTextColor: "#b2ac9e",
+      noteBkgColor: "rgba(215, 168, 74, 0.08)",
+      noteBorderColor: "rgba(215, 168, 74, 0.35)",
+      noteTextColor: "#ece7dc",
+      activationBkgColor: "rgba(215, 168, 74, 0.15)",
+      activationBorderColor: "rgba(215, 168, 74, 0.4)",
+      sequenceNumberColor: "#0d0d0c",
+      background: "transparent"
+    }
+  });
+</script>
+</body>
+</html>

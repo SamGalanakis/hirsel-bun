@@ -244,19 +244,17 @@ pub async fn get_workspace_snapshot(
         None
     };
 
-    // Load tasks for the project
-    let tasks = crate::backend::tasks::TaskStore::open()
+    // Load task-threads for the project (threads with binding_kind="task").
+    use crate::backend::server::web_routes::tasks::ApiTaskThread;
+    let tasks: Vec<ApiTaskThread> = thread_store
+        .list_project_task_threads(project_id)
         .await
-        .ok()
-        .map(|store| {
-            tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(store.list_project_tasks(project_id))
-            })
-        })
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .map(ApiTaskThread::from)
+        .collect();
 
-    // Load focused task if thread has one
+    // Load focused task if thread has one.
     let focused_task = thread_detail
         .as_ref()
         .and_then(|(detail, _)| detail.thread.focused_task_id.as_deref())

@@ -1,4 +1,6 @@
 pub mod commands;
+mod comment_prompt;
+mod comment_tools;
 mod focus_prompt;
 mod history;
 mod preview;
@@ -7,6 +9,8 @@ mod runtime;
 mod search_context;
 mod session;
 mod shell;
+mod spawn;
+mod spawn_tools;
 mod task_tools;
 mod tools;
 pub mod types;
@@ -18,6 +22,11 @@ pub use commands::{
     archive_thread, create_thread, delete_thread, interrupt_scope_turn, prepare_shepherd_session,
     send_scope_message, send_shepherd_message, send_thread_message, stop_scope_activity,
     SendShepherdMessageResponse,
+};
+pub use spawn::{
+    await_thread, discard_thread, inspect_thread, merge_thread, merge_thread_retry, spawn_thread,
+    spawn_thread_batch, AwaitOutcome, MergeResult, SpawnThreadRequest, SpawnedThread,
+    ThreadInspection,
 };
 pub use queries::{
     get_project_threads, get_scope_activity, get_shepherd_activity, get_shepherd_conversation,

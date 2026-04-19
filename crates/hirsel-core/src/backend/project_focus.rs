@@ -9,8 +9,7 @@ use surrealdb::types::SurrealValue;
 
 use super::db::global_db;
 use super::knowledge_graph::surreal_datetime_value_to_string;
-
-pub const RECENT_FOCUS_LIMIT: usize = 8;
+use super::runtime_settings::{keys, Defaults, RuntimeSettings};
 
 #[derive(Debug, Clone, Deserialize, SurrealValue)]
 struct RecentFocusRow {
@@ -54,13 +53,23 @@ pub async fn record_focus(project_id: i64, kind: &str, node_id: &str) -> Result<
 }
 
 pub async fn recent_focus(project_id: i64) -> Result<Vec<RecentFocusEntry>, String> {
-    recent_focus_with_limit(project_id, RECENT_FOCUS_LIMIT).await
+    recent_focus_with_limit(project_id, None).await
 }
 
+/// Fetch the top-N recently focused nodes. If `limit_override` is `None`,
+/// the effective limit is the value stored under
+/// `runtime_setting:project_recent_focus.limit` (falling back to
+/// [`Defaults::PROJECT_RECENT_FOCUS_LIMIT`]).
 pub async fn recent_focus_with_limit(
     project_id: i64,
-    limit: usize,
+    limit_override: Option<usize>,
 ) -> Result<Vec<RecentFocusEntry>, String> {
+    let limit = RuntimeSettings::resolve(
+        keys::PROJECT_RECENT_FOCUS_LIMIT,
+        limit_override,
+        Defaults::PROJECT_RECENT_FOCUS_LIMIT,
+    )
+    .await;
     if limit == 0 {
         return Ok(Vec::new());
     }

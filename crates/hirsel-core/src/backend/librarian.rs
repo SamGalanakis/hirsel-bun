@@ -268,7 +268,7 @@ impl LibrarianJobStore {
         let db = global_db().await;
         let mut response = db
             .query(
-                "LET $jobs = (SELECT id FROM librarian_job WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1); \
+                "LET $jobs = (SELECT id, created_at FROM librarian_job WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1); \
                  UPDATE $jobs SET status = 'running'; \
                  SELECT * FROM $jobs;",
             )
@@ -376,6 +376,234 @@ pub fn spawn_periodic_lint() {
             tokio::time::sleep(Duration::from_secs(1800)).await;
         }
     });
+}
+
+/// Periodic comment-thread summarisation sweep. Finds nodes whose
+/// unresolved comment count exceeds the configured threshold, compiles a
+/// summary of those comments, writes the summary as a new comment, and
+/// marks the originals as resolved. Interval is setting-driven.
+pub fn spawn_comment_summariser() {
+    tokio::spawn(async move {
+        use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
+        tokio::time::sleep(Duration::from_secs(180)).await;
+        loop {
+            let interval: u64 = RuntimeSettings::get_or(
+                keys::GRAPH_COMMENT_SUMMARY_INTERVAL_SEC,
+                Defaults::GRAPH_COMMENT_SUMMARY_INTERVAL_SEC,
+            )
+            .await;
+            if let Err(error) = run_comment_summariser_sweep().await {
+                tracing::warn!(%error, "comment summariser sweep failed");
+            }
+            tokio::time::sleep(Duration::from_secs(interval.max(60))).await;
+        }
+    });
+}
+
+async fn run_comment_summariser_sweep() -> Result<(), String> {
+    use crate::backend::kg_comment::CommentStore;
+    use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
+
+    let threshold: usize = RuntimeSettings::get_or(
+        keys::GRAPH_COMMENT_SUMMARY_THRESHOLD,
+        Defaults::GRAPH_COMMENT_SUMMARY_THRESHOLD,
+    )
+    .await;
+
+    let store = CommentStore::open()
+        .await
+        .map_err(|e| e.to_string())?;
+    let counts = store
+        .unresolved_counts_by_node()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    for (project_id, node_kind, node_id, count) in counts {
+        if count < threshold {
+            continue;
+        }
+        let comments = store
+            .list_for_node(project_id, &node_kind, &node_id, count, true)
+            .await
+            .map_err(|e| e.to_string())?;
+        if comments.is_empty() {
+            continue;
+        }
+        let summary_body = compose_comment_summary(&comments);
+        let original_ids: Vec<String> = comments.iter().map(|c| c.id.clone()).collect();
+        if let Err(error) = store
+            .summarise_and_resolve(
+                project_id,
+                &node_kind,
+                &node_id,
+                &summary_body,
+                "librarian",
+                &original_ids,
+            )
+            .await
+        {
+            tracing::warn!(%error, project_id, node_kind, node_id, "comment summarise failed");
+            continue;
+        }
+        tracing::info!(
+            project_id,
+            node_kind,
+            node_id,
+            collapsed = original_ids.len(),
+            "summarised comment thread"
+        );
+    }
+
+    Ok(())
+}
+
+fn compose_comment_summary(comments: &[crate::backend::kg_comment::Comment]) -> String {
+    // v1: deterministic rollup — one bullet per author, joined with newlines.
+    // LLM-backed summaries can swap in later by delegating to a sub-runtime.
+    let mut by_author: std::collections::BTreeMap<String, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for c in comments {
+        let first_line = c.body.lines().next().unwrap_or(&c.body);
+        by_author.entry(c.author.clone()).or_default().push(first_line);
+    }
+    let mut out = format!(
+        "Summary of {} unresolved comments (auto-rolled up by librarian):\n",
+        comments.len()
+    );
+    for (author, lines) in by_author {
+        out.push_str(&format!("- @{author}: "));
+        out.push_str(&lines.join(" ｜ "));
+        out.push('\n');
+    }
+    out
+}
+
+/// Orphan-workspace cleanup sweep. Finds thread workspace copies whose
+/// parent thread no longer exists (or was archived) and whose last
+/// activity exceeds the configured TTL; discards them unless cleanup is
+/// disabled. Runs every 4 hours after a short warm-up.
+pub fn spawn_orphan_workspace_cleanup() {
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(120)).await;
+        loop {
+            if let Err(error) = run_orphan_workspace_sweep().await {
+                tracing::warn!(%error, "orphan workspace sweep failed");
+            }
+            tokio::time::sleep(Duration::from_secs(4 * 60 * 60)).await;
+        }
+    });
+}
+
+async fn run_orphan_workspace_sweep() -> Result<(), String> {
+    use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
+    use crate::backend::{workspace_copy, ShepherdThreadStore};
+    use std::path::PathBuf;
+
+    let mode: String = RuntimeSettings::get_or(
+        keys::WORKSPACE_ORPHAN_CLEANUP,
+        Defaults::WORKSPACE_ORPHAN_CLEANUP.to_string(),
+    )
+    .await;
+    if mode == "off" {
+        return Ok(());
+    }
+    let ttl_days: u64 = RuntimeSettings::get_or(
+        keys::WORKSPACE_ORPHAN_TTL_DAYS,
+        Defaults::WORKSPACE_ORPHAN_TTL_DAYS,
+    )
+    .await;
+
+    let db = crate::backend::db::global_db().await;
+    let mut response = db
+        .query(
+            "SELECT thread_id, parent_id, workspace_path, archived_at, last_activity_at \
+             FROM shepherd_thread WHERE workspace_path != NONE",
+        )
+        .await
+        .map_err(|e| format!("orphan sweep query failed: {e}"))?;
+    let rows: Vec<serde_json::Value> = response.take(0).unwrap_or_default();
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let store = ShepherdThreadStore::open()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let now = chrono::Utc::now();
+    let ttl = chrono::Duration::days(ttl_days as i64);
+
+    for row in rows {
+        let Some(thread_id) = row.get("thread_id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let workspace_path = row
+            .get("workspace_path")
+            .and_then(|v| v.as_str())
+            .map(PathBuf::from);
+        let parent_id = row.get("parent_id").and_then(|v| v.as_str());
+        let archived_at = row.get("archived_at").and_then(|v| v.as_str());
+        let last_activity_at = row.get("last_activity_at").and_then(|v| v.as_str());
+
+        let parent_missing = if let Some(pid) = parent_id {
+            store.get_thread(pid).await.is_err()
+        } else {
+            // No parent — never orphaned by that criterion alone.
+            false
+        };
+        let stale = last_activity_at
+            .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
+            .map(|ts| now.signed_duration_since(ts) > ttl)
+            .unwrap_or(false);
+
+        let is_candidate = (parent_missing || archived_at.is_some()) && stale;
+        if !is_candidate {
+            continue;
+        }
+
+        match mode.as_str() {
+            "auto" => {
+                if let Some(path) = workspace_path.as_ref() {
+                    let fake = workspace_copy::WorkspaceCopy {
+                        thread_id: thread_id.to_string(),
+                        canonical: PathBuf::new(),
+                        copy_dir: path.clone(),
+                        base_commit: None,
+                    };
+                    if let Err(error) = workspace_copy::discard(&fake).await {
+                        tracing::warn!(%error, thread_id, "orphan discard failed");
+                        continue;
+                    }
+                }
+                let _ = store
+                    .set_thread_workspace_path(thread_id, None)
+                    .await;
+                let _ = store
+                    .set_thread_merge_status(thread_id, "discarded")
+                    .await;
+                tracing::info!(
+                    thread_id,
+                    ?workspace_path,
+                    "auto-discarded orphan thread workspace copy"
+                );
+            }
+            _ => {
+                // "prompt" mode: just flag the merge_status so the UI
+                // surfaces the orphan for user action. Actual discard
+                // happens via explicit discard_thread.
+                let _ = store
+                    .set_thread_merge_status(thread_id, "orphaned")
+                    .await;
+                tracing::info!(
+                    thread_id,
+                    ?workspace_path,
+                    "flagged orphan thread workspace copy for review"
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ── Session runner ──

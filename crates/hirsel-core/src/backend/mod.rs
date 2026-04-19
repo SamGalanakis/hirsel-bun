@@ -9,6 +9,9 @@ pub mod credentials;
 pub mod db;
 pub mod documents;
 pub mod error;
+pub mod kg_chunk;
+pub mod kg_comment;
+pub mod kg_read;
 pub(crate) mod knowledge_graph;
 pub(crate) mod lash_tools;
 pub mod librarian;
@@ -17,8 +20,11 @@ pub mod live_updates;
 pub mod llm_provider;
 pub(crate) mod plans;
 pub mod project;
+pub mod nonws_instrumentation;
 pub mod project_focus;
 pub(crate) mod prompts;
+pub mod runtime_settings;
+pub mod workspace_copy;
 pub mod sandbox;
 pub mod server;
 pub mod shepherd_chat;
@@ -27,7 +33,6 @@ pub mod shepherd_runtime;
 pub mod shepherd_threads;
 pub mod skills;
 pub mod system;
-pub mod tasks;
 pub(crate) mod text_patch;
 pub(crate) mod tool_results;
 
@@ -44,5 +49,7 @@ pub use shepherd_chat::{
     ShepherdChatMessage, ShepherdChatMessageOptions, ShepherdChatStore, ShepherdLiveTurn,
     MESSAGE_KIND_CHAT, MESSAGE_KIND_SHEPHERD_SYNC,
 };
-pub use shepherd_threads::{ShepherdThread, ShepherdThreadStore};
-pub use shepherd_threads::{ShepherdThreadError, ShepherdThreadResult};
+pub use shepherd_threads::{
+    ShepherdThread, ShepherdThreadError, ShepherdThreadResult, ShepherdThreadStore,
+    BINDING_KIND_FREE, BINDING_KIND_TASK,
+};

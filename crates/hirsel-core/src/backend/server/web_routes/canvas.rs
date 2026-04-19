@@ -12,7 +12,6 @@ use crate::backend::db::global_db;
 use crate::backend::knowledge_graph::KnowledgeGraphNodeRow;
 use crate::backend::librarian_events::record_user_activity;
 use crate::backend::live_updates::{self, LiveUpdateKind};
-use crate::backend::tasks::TaskStore;
 use crate::backend::ShepherdThreadStore;
 
 const USER_KIND_KG: &[&str] = &["document", "goal", "decision"];
@@ -80,9 +79,9 @@ pub async fn get_canvas(
     let db = global_db().await;
     let mut nodes: Vec<CanvasNode> = Vec::new();
 
-    // Tasks
-    if let Ok(store) = TaskStore::open().await {
-        if let Ok(tasks) = store.list_project_tasks(project_id).await {
+    // Tasks (threads with binding_kind="task")
+    if let Ok(store) = ShepherdThreadStore::open().await {
+        if let Ok(tasks) = store.list_project_task_threads(project_id).await {
             for task in tasks {
                 nodes.push(CanvasNode {
                     kind: "task".to_string(),
@@ -304,14 +303,14 @@ pub async fn create_canvas_node(
     let node_id: String;
     match body.kind.as_str() {
         "task" => {
-            let store = TaskStore::open().await.map_err(|e| {
+            let store = ShepherdThreadStore::open().await.map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("open tasks: {e}"),
+                    format!("open threads: {e}"),
                 )
             })?;
             let task = store
-                .create_task(project_id, &title, body.content.as_deref())
+                .create_task_thread(project_id, &title, body.content.as_deref())
                 .await
                 .map_err(|e| {
                     (
@@ -394,15 +393,15 @@ pub async fn update_canvas_node(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     match kind.as_str() {
         "task" => {
-            let store = TaskStore::open().await.map_err(|e| {
+            let store = ShepherdThreadStore::open().await.map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("open tasks: {e}"),
+                    format!("open threads: {e}"),
                 )
             })?;
             let content_arg: Option<Option<&str>> = body.content.as_deref().map(Some);
             store
-                .update_task(
+                .update_task_thread_fields(
                     &node_id,
                     body.title.as_deref(),
                     body.status.as_deref(),
@@ -487,13 +486,13 @@ pub async fn delete_canvas_node(
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     match kind.as_str() {
         "task" => {
-            let store = TaskStore::open().await.map_err(|e| {
+            let store = ShepherdThreadStore::open().await.map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("open tasks: {e}"),
+                    format!("open threads: {e}"),
                 )
             })?;
-            store.delete_task(&node_id).await.map_err(|e| {
+            store.delete_thread(&node_id).await.map_err(|e| {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("delete task: {e}"),

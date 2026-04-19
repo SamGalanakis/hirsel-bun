@@ -129,6 +129,8 @@ pub async fn start_server(port: u16) -> anyhow::Result<()> {
     spawn_shepherd_event_consumer();
     crate::backend::librarian::spawn_worker();
     crate::backend::librarian::spawn_periodic_lint();
+    crate::backend::librarian::spawn_orphan_workspace_cleanup();
+    crate::backend::librarian::spawn_comment_summariser();
 
     // Resolve SPA directory
     let webui_dir = resolve_webui_dist();
