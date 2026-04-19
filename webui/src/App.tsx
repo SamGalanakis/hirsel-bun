@@ -1,7 +1,7 @@
 import { type Component, Suspense, createSignal, lazy, onCleanup, onMount, Show } from "solid-js";
 import { ApiError } from "@/lib/api/core";
 import ConnectPage from "@/pages/ConnectPage";
-import { listProjects } from "@/lib/api";
+import { getSettings, listProjects } from "@/lib/api";
 
 const WorkspacePage = lazy(() => import("@/pages/WorkspacePage"));
 const SettingsPage = lazy(() => import("@/pages/SettingsPage"));
@@ -48,8 +48,25 @@ function parseHash(hash: string): ScreenState | null {
   return null;
 }
 
+const BANNER_DISMISSED_KEY = "hirsel.banner.embeddings_dismissed";
+
 const App: Component = () => {
   const [screen, setScreen] = createSignal<ScreenState>({ page: "loading" });
+  const [embeddingsReady, setEmbeddingsReady] = createSignal<boolean | null>(null);
+  const [bannerDismissed, setBannerDismissed] = createSignal<boolean>(
+    localStorage.getItem(BANNER_DISMISSED_KEY) === "1",
+  );
+
+  const refreshEmbeddingsState = () => {
+    getSettings()
+      .then((s) => setEmbeddingsReady(s.embeddings_ready))
+      .catch(() => setEmbeddingsReady(null));
+  };
+
+  const dismissBanner = () => {
+    localStorage.setItem(BANNER_DISMISSED_KEY, "1");
+    setBannerDismissed(true);
+  };
 
   const navigate = () => {
     const parsed = parseHash(window.location.hash);
@@ -77,12 +94,39 @@ const App: Component = () => {
 
   onMount(() => {
     navigate();
-    window.addEventListener("hashchange", navigate);
+    refreshEmbeddingsState();
+    window.addEventListener("hashchange", () => {
+      navigate();
+      // Re-check after nav — user may have just saved their key on the
+      // settings page.
+      refreshEmbeddingsState();
+    });
     onCleanup(() => window.removeEventListener("hashchange", navigate));
   });
 
   return (
     <div class="fixed inset-0 flex min-h-0 flex-col overflow-hidden">
+      <Show when={embeddingsReady() === false && !bannerDismissed()}>
+        <div class="flex items-center gap-3 border-b border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-mono text-amber-600 dark:text-amber-300">
+          <span class="flex-1">
+            Semantic retrieval is disabled — set an OpenRouter API key in Settings → Tools → Semantic Retrieval to enable embeddings + hybrid search.
+          </span>
+          <a
+            href="#settings"
+            class="underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-200"
+          >
+            Open Settings
+          </a>
+          <button
+            type="button"
+            class="text-muted-foreground hover:text-foreground"
+            onClick={dismissBanner}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      </Show>
       <Suspense
         fallback={
           <div class="flex flex-1 items-center justify-center bg-background">

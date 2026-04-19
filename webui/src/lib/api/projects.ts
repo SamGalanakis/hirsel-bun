@@ -177,3 +177,16 @@ export async function recordNodeFocus(
   });
   await parseJson<{ ok: true }>(res);
 }
+
+/** T1: request a librarian verify-node job on a specific KG node. */
+export async function requestNodeVerify(
+  projectId: number,
+  kind: string,
+  nodeId: string,
+): Promise<void> {
+  const res = await apiFetch(
+    `/projects/${projectId}/nodes/${encodeURIComponent(kind)}/${encodeURIComponent(nodeId)}/verify`,
+    { method: "POST" },
+  );
+  await parseJson<{ ok: true }>(res);
+}

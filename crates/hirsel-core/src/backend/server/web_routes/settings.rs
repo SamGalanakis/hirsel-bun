@@ -35,6 +35,10 @@ struct ApiSettingsResponse {
     tavily_configured: bool,
     tavily_key_masked: Option<String>,
     tavily_source: Option<String>,
+    /// True iff an OpenRouter key is currently available (env or store).
+    /// Embeddings + hybrid retrieval hard-require this key; the frontend
+    /// surfaces a banner when false.
+    embeddings_ready: bool,
 }
 
 #[derive(Serialize)]
@@ -323,6 +327,7 @@ pub async fn get_settings(
     let codex = resolve_codex_oauth_credentials().await;
     let github = resolve_github_token().await;
     let tavily = resolve_tavily_api_key().await;
+    let embeddings_ready = crate::backend::embeddings::EmbeddingClient::is_configured().await;
 
     let provider = match llm_settings.provider {
         LlmProvider::Codex => "codex",
@@ -353,6 +358,7 @@ pub async fn get_settings(
             .as_ref()
             .map(|value| crate::backend::api_types::mask_credential(&value.api_key)),
         tavily_source: tavily.map(|value| value.source.as_str().to_string()),
+        embeddings_ready,
     }))
 }
 

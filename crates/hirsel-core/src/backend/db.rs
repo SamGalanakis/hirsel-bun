@@ -73,6 +73,14 @@ const SCHEMA_MIGRATIONS: &[(&str, &str)] = &[
         "0013_kg_read",
         include_str!("../../../../database/schema/0013_kg_read.surql"),
     ),
+    (
+        "0014_kg_node_chunk",
+        include_str!("../../../../database/schema/0014_kg_node_chunk.surql"),
+    ),
+    (
+        "0015_kg_chunk_job",
+        include_str!("../../../../database/schema/0015_kg_chunk_job.surql"),
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]

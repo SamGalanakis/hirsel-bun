@@ -19,6 +19,11 @@ DEFINE FIELD IF NOT EXISTS tags ON TABLE kg_node TYPE option<array<string>> DEFA
 DEFINE FIELD IF NOT EXISTS read_by_search_context ON TABLE kg_node TYPE option<datetime>;
 -- Document nodes (kind = 'document') use subtype to pick render mode: 'markdown' | 'html'.
 DEFINE FIELD IF NOT EXISTS subtype ON TABLE kg_node TYPE option<string>;
+-- Supersession: when a node is replaced by a newer claim, the old node
+-- keeps this timestamp and a kg_edge with relation='supersedes' points
+-- new -> old. Default KG queries filter superseded_at = NONE; pass
+-- include_superseded=true to get history views.
+DEFINE FIELD IF NOT EXISTS superseded_at ON TABLE kg_node TYPE option<datetime>;
 
 DEFINE ANALYZER IF NOT EXISTS kg_text_analyzer TOKENIZERS blank, class, punct FILTERS snowball(english), lowercase;
 DEFINE INDEX IF NOT EXISTS kg_node_label_search ON TABLE kg_node COLUMNS label FULLTEXT ANALYZER kg_text_analyzer BM25;

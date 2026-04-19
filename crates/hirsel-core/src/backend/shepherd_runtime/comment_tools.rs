@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use crate::backend::kg_chunk;
 use crate::backend::kg_comment::{Comment, CommentStore, CommentTarget};
 use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
+use crate::backend::staleness;
 
 macro_rules! tool_definition {
     ($($field:tt)*) => {
@@ -80,6 +81,23 @@ impl ToolProvider for CommentToolProvider {
                 injected: true,
             },
             tool_definition! {
+                name: "graph.staleness".to_string(),
+                description: concat!(
+                    "Check a node's staleness tier before relying on it. Returns ",
+                    "{kind, node_id, tier (fresh|stable|stale|hot_aging|unread), age_days, ",
+                    "reads_in_hot_window, last_read_by_search_context, updated_at}. ",
+                    "Call this when you're about to cite a node that might be out of date."
+                ).to_string(),
+                params: vec![
+                    ToolParam::typed("kind", "str"),
+                    ToolParam::typed("node_id", "str"),
+                ],
+                returns: "dict".to_string(),
+                examples: vec![],
+                enabled: true,
+                injected: true,
+            },
+            tool_definition! {
                 name: "graph.chunk_subgraph".to_string(),
                 description: concat!(
                     "Split the subgraph rooted at a node into coherent token-bounded chunks. ",
@@ -106,6 +124,7 @@ impl ToolProvider for CommentToolProvider {
             "graph.comment" => self.add(args).await,
             "graph.comments" => self.list(args).await,
             "graph.resolve" => self.resolve(args).await,
+            "graph.staleness" => self.staleness(args).await,
             "graph.chunk_subgraph" => self.chunk(args).await,
             _ => ToolResult::err(json!({ "error": format!("Unknown tool: {name}") })),
         }
@@ -198,6 +217,19 @@ impl CommentToolProvider {
         match store.resolve(id, &self.author).await {
             Ok(comment) => ToolResult::ok(comment_to_json(&comment)),
             Err(e) => ToolResult::err(json!({ "error": e.to_string() })),
+        }
+    }
+
+    async fn staleness(&self, args: &Value) -> ToolResult {
+        let Some(kind) = args.get("kind").and_then(|v| v.as_str()) else {
+            return ToolResult::err(json!({ "error": "kind is required" }));
+        };
+        let Some(node_id) = args.get("node_id").and_then(|v| v.as_str()) else {
+            return ToolResult::err(json!({ "error": "node_id is required" }));
+        };
+        match staleness::classify_live(self.project_id, kind, node_id).await {
+            Ok(report) => ToolResult::ok(serde_json::to_value(report).unwrap_or_default()),
+            Err(e) => ToolResult::err(json!({ "error": e })),
         }
     }
 

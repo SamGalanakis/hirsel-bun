@@ -62,7 +62,25 @@ Review the knowledge graph for health:
 
 Use `search_graph` to discover nodes, `read_node` / `read_node_property` to inspect them,
 and `apply_graph_patch` to fix structural issues. Report a brief summary of what changed.
-If nothing needs changing, say so and stop.";
+If nothing needs changing, say so and stop.
+
+WRITE DISCIPLINE (applies to every `apply_graph_patch` write):
+Before you write, run `search_graph` (and `search_context` if needed) for the claim
+you intend to record. Branch on what you find:
+  - New information, no overlap → create a new node.
+  - Existing node, claim still valid → update in place (merge content / tags).
+  - Existing node, claim superseded → use the `supersede_node` op (old -> new, with reason).
+    Never silently overwrite a contradicted claim.
+  - Existing node, genuinely conflicting and both may be true → leave the existing node
+    untouched, create the new node, and emit a `contradicts` edge between them, plus a
+    `graph.comment` on the older node summarising the conflict.
+  - Ambiguous → do NOT write. Emit a `graph.comment` flagging the ambiguity instead.
+
+For staleness specifically:
+  - `HotAging` nodes (frequent recent reads, ancient updated_at): add a `needs_review`
+    tag and leave a `graph.comment` pointing at the claims that may have drifted.
+  - `Unread` nodes (never surfaced in search, old): consider retiring via
+    `supersede_node` (into an `archived`-tagged successor). Do NOT blind-delete.";
 
 // ── Public helpers callable from the ingress side ──
 
@@ -78,14 +96,119 @@ pub async fn queue_background_sync(
     let prompt = format!(
         "You are the project Librarian. The user just completed a turn in the {source_label} scope.\n\n\
          Extract any durable, graph-worthy knowledge from it — new components, decisions, facts, \
-         conventions, goals, or relationships — and update the knowledge graph with `apply_graph_patch`. \
-         Prefer updating existing nodes (use `search_graph` first). Skip ephemeral chat. If nothing is \
-         graph-worthy, reply briefly and stop.\n\n\
+         conventions, goals, or relationships — and update the knowledge graph with `apply_graph_patch`.\n\n\
+         WRITE DISCIPLINE (mandatory):\n\
+         Before any `apply_graph_patch` write, run `search_graph` (and `search_context` if useful) \
+         for the claim you intend to record. Then branch:\n\
+         - New info, no overlap → create a new node.\n\
+         - Existing node, still valid → update in place (merge content / tags).\n\
+         - Existing node, superseded → use `supersede_node` (old -> new, with reason). \
+           Never silently overwrite a contradicted claim.\n\
+         - Existing node, genuinely conflicting → leave old alone, create new, emit a \
+           `contradicts` edge, and `graph.comment` the old node summarising the conflict.\n\
+         - Ambiguous → do NOT write. `graph.comment` flagging the ambiguity instead.\n\n\
+         Skip ephemeral chat. If nothing is graph-worthy, reply briefly and stop.\n\n\
          ## User message\n\n{user_message}\n\n## Assistant reply\n\n{assistant_message}\n"
     );
     LibrarianJobStore::open()
         .await?
         .enqueue(project_id, LibrarianJobKind::Sync, &prompt)
+        .await
+        .map(|_| ())
+}
+
+/// Enqueue a crystallisation-digest job for a freshly-completed thread.
+/// The librarian reads the thread + its `kg_read` footprint + its worktree
+/// diff (if any) and emits a structured `digest` node into the graph.
+pub async fn enqueue_thread_digest(project_id: i64, thread_id: &str) -> Result<(), String> {
+    // Load the thread so the prompt can surface title/objective/final_output
+    // without the librarian re-querying on its own.
+    let thread = match crate::backend::ShepherdThreadStore::open().await {
+        Ok(store) => match store.get_thread(thread_id).await {
+            Ok(t) => t,
+            Err(e) => return Err(format!("digest: thread load failed: {e}")),
+        },
+        Err(e) => return Err(format!("digest: open thread store: {e}")),
+    };
+
+    if thread.project_id != project_id {
+        return Err(format!(
+            "digest: thread {thread_id} project mismatch ({} != {project_id})",
+            thread.project_id
+        ));
+    }
+
+    // Bucket recently-read nodes for this thread — becomes the
+    // `## Related nodes` section. Best-effort; empty if the store fails.
+    let related_nodes: Vec<String> = match crate::backend::kg_read::ReadStore::open().await {
+        Ok(rs) => rs
+            .recent_for_thread(thread_id, 32)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| {
+                format!(
+                    "- [{}:{}] (reads={}, last={})",
+                    r.node_kind, r.node_id, r.read_count, r.last_read_at
+                )
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+
+    let related_block = if related_nodes.is_empty() {
+        "(none)".to_string()
+    } else {
+        related_nodes.join("\n")
+    };
+    let binding_line = format!(
+        "binding_kind={}, binding_data={:?}",
+        thread.binding_kind, thread.binding_data
+    );
+    let final_output = thread.final_output.clone().unwrap_or_default();
+    let digest_node_id = format!("thread-{}", thread_id);
+
+    let prompt = format!(
+        "You are the project Librarian. A spawned thread just finished; \
+         crystallise what it did into a single `kind=digest, subtype=thread` node \
+         via `apply_graph_patch`.\n\n\
+         Node shape:\n\
+         - op=upsert_node, kind=digest, node_id={digest_node_id}\n\
+         - subtype=thread\n\
+         - label={title:?}\n\
+         - tags=[\"digest\",\"thread\"]\n\
+         - content is structured markdown with four H2 sections:\n\
+         \n\
+           ## Objective\n\
+           (restate the thread's objective)\n\
+           \n\
+           ## Findings\n\
+           (summarise the thread's final output; keep the important bits)\n\
+           \n\
+           ## Files touched\n\
+           (only if the thread had a workspace; use inspect_thread / shell or omit this section)\n\
+           \n\
+           ## Related nodes\n\
+           (the list below, pruned to what actually matters)\n\n\
+         After writing the digest node, write two edges via apply_graph_patch:\n\
+         - RELATE digest:{digest_node_id} -> kg_edge -> shepherd_thread:{thread_id} relation=authored_by\n\
+         - If {binding_line} indicates a non-Free binding, RELATE digest -> binding target relation=binds.\n\
+         \n\
+         WRITE DISCIPLINE: before upsert, `search_graph` for an existing digest with the same node_id. \
+         If one exists, use `supersede_node` rather than overwriting (the re-run is a new digest).\n\n\
+         ## Thread metadata\n\
+         title: {title}\n\
+         objective: {objective}\n\
+         final_output:\n{final_output}\n\
+         \n\
+         ## kg_read footprint\n{related_block}\n",
+        title = thread.title,
+        objective = thread.objective,
+    );
+
+    LibrarianJobStore::open()
+        .await?
+        .enqueue(project_id, LibrarianJobKind::Digest, &prompt)
         .await
         .map(|_| ())
 }
@@ -96,6 +219,121 @@ pub async fn enqueue_librarian_lint(project_id: i64) -> Result<(), String> {
         .enqueue(project_id, LibrarianJobKind::Lint, LINT_PROMPT)
         .await
         .map(|_| ())
+}
+
+/// Enqueue a `VerifyNode` job with cooldown + reason aggregation.
+/// Trigger reasons (see Phase 4G):
+/// - T1 `user_request` — user clicked "verify" on a node
+/// - T2 `contradiction_with:{kind}:{id}` — a `contradicts` edge landed
+/// - T3 `upstream_superseded:{kind}:{id}` — an upstream node got superseded
+/// - T4 `comment_pileup:{count}` — unresolved-comment threshold crossed
+/// - T5 `workspace_merge:{commit}:{path}` — a merge touched files the
+///   node references
+/// - A1..A4 ambient reasons emitted by the lint sweep
+pub async fn enqueue_verify_node(
+    project_id: i64,
+    kind: &str,
+    node_id: &str,
+    reason: &str,
+) -> Result<(), String> {
+    use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
+    let cooldown_sec = RuntimeSettings::get_or(
+        keys::STALENESS_VERIFY_COOLDOWN_SEC,
+        Defaults::STALENESS_VERIFY_COOLDOWN_SEC,
+    )
+    .await;
+
+    let db = global_db().await;
+    // If a verify job for the same node is already queued/running, aggregate
+    // the reason into its prompt and skip. If one ran recently (< cooldown),
+    // silently drop — the earlier run's verdict is still fresh.
+    let marker = verify_marker(kind, node_id);
+    let mut response = db
+        .query(
+            "SELECT id, prompt, status, updated_at FROM librarian_job \
+             WHERE project_id = $pid AND kind = 'verify' AND prompt CONTAINS $marker \
+             ORDER BY updated_at DESC LIMIT 1",
+        )
+        .bind(("pid", project_id))
+        .bind(("marker", marker.clone()))
+        .await
+        .map_err(|e| format!("verify cooldown query: {e}"))?;
+    #[derive(Deserialize, SurrealValue)]
+    struct ExistingJob {
+        id: RecordId,
+        #[serde(default)]
+        prompt: String,
+        #[serde(default)]
+        status: String,
+        #[serde(default)]
+        updated_at: Option<DateTime<Utc>>,
+    }
+    let rows: Vec<ExistingJob> = response.take(0).unwrap_or_default();
+    if let Some(existing) = rows.into_iter().next() {
+        match existing.status.as_str() {
+            "queued" | "running" => {
+                let appended = format!("{}\n- {}", existing.prompt, reason);
+                let _ = db
+                    .query("UPDATE $id SET prompt = $prompt")
+                    .bind(("id", existing.id.clone()))
+                    .bind(("prompt", appended))
+                    .await;
+                return Ok(());
+            }
+            "completed" | "failed" => {
+                if let Some(ts) = existing.updated_at {
+                    let elapsed = (Utc::now() - ts).num_seconds().max(0) as u64;
+                    if elapsed < cooldown_sec {
+                        tracing::debug!(
+                            project_id,
+                            %kind,
+                            %node_id,
+                            elapsed_sec = elapsed,
+                            cooldown_sec,
+                            "verify job suppressed by cooldown"
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let prompt = verify_prompt(kind, node_id, reason);
+    LibrarianJobStore::open()
+        .await?
+        .enqueue(project_id, LibrarianJobKind::Verify, &prompt)
+        .await
+        .map(|_| ())
+}
+
+/// Stable marker embedded in the verify prompt so later triggers can
+/// deduplicate / append onto the same job.
+fn verify_marker(kind: &str, node_id: &str) -> String {
+    format!("[verify-node:{kind}:{node_id}]")
+}
+
+fn verify_prompt(kind: &str, node_id: &str, reason: &str) -> String {
+    let marker = verify_marker(kind, node_id);
+    format!(
+        "{marker}\n\
+         A node has been flagged for verification. Check whether it is still accurate.\n\n\
+         Node: {kind}:{node_id}\n\
+         Reasons (most recent first):\n- {reason}\n\n\
+         Steps:\n\
+         1. Read the node's current content via `read_node`.\n\
+         2. Search for related recent material via `search_graph` and `search_context` \
+            (look for newer claims, contradictions, workspace changes).\n\
+         3. Decide, and act with a single `apply_graph_patch`:\n\
+            - Still valid → touch the node (no-op patch) and remove any `needs_review` tag.\n\
+            - Update in place → merge corrections into the same node id.\n\
+            - Superseded → create a successor node and use `supersede_node`.\n\
+            - Retire → tag `archived`; leave the row in place.\n\
+            - Ambiguous → do NOT write. Emit a `graph.comment` with your findings.\n\
+         4. If any reason mentions `contradiction_with:X:Y`, always visit X:Y before \
+            deciding and write a `contradicts` or `supersedes` edge explicitly.\n"
+    )
 }
 
 fn sync_source_label(scope: &ShepherdScope) -> String {
@@ -170,6 +408,10 @@ fn format_sync_chunks(chunks: &[ShepherdMessageChunk]) -> String {
 pub enum LibrarianJobKind {
     Sync,
     Lint,
+    /// Crystallisation digest emitted when a spawned thread reaches done.
+    Digest,
+    /// Per-node verification job fired by the staleness triggers (Phase 4G).
+    Verify,
 }
 
 impl LibrarianJobKind {
@@ -177,6 +419,8 @@ impl LibrarianJobKind {
         match self {
             LibrarianJobKind::Sync => "sync",
             LibrarianJobKind::Lint => "lint",
+            LibrarianJobKind::Digest => "digest",
+            LibrarianJobKind::Verify => "verify",
         }
     }
 
@@ -184,6 +428,8 @@ impl LibrarianJobKind {
         match value {
             "sync" => Some(LibrarianJobKind::Sync),
             "lint" => Some(LibrarianJobKind::Lint),
+            "digest" => Some(LibrarianJobKind::Digest),
+            "verify" => Some(LibrarianJobKind::Verify),
             _ => None,
         }
     }
@@ -362,6 +608,8 @@ pub fn spawn_worker() {
 }
 
 /// Periodic lint trigger. Runs every 30 minutes after a 5-minute warm-up.
+/// Per iteration: enqueue the broad lint + run the ambient-staleness
+/// sweep (A1–A4 in Phase 4G).
 pub fn spawn_periodic_lint() {
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(300)).await;
@@ -370,12 +618,165 @@ pub fn spawn_periodic_lint() {
                 if let Ok(projects) = store.list_projects().await {
                     for project in projects {
                         let _ = enqueue_librarian_lint(project.id).await;
+                        if let Err(error) = run_ambient_staleness_sweep(project.id).await {
+                            tracing::warn!(%error, project_id = project.id, "ambient staleness sweep failed");
+                        }
                     }
                 }
             }
             tokio::time::sleep(Duration::from_secs(1800)).await;
         }
     });
+}
+
+/// Scan a single project's knowledge graph for A1–A4 conditions and
+/// enqueue verify jobs. The `enqueue_verify_node` helper already applies
+/// per-node cooldown + reason aggregation, so duplicate detections over
+/// successive sweeps are harmless.
+async fn run_ambient_staleness_sweep(project_id: i64) -> Result<(), String> {
+    use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
+
+    let stale_days =
+        RuntimeSettings::get_or(keys::STALENESS_STALE_DAYS, Defaults::STALENESS_STALE_DAYS).await;
+    let hot_window_days = RuntimeSettings::get_or(
+        keys::STALENESS_HOT_WINDOW_DAYS,
+        Defaults::STALENESS_HOT_WINDOW_DAYS,
+    )
+    .await;
+    let hot_min_reads = RuntimeSettings::get_or(
+        keys::STALENESS_HOT_MIN_READS,
+        Defaults::STALENESS_HOT_MIN_READS,
+    )
+    .await;
+
+    let stale_cutoff = Utc::now() - chrono::Duration::days(stale_days);
+    let read_window_cutoff = Utc::now() - chrono::Duration::days(hot_window_days);
+
+    let db = global_db().await;
+
+    #[derive(Deserialize, SurrealValue)]
+    struct NodeRow {
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        node_id: String,
+        #[serde(default)]
+        tags: Option<Vec<String>>,
+        #[serde(default)]
+        updated_at: Option<DateTime<Utc>>,
+        #[serde(default)]
+        read_by_search_context: Option<DateTime<Utc>>,
+    }
+
+    // Pull all non-superseded, ageing nodes for this project in one
+    // query. Projects aren't expected to have hundreds of thousands of
+    // nodes in the near term; this is cheap enough to scan.
+    let mut response = db
+        .query(
+            "SELECT kind, node_id, tags, updated_at, read_by_search_context \
+             FROM kg_node \
+             WHERE id[0] = $pid AND superseded_at = NONE AND updated_at < $cutoff \
+             LIMIT 500",
+        )
+        .bind(("pid", project_id))
+        .bind(("cutoff", stale_cutoff))
+        .await
+        .map_err(|e| format!("ambient sweep load: {e}"))?;
+    let aged_nodes: Vec<NodeRow> = response.take(0).unwrap_or_default();
+
+    for node in aged_nodes {
+        if node.kind.is_empty() || node.node_id.is_empty() {
+            continue;
+        }
+
+        // Count recent reads for this node from kg_read.
+        let reads_recent: i64 = match db
+            .query(
+                "SELECT count() AS c FROM kg_read \
+                 WHERE project_id = $pid AND kind = $kind AND node_id = $nid \
+                   AND read_at > $cutoff GROUP ALL;",
+            )
+            .bind(("pid", project_id))
+            .bind(("kind", node.kind.clone()))
+            .bind(("nid", node.node_id.clone()))
+            .bind(("cutoff", read_window_cutoff))
+            .await
+        {
+            Ok(mut r) => {
+                #[derive(Deserialize, SurrealValue)]
+                struct CountRow {
+                    #[serde(default)]
+                    c: i64,
+                }
+                r.take::<Vec<CountRow>>(0)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .next()
+                    .map(|r| r.c)
+                    .unwrap_or(0)
+            }
+            Err(_) => 0,
+        };
+
+        // Count distinct recently-reading threads for A3.
+        let distinct_threads: i64 = match db
+            .query(
+                "SELECT count(array::distinct(thread_id)) AS c FROM kg_read \
+                 WHERE project_id = $pid AND kind = $kind AND node_id = $nid \
+                   AND read_at > $cutoff AND thread_id != NONE GROUP ALL;",
+            )
+            .bind(("pid", project_id))
+            .bind(("kind", node.kind.clone()))
+            .bind(("nid", node.node_id.clone()))
+            .bind(("cutoff", read_window_cutoff))
+            .await
+        {
+            Ok(mut r) => {
+                #[derive(Deserialize, SurrealValue)]
+                struct CountRow {
+                    #[serde(default)]
+                    c: i64,
+                }
+                r.take::<Vec<CountRow>>(0)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .next()
+                    .map(|r| r.c)
+                    .unwrap_or(0)
+            }
+            Err(_) => 0,
+        };
+
+        let reason = if reads_recent >= hot_min_reads {
+            // A2: aged + heavily read = HotAging, highest-priority verify.
+            Some(format!("A2_hot_aging:reads={reads_recent}"))
+        } else if distinct_threads >= 3 {
+            // A3: aged + many distinct threads leaning on it.
+            Some(format!("A3_load_bearing_aging:threads={distinct_threads}"))
+        } else if node.read_by_search_context.is_none() {
+            // A1: aged + never surfaced in search = Unread.
+            Some("A1_unread".to_string())
+        } else {
+            // Aged + rarely read = Stale (A1 other branch).
+            Some("A1_stale".to_string())
+        };
+
+        if let Some(reason) = reason {
+            let _ = enqueue_verify_node(project_id, &node.kind, &node.node_id, &reason).await;
+        }
+
+        // A4: `needs_review` tag present but no fresh activity (the node
+        // still satisfies the aged cutoff) → user forgot about it.
+        if let Some(tags) = node.tags.as_ref() {
+            if tags.iter().any(|t| t == "needs_review") {
+                let _ =
+                    enqueue_verify_node(project_id, &node.kind, &node.node_id, "A4_user_forgot")
+                        .await;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Periodic comment-thread summarisation sweep. Finds nodes whose
@@ -931,7 +1332,14 @@ impl ToolProvider for LibrarianGraphTools {
             },
             tool_definition! {
                 name: "apply_graph_patch".to_string(),
-                description: "Apply bounded graph patch operations (upsert_node, upsert_edge, patch_node_text, delete_node, delete_edge). Set dry_run to validate without writing.".to_string(),
+                description: concat!(
+                    "Apply bounded graph patch operations (upsert_node, upsert_edge, ",
+                    "patch_node_text, delete_node, delete_edge, supersede_node). ",
+                    "Set dry_run to validate without writing. Never insert blindly — ",
+                    "always search_graph / search_context first; if an existing node ",
+                    "contradicts your claim, use supersede_node (old -> new) instead ",
+                    "of overwriting."
+                ).to_string(),
                 params: vec![
                     ToolParam::typed("ops", "list"),
                     ToolParam::optional("dry_run", "bool"),
@@ -1310,8 +1718,106 @@ async fn execute_patch_op(
         "patch_node_text" => patch_node_text(db, project_id, op, dry_run).await,
         "delete_node" => delete_node(db, project_id, op, dry_run).await,
         "delete_edge" => delete_edge(db, project_id, op, dry_run).await,
+        "supersede_node" => supersede_node(db, project_id, op, dry_run).await,
         other => Err(format!("unknown op: {other}")),
     }
+}
+
+/// Mark an existing node as superseded by a newer node, and record the
+/// replacement edge. The old node's row stays in place (for audit); only
+/// its `superseded_at` timestamp flips. A `supersedes` edge is written
+/// from the new node to the old one, carrying an optional `reason`.
+///
+/// Shape:
+///   { op: "supersede_node",
+///     old: { kind, node_id },
+///     new: { kind, node_id },
+///     reason?: string }
+async fn supersede_node(
+    db: &crate::backend::db::DbClient,
+    project_id: i64,
+    op: &Value,
+    dry_run: bool,
+) -> Result<Value, String> {
+    let old_key = endpoint_key(project_id, op, "old")?;
+    let new_key = endpoint_key(project_id, op, "new")?;
+    let reason = op
+        .get("reason")
+        .and_then(Value::as_str)
+        .map(|s| s.to_string());
+
+    if dry_run {
+        return Ok(json!({
+            "op": "supersede_node",
+            "dry_run": true,
+            "old": old_key,
+            "new": new_key,
+            "reason": reason,
+        }));
+    }
+
+    // Bump the old node's superseded_at.
+    db.query("UPDATE type::record('kg_node', $old) SET superseded_at = time::now() RETURN AFTER")
+        .bind(("old", old_key.clone()))
+        .await
+        .map_err(|e| format!("supersede_node: failed to mark old: {e}"))?;
+
+    // Clear any prior supersedes edge with the same endpoints (idempotent),
+    // then write a fresh one.
+    let metadata = match reason.as_ref() {
+        Some(r) => json!({ "reason": r }),
+        None => json!({}),
+    };
+    db.query(
+        "DELETE kg_edge WHERE in = type::record('kg_node', $new) \
+           AND out = type::record('kg_node', $old) AND relation = 'supersedes'; \
+         RELATE type::record('kg_node', $new) -> kg_edge -> type::record('kg_node', $old) \
+           SET relation = 'supersedes', metadata = $metadata;",
+    )
+    .bind(("new", new_key.clone()))
+    .bind(("old", old_key.clone()))
+    .bind(("metadata", metadata))
+    .await
+    .map_err(|e| format!("supersede_node: failed to write edge: {e}"))?;
+
+    // T3: walk inbound edges into the superseded node (except the supersedes
+    // edge we just wrote) and enqueue verify jobs for those referrers.
+    if let (Some(old_kind), Some(old_id)) = (
+        op.get("old")
+            .and_then(|v| v.get("kind"))
+            .and_then(|v| v.as_str()),
+        op.get("old")
+            .and_then(|v| v.get("node_id"))
+            .and_then(|v| v.as_str()),
+    ) {
+        let reason_tag = format!("upstream_superseded:{old_kind}:{old_id}");
+        let mut response = db
+            .query(
+                "SELECT in.kind AS kind, in.node_id AS node_id FROM kg_edge \
+                 WHERE out = type::record('kg_node', $old) \
+                   AND relation != 'supersedes'",
+            )
+            .bind(("old", old_key.clone()))
+            .await
+            .map_err(|e| format!("supersede_node: inbound edge scan: {e}"))?;
+        let rows: Vec<Value> = response.take(0).unwrap_or_default();
+        for row in rows {
+            let Some(k) = row.get("kind").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let Some(nid) = row.get("node_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let _ = enqueue_verify_node(project_id, k, nid, &reason_tag).await;
+        }
+    }
+
+    Ok(json!({
+        "op": "supersede_node",
+        "old": old_key,
+        "new": new_key,
+        "reason": reason,
+    }))
 }
 
 fn endpoint_key(project_id: i64, op: &Value, field: &str) -> Result<Value, String> {
@@ -1397,11 +1903,15 @@ async fn upsert_node(
         }));
     }
 
+    let content_was_written = set.get("content").is_some();
     db.query("UPSERT type::record('kg_node', $key) MERGE $merge RETURN id;")
         .bind(("key", key))
         .bind(("merge", Value::Object(merge)))
         .await
         .map_err(|e| format!("upsert_node failed: {e}"))?;
+    if content_was_written {
+        let _ = crate::backend::chunk_worker::enqueue_chunk_job(project_id, &kind, &node_id).await;
+    }
     Ok(json!({
         "op": "upsert_node",
         "status": "applied",
@@ -1522,6 +2032,39 @@ async fn upsert_edge(
     .await
     .map_err(|e| format!("upsert_edge failed: {e}"))?;
 
+    // T2: `contradicts` edges enqueue verify jobs for both endpoints.
+    if relation == "contradicts" {
+        if let (Some(from_kind), Some(from_id), Some(to_kind), Some(to_id)) = (
+            op.get("from")
+                .and_then(|v| v.get("kind"))
+                .and_then(|v| v.as_str()),
+            op.get("from")
+                .and_then(|v| v.get("node_id"))
+                .and_then(|v| v.as_str()),
+            op.get("to")
+                .and_then(|v| v.get("kind"))
+                .and_then(|v| v.as_str()),
+            op.get("to")
+                .and_then(|v| v.get("node_id"))
+                .and_then(|v| v.as_str()),
+        ) {
+            let _ = enqueue_verify_node(
+                project_id,
+                from_kind,
+                from_id,
+                &format!("contradiction_with:{to_kind}:{to_id}"),
+            )
+            .await;
+            let _ = enqueue_verify_node(
+                project_id,
+                to_kind,
+                to_id,
+                &format!("contradiction_with:{from_kind}:{from_id}"),
+            )
+            .await;
+        }
+    }
+
     Ok(json!({
         "op": "upsert_edge",
         "status": "applied",
@@ -1607,6 +2150,10 @@ async fn patch_node_text(
         .bind(("value", outcome.new_text))
         .await
         .map_err(|e| format!("patch_node_text update failed: {e}"))?;
+
+    if field == "content" {
+        let _ = crate::backend::chunk_worker::enqueue_chunk_job(project_id, &kind, &node_id).await;
+    }
 
     Ok(json!({
         "op": "patch_node_text",

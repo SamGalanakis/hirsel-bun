@@ -209,6 +209,20 @@ pub async fn await_thread(
                 .await
                 .map_err(|e| e.to_string())?;
             let _ = update_final_output(&store, &thread_id, final_output.as_deref()).await;
+
+            // Crystallisation: enqueue a librarian digest job so the thread's
+            // work is distilled into a graph node. Fire-and-forget; failure
+            // here does not prevent the await from returning.
+            if let Err(error) =
+                crate::backend::librarian::enqueue_thread_digest(project_id, &thread_id).await
+            {
+                tracing::debug!(
+                    %error,
+                    thread_id,
+                    "failed to enqueue thread digest; skipping"
+                );
+            }
+
             return Ok(AwaitOutcome::Done {
                 thread_id,
                 final_output,
@@ -295,6 +309,13 @@ pub async fn merge_thread(project_id: i64, thread_id: String) -> Result<MergeRes
     }
 
     let copy = rebuild_copy_handle(project_id, &thread).await?;
+    // Capture the diff *before* merge so we can reason about which KG nodes
+    // reference the changed paths (T5). `inspect` is read-only and safe to
+    // call alongside the upcoming merge.
+    let diff_paths: Vec<String> = match workspace_copy::inspect(&copy).await {
+        Ok(diff) => diff.files.iter().map(|f| f.path.clone()).collect(),
+        Err(_) => Vec::new(),
+    };
     let outcome = workspace_copy::merge(&copy).await?;
 
     let merge_status = match &outcome {
@@ -305,12 +326,73 @@ pub async fn merge_thread(project_id: i64, thread_id: String) -> Result<MergeRes
         .set_thread_merge_status(&thread_id, merge_status)
         .await;
 
+    // T5: on successful merge, scan KG nodes for references to any merged
+    // path and enqueue a verify job per matching node. Fire-and-forget so
+    // the merge response isn't blocked on DB work.
+    if matches!(outcome, workspace_copy::MergeOutcome::Merged) && !diff_paths.is_empty() {
+        let thread_id_owned = thread_id.clone();
+        tokio::spawn(async move {
+            enqueue_workspace_merge_verifies(project_id, &thread_id_owned, &diff_paths).await;
+        });
+    }
+
     Ok(match outcome {
         workspace_copy::MergeOutcome::Merged => MergeResult::Merged { thread_id },
         workspace_copy::MergeOutcome::Conflict { files } => {
             MergeResult::Conflict { thread_id, files }
         }
     })
+}
+
+/// For each merged file path, find KG nodes whose `content` mentions it and
+/// enqueue a verify job tagged with the path. The query uses FULLTEXT on
+/// `content` so it scales better than client-side filtering.
+async fn enqueue_workspace_merge_verifies(project_id: i64, thread_id: &str, paths: &[String]) {
+    use serde::Deserialize;
+    use surrealdb::types::SurrealValue;
+
+    let db = crate::backend::db::global_db().await;
+
+    #[derive(Deserialize, SurrealValue)]
+    struct NodeRef {
+        #[serde(default)]
+        kind: String,
+        #[serde(default)]
+        node_id: String,
+    }
+
+    for path in paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(mut response) = db
+            .query(
+                "SELECT kind, node_id FROM kg_node \
+                 WHERE project_id = $pid AND superseded_at = NONE AND content @2@ $path \
+                 LIMIT 50",
+            )
+            .bind(("pid", project_id))
+            .bind(("path", trimmed.to_string()))
+            .await
+        else {
+            continue;
+        };
+        let rows: Vec<NodeRef> = response.take(0).unwrap_or_default();
+        for row in rows {
+            if row.kind.is_empty() || row.node_id.is_empty() {
+                continue;
+            }
+            let reason = format!("workspace_merge:{thread_id}:{path}");
+            let _ = crate::backend::librarian::enqueue_verify_node(
+                project_id,
+                &row.kind,
+                &row.node_id,
+                &reason,
+            )
+            .await;
+        }
+    }
 }
 
 pub async fn merge_thread_retry(project_id: i64, thread_id: String) -> Result<MergeResult, String> {

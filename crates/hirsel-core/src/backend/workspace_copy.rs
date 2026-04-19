@@ -248,11 +248,7 @@ pub async fn merge_with(
 
     snapshot_worktree_if_dirty(&copy.copy_dir, &copy.thread_id).await?;
 
-    let output = run_git_raw(
-        &copy.canonical,
-        &["merge", "--no-ff", "--no-edit", &branch],
-    )
-    .await?;
+    let output = run_git_raw(&copy.canonical, &["merge", "--no-ff", "--no-edit", &branch]).await?;
 
     finalise_merge_outcome(&copy.canonical, output, prune_on_success, copy).await
 }

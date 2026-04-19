@@ -765,6 +765,24 @@ const SettingsForm: Component<{ onClose?: () => void }> = (props) => {
                 <span class="text-xs text-muted-foreground">{tavilyStatus()}</span>
               </Show>
             </div>
+
+            <div class="border-t border-border/70 pt-5" />
+
+            <div class="flex items-center gap-2">
+              <Label class="flex-1">Semantic Retrieval</Label>
+              <Show when={settings()?.embeddings_ready}>
+                <Badge variant="success">Ready</Badge>
+              </Show>
+              <Show when={!settings()?.embeddings_ready}>
+                <Badge variant="warning">Needs OpenRouter key</Badge>
+              </Show>
+            </div>
+            <p class="text-xs leading-5 text-muted-foreground">
+              Hybrid retrieval (BM25 + HNSW) uses OpenRouter for embeddings and chunk
+              contextualisation. Without a key, <code class="mx-0.5 bg-muted px-1 py-px text-[11px]">search_context</code>{" "}
+              falls back to plain BM25 and no new nodes get embedded. Add your key in the LLM
+              Provider tab to enable it.
+            </p>
           </div>
         </TabsContent>
 

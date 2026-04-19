@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,8 +13,10 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::backend::db::librarian_db;
+use crate::backend::embeddings::EmbeddingClient;
 use crate::backend::librarian::query_might_mutate_graph;
 use crate::backend::llm_provider::{self, RuntimeModelRole};
+use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
 
 // ── Collecting event sink (captures text output, discards everything else) ──
 
@@ -205,39 +208,299 @@ impl ReadOnlyGraphToolProvider {
         let Some(query) = args.get("query").and_then(|v| v.as_str()) else {
             return ToolResult::err(json!({ "error": "query is required" }));
         };
-        let query_owned = query.to_string();
 
-        let db = match librarian_db(self.project_id).await {
-            Ok(db) => db,
-            Err(error) => {
-                return ToolResult::err(json!({ "error": format!("DB error: {error}") }));
+        match hybrid_search(self.project_id, query).await {
+            Ok(HybridOutcome::Hybrid { results, mode }) => {
+                let rows: Vec<Value> = results
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "kind": r.kind,
+                            "node_id": r.node_id,
+                            "label": r.label,
+                            "content": r.content,
+                            "score": r.score,
+                            "snippets": r.snippets,
+                        })
+                    })
+                    .collect();
+                self.bump_read_timestamps(&rows);
+                ToolResult::ok(json!({
+                    "query": query,
+                    "mode": mode,
+                    "results": rows,
+                }))
             }
-        };
-
-        let mut response = match db
-            .query(
-                "SELECT kind, node_id, label, content, \
-                 search::score(1) + search::score(2) AS score \
-                 FROM kg_node \
-                 WHERE label @1@ $query OR content @2@ $query \
-                 ORDER BY score DESC LIMIT 20",
-            )
-            .bind(("query", query_owned))
-            .await
-        {
-            Ok(r) => r,
-            Err(error) => {
-                return ToolResult::err(json!({ "error": format!("Search failed: {error}") }));
-            }
-        };
-
-        let rows: Vec<Value> = response.take(0).unwrap_or_default();
-        self.bump_read_timestamps(&rows);
-        ToolResult::ok(json!({
-            "query": query,
-            "results": rows,
-        }))
+            Err(error) => ToolResult::err(json!({ "error": error })),
+        }
     }
+}
+
+// ── Hybrid retrieval (BM25 over fused_text + HNSW over embedding, RRF fused) ──
+
+#[derive(Debug, Clone)]
+struct HybridHit {
+    kind: String,
+    node_id: String,
+    label: String,
+    content: Option<String>,
+    score: f64,
+    snippets: Vec<Value>,
+}
+
+enum HybridOutcome {
+    Hybrid {
+        results: Vec<HybridHit>,
+        mode: &'static str,
+    },
+}
+
+async fn hybrid_search(project_id: i64, query: &str) -> Result<HybridOutcome, String> {
+    let db = librarian_db(project_id)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+
+    let rrf_k = RuntimeSettings::get_or(keys::RETRIEVAL_RRF_K, Defaults::RETRIEVAL_RRF_K).await;
+    let w_lex = RuntimeSettings::get_or(
+        keys::RETRIEVAL_LEXICAL_WEIGHT,
+        Defaults::RETRIEVAL_LEXICAL_WEIGHT,
+    )
+    .await;
+    let w_vec = RuntimeSettings::get_or(
+        keys::RETRIEVAL_VECTOR_WEIGHT,
+        Defaults::RETRIEVAL_VECTOR_WEIGHT,
+    )
+    .await;
+    let candidate_limit = RuntimeSettings::get_or(
+        keys::RETRIEVAL_CANDIDATE_LIMIT,
+        Defaults::RETRIEVAL_CANDIDATE_LIMIT,
+    )
+    .await
+    .max(1);
+    let final_limit =
+        RuntimeSettings::get_or(keys::RETRIEVAL_FINAL_LIMIT, Defaults::RETRIEVAL_FINAL_LIMIT)
+            .await
+            .max(1);
+    let chunks_per_node = RuntimeSettings::get_or(
+        keys::RETRIEVAL_CHUNKS_PER_NODE,
+        Defaults::RETRIEVAL_CHUNKS_PER_NODE,
+    )
+    .await
+    .max(1);
+
+    let lex_rows: Vec<Value> = db
+        .query(
+            "SELECT node_kind, node_id, chunk_index, chunk_path, chunk_text, context_text, \
+               search::score(1) AS lex_score \
+             FROM kg_node_chunk \
+             WHERE project_id = $pid AND fused_text @1@ $query \
+             ORDER BY lex_score DESC LIMIT $limit",
+        )
+        .bind(("pid", project_id))
+        .bind(("query", query.to_string()))
+        .bind(("limit", candidate_limit as i64))
+        .await
+        .map_err(|e| format!("lexical chunk query: {e}"))?
+        .take(0)
+        .unwrap_or_default();
+
+    // Try the vector branch. If OpenRouter isn't configured (or the embed
+    // call fails), run the lexical-only branch. If lexical also returned
+    // nothing, fall back to BM25 over kg_node itself so old projects
+    // without any chunks still see something.
+    let vec_rows = match EmbeddingClient::from_credentials().await {
+        Ok(client) => match client.embed_query(query).await {
+            Ok(vec) => db
+                .query(
+                    "SELECT node_kind, node_id, chunk_index, chunk_path, chunk_text, context_text, \
+                       vector::distance::knn() AS dist \
+                     FROM kg_node_chunk \
+                     WHERE project_id = $pid AND embedding <|$limit, COSINE|> $q \
+                     ORDER BY dist ASC LIMIT $limit",
+                )
+                .bind(("pid", project_id))
+                .bind(("q", vec))
+                .bind(("limit", candidate_limit as i64))
+                .await
+                .map_err(|e| format!("vector chunk query: {e}"))?
+                .take(0)
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        },
+        Err(_) => Vec::new(),
+    };
+
+    if lex_rows.is_empty() && vec_rows.is_empty() {
+        // No chunks at all for this project — fall back to BM25 on kg_node.
+        return legacy_bm25_search(project_id, query, final_limit).await;
+    }
+
+    let mode: &'static str = if vec_rows.is_empty() {
+        "lexical_chunks"
+    } else if lex_rows.is_empty() {
+        "vector_chunks"
+    } else {
+        "hybrid"
+    };
+
+    // Per-chunk RRF scoring.
+    #[derive(Default)]
+    struct NodeAccum {
+        score: f64,
+        snippets: Vec<(f64, Value)>, // (score, row-as-snippet)
+    }
+    let mut per_node: HashMap<(String, String), NodeAccum> = HashMap::new();
+
+    let add_ranked =
+        |rows: &[Value], weight: f64, per_node: &mut HashMap<(String, String), NodeAccum>| {
+            for (rank, row) in rows.iter().enumerate() {
+                let Some(kind) = row.get("node_kind").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let Some(node_id) = row.get("node_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let score = weight / (rrf_k + (rank as f64) + 1.0);
+                let entry = per_node
+                    .entry((kind.to_string(), node_id.to_string()))
+                    .or_default();
+                entry.score += score;
+                entry.snippets.push((score, row.clone()));
+            }
+        };
+    add_ranked(&lex_rows, w_lex, &mut per_node);
+    add_ranked(&vec_rows, w_vec, &mut per_node);
+
+    let mut ranked: Vec<((String, String), NodeAccum)> = per_node.into_iter().collect();
+    ranked.sort_by(|a, b| {
+        b.1.score
+            .partial_cmp(&a.1.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked.truncate(final_limit);
+
+    // Fetch the canonical node rows for the finalists, keeping only non-
+    // superseded nodes.
+    let mut results: Vec<HybridHit> = Vec::with_capacity(ranked.len());
+    for ((kind, node_id), mut accum) in ranked {
+        let key = json!([project_id, kind, node_id]);
+        let Ok(mut response) = db
+            .query(
+                "SELECT kind, node_id, label, content FROM type::record('kg_node', $key) \
+                 WHERE superseded_at = NONE",
+            )
+            .bind(("key", key))
+            .await
+        else {
+            continue;
+        };
+        let rows: Vec<Value> = response.take(0).unwrap_or_default();
+        let Some(row) = rows.into_iter().next() else {
+            continue;
+        };
+        let label = row
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let content = row
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        // Deduplicate snippets by chunk_index, keep best-scoring first.
+        accum
+            .snippets
+            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut seen_idx: std::collections::BTreeSet<i64> = Default::default();
+        let mut snippets: Vec<Value> = Vec::new();
+        for (_score, snip) in accum.snippets.into_iter() {
+            let idx = snip
+                .get("chunk_index")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(-1);
+            if idx >= 0 && !seen_idx.insert(idx) {
+                continue;
+            }
+            snippets.push(json!({
+                "chunk_index": idx,
+                "chunk_path": snip.get("chunk_path").cloned().unwrap_or(json!([])),
+                "chunk_text": snip.get("chunk_text").cloned().unwrap_or(json!("")),
+                "context_text": snip.get("context_text").cloned().unwrap_or(json!("")),
+            }));
+            if snippets.len() >= chunks_per_node {
+                break;
+            }
+        }
+        results.push(HybridHit {
+            kind,
+            node_id,
+            label,
+            content,
+            score: accum.score,
+            snippets,
+        });
+    }
+
+    Ok(HybridOutcome::Hybrid { results, mode })
+}
+
+/// BM25 fallback for projects whose chunk table is empty. Same shape as
+/// hybrid so the caller doesn't branch on mode.
+async fn legacy_bm25_search(
+    project_id: i64,
+    query: &str,
+    final_limit: usize,
+) -> Result<HybridOutcome, String> {
+    let db = librarian_db(project_id)
+        .await
+        .map_err(|e| format!("DB error: {e}"))?;
+    let rows: Vec<Value> = db
+        .query(
+            "SELECT kind, node_id, label, content, \
+               search::score(1) + search::score(2) AS score \
+             FROM kg_node \
+             WHERE (label @1@ $query OR content @2@ $query) \
+               AND superseded_at = NONE \
+             ORDER BY score DESC LIMIT $limit",
+        )
+        .bind(("query", query.to_string()))
+        .bind(("limit", final_limit as i64))
+        .await
+        .map_err(|e| format!("legacy BM25 search: {e}"))?
+        .take(0)
+        .unwrap_or_default();
+
+    let results: Vec<HybridHit> = rows
+        .into_iter()
+        .map(|row| HybridHit {
+            kind: row
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            node_id: row
+                .get("node_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            label: row
+                .get("label")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            content: row
+                .get("content")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            score: row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            snippets: Vec::new(),
+        })
+        .collect();
+
+    Ok(HybridOutcome::Hybrid {
+        results,
+        mode: "legacy_bm25",
+    })
 }
 
 // ── Sub-agent execution ──
@@ -248,6 +511,12 @@ You are a knowledge graph search agent. Answer the question using the graph tool
 The graph contains nodes with kinds: component, entity, convention, decision, fact, goal, document.
 Each node has: kind, node_id, label, content, tags (array), source, metadata.
 Edges have: relation (part_of, depends_on, implements, relates_to).
+
+`search_graph_text` returns hybrid retrieval results: each hit carries a node plus
+the most relevant chunk snippets (chunk_text + context_text) drawn from its content.
+Use the snippets to decide which nodes to cite; re-read the full node via `graph_query`
+when you need surrounding context. The `mode` field tells you which branches fired
+(hybrid | lexical_chunks | vector_chunks | legacy_bm25).
 
 Start by reading the project index to understand what is in the graph:
   graph_query: SELECT content FROM type::record('kg_node', [$project_id, 'document', 'index'])

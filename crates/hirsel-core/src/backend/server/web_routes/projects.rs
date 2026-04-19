@@ -290,7 +290,11 @@ pub async fn get_knowledge_graph(
     let db = global_db().await;
 
     let mut result = db
-        .query("SELECT * FROM kg_node WHERE id[0] = $project_id ORDER BY updated_at DESC LIMIT 200")
+        .query(
+            "SELECT * FROM kg_node \
+             WHERE id[0] = $project_id AND superseded_at = NONE \
+             ORDER BY updated_at DESC LIMIT 200",
+        )
         .bind(("project_id", project_id))
         .await
         .map_err(|e| {
@@ -327,8 +331,25 @@ pub async fn get_knowledge_graph(
         )
     })?;
 
+    // Compute staleness tiers for the node list. Uses the same kg_read
+    // aggregate + updated_at + read_by_search_context signals classify_live
+    // would use per node — the tier batch is cheap: one aggregate query
+    // for reads plus whatever kg_node.updated_at already told us.
+    let pairs: Vec<(String, String)> = nodes
+        .iter()
+        .map(|n| (n.kind.clone(), n.node_id.clone()))
+        .collect();
+    let tiers = crate::backend::staleness::classify_many(project_id, &pairs).await;
+
+    let mut api_nodes: Vec<ApiKnowledgeGraphNode> =
+        nodes.into_iter().map(ApiKnowledgeGraphNode::from).collect();
+    for node in api_nodes.iter_mut() {
+        let key = format!("{}:{}", node.kind, node.node_id);
+        node.staleness = tiers.get(&key).copied();
+    }
+
     Ok(Json(ApiKnowledgeGraph {
-        nodes: nodes.into_iter().map(ApiKnowledgeGraphNode::from).collect(),
+        nodes: api_nodes,
         edges: edges.into_iter().map(ApiKnowledgeGraphEdge::from).collect(),
     }))
 }
@@ -398,6 +419,18 @@ pub async fn record_project_focus(
     Json(body): Json<RecordFocusBody>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     crate::backend::project_focus::record_focus(project_id, &body.kind, &body.node_id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// T1: user clicked "verify" on a node in the UI. Enqueues a
+/// `LibrarianJobKind::Verify` job with `reason=user_request`. The librarian
+/// worker will pick it up and run the verification prompt.
+pub async fn request_node_verify(
+    Path((project_id, kind, node_id)): Path<(i64, String, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    crate::backend::librarian::enqueue_verify_node(project_id, &kind, &node_id, "user_request")
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(serde_json::json!({ "ok": true })))
