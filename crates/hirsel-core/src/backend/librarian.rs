@@ -520,15 +520,30 @@ impl LibrarianJobStore {
 
     async fn claim_next(&self) -> Result<Option<LibrarianJob>, String> {
         let db = global_db().await;
-        let mut response = db
+        // Previously this was a single `LET $jobs = SELECT …; UPDATE $jobs …;
+        // SELECT * FROM $jobs` chain with `take(2)`. LET doesn't contribute
+        // its own response group, and the take index silently missed the
+        // SELECT — the UPDATE flipped rows to "running" while the reader
+        // got an empty Vec back, so every claimed job was orphaned in the
+        // running state forever. Splitting into two queries keeps the
+        // full-row read lined up with the status flip.
+        let mut select_response = db
             .query(
-                "LET $jobs = (SELECT id, created_at FROM librarian_job WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1); \
-                 UPDATE $jobs SET status = 'running'; \
-                 SELECT * FROM $jobs;",
+                "SELECT * FROM librarian_job WHERE status = 'queued' \
+                 ORDER BY created_at ASC LIMIT 1",
             )
             .await
-            .map_err(|e| format!("failed to claim librarian job: {e}"))?;
-        let rows: Vec<LibrarianJobRow> = response.take(2).unwrap_or_default();
+            .map_err(|e| format!("failed to select queued librarian job: {e}"))?;
+        let rows: Vec<LibrarianJobRow> = select_response.take(0).unwrap_or_default();
+        let Some(row) = rows.into_iter().next() else {
+            return Ok(None);
+        };
+        db.query("UPDATE $id SET status = 'running'")
+            .bind(("id", row.id.clone()))
+            .await
+            .map_err(|e| format!("failed to mark librarian job running: {e}"))?;
+        // Re-wrap so the rest of the pipeline sees the fresh state.
+        let rows = vec![row];
         rows.into_iter()
             .next()
             .map(LibrarianJob::try_from)

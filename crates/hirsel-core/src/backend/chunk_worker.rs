@@ -71,20 +71,27 @@ pub async fn enqueue_chunk_job(
 }
 
 async fn claim_next(db: &DbClient) -> Result<Option<ChunkJobRow>, String> {
-    // SurrealDB 3 requires the column used in ORDER BY to appear in the
-    // projection — "SELECT id FROM t ORDER BY created_at" errors with
-    // "Missing order idiom `created_at` in statement selection".
-    let mut response = db
+    // SurrealDB's `LET` statements don't contribute a response group and
+    // SurrealValue deserialization of a `take(N)` off the wrong index can
+    // silently return an empty Vec. The old LET/UPDATE/SELECT pattern
+    // flipped rows to "running" but left the reader empty — every claim
+    // orphaned a job. Two plain queries avoid the index hazard entirely.
+    let mut select_response = db
         .query(
-            "LET $jobs = (SELECT id, created_at FROM kg_chunk_job WHERE status = 'queued' \
-               ORDER BY created_at ASC LIMIT 1); \
-             UPDATE $jobs SET status = 'running'; \
-             SELECT * FROM $jobs;",
+            "SELECT * FROM kg_chunk_job WHERE status = 'queued' \
+             ORDER BY created_at ASC LIMIT 1",
         )
         .await
-        .map_err(|e| format!("claim chunk job: {e}"))?;
-    let rows: Vec<ChunkJobRow> = response.take(2).unwrap_or_default();
-    Ok(rows.into_iter().next())
+        .map_err(|e| format!("select queued chunk job: {e}"))?;
+    let rows: Vec<ChunkJobRow> = select_response.take(0).unwrap_or_default();
+    let Some(row) = rows.into_iter().next() else {
+        return Ok(None);
+    };
+    db.query("UPDATE $id SET status = 'running'")
+        .bind(("id", row.id.clone()))
+        .await
+        .map_err(|e| format!("mark chunk job running: {e}"))?;
+    Ok(Some(row))
 }
 
 async fn mark_finished(db: &DbClient, id: &RecordId) -> Result<(), String> {
