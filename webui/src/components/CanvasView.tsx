@@ -1598,6 +1598,7 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
             return (
               <div
                 data-node-id={nodeKey(node)}
+                data-staleness={node.staleness ?? undefined}
                 class={cn(
                   "canvas-node",
                   `canvas-node-${node.kind}`,
@@ -1640,6 +1641,21 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     </span>
                     <Show when={node.status}>
                       <span class="canvas-node-status">{node.status}</span>
+                    </Show>
+                    <Show
+                      when={
+                        node.staleness &&
+                        node.staleness !== "fresh" &&
+                        node.staleness !== "stable"
+                      }
+                    >
+                      <span
+                        class="canvas-node-staleness"
+                        data-staleness={node.staleness}
+                        title={`Staleness: ${node.staleness?.replace("_", " ")}`}
+                      >
+                        {node.staleness?.replace("_", " ")}
+                      </span>
                     </Show>
                   </div>
                   <div class="canvas-node-title">{node.label}</div>

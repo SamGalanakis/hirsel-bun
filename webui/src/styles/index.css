@@ -792,6 +792,52 @@
   font-size: 8px;
 }
 
+/* Staleness — small label in the expanded-node header, and a subtle
+   corner marker on the pill form. "fresh" and "stable" are healthy
+   states and don't get a visual. */
+.canvas-node-staleness {
+  padding: 1px 5px;
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+}
+.canvas-node-staleness[data-staleness="hot_aging"] {
+  color: oklch(0.72 0.17 30);
+}
+.canvas-node-staleness[data-staleness="unread"] {
+  color: oklch(0.55 0.02 280);
+}
+.canvas-node-staleness[data-staleness="stale"] {
+  color: oklch(0.62 0.05 80);
+}
+
+/* Corner marker on collapsed pills — a small colored dot tucked into
+   the top-right so the tier is legible without dominating the node. */
+.canvas-node-pill[data-staleness="hot_aging"]::after,
+.canvas-node-pill[data-staleness="unread"]::after,
+.canvas-node-pill[data-staleness="stale"]::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--staleness-color);
+  pointer-events: none;
+}
+.canvas-node-pill[data-staleness="hot_aging"] {
+  --staleness-color: oklch(0.72 0.17 30);
+}
+.canvas-node-pill[data-staleness="unread"] {
+  --staleness-color: oklch(0.55 0.02 280);
+}
+.canvas-node-pill[data-staleness="stale"] {
+  --staleness-color: oklch(0.62 0.05 80);
+}
+
 .canvas-node-title {
   font-family: var(--font-body);
   font-size: 14px;
