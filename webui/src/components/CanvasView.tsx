@@ -19,7 +19,7 @@ import {
   createCanvasNode,
   updateCanvasNode,
 } from "@/lib/api/canvas";
-import { recordNodeFocus } from "@/lib/api/projects";
+import { recordNodeFocus, requestNodeVerify, runStalenessSweep } from "@/lib/api/projects";
 import { dispatchTask, reviewAction } from "@/lib/api/tasks";
 import { cn } from "@/lib/cn";
 import { renderNodeMarkdown } from "@/lib/markdown";
@@ -1441,6 +1441,26 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
           <button class="canvas-toolbar-btn" onClick={() => void handleResetLayout()}>
             Reset
           </button>
+          <button
+            class="canvas-toolbar-btn"
+            title="Run staleness sweep (A1–A4) now"
+            onClick={async (e) => {
+              const target = e.currentTarget;
+              const prev = target.textContent;
+              target.textContent = "Sweeping…";
+              try {
+                await runStalenessSweep(props.projectId);
+                target.textContent = "Swept";
+              } catch {
+                target.textContent = "Failed";
+              }
+              setTimeout(() => {
+                if (prev != null) target.textContent = prev;
+              }, 1500);
+            }}
+          >
+            Sweep
+          </button>
         </div>
       </div>
 
@@ -1674,6 +1694,31 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
                     >
                       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M3 7V3h4M13 9v4H9M3 9v4h4M13 7V3H9" />
+                      </svg>
+                    </button>
+                    <button
+                      type="button"
+                      class="canvas-node-hover-action"
+                      title="Queue a librarian verify-node job (T1)"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const target = e.currentTarget;
+                        const prevTitle = target.getAttribute("title");
+                        target.setAttribute("title", "Queuing…");
+                        try {
+                          await requestNodeVerify(props.projectId, node.kind, node.id);
+                          target.setAttribute("title", "Queued");
+                        } catch {
+                          target.setAttribute("title", "Failed");
+                        }
+                        setTimeout(() => {
+                          if (prevTitle != null) target.setAttribute("title", prevTitle);
+                        }, 1500);
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M2 8a6 6 0 1 1 1.8 4.3" />
+                        <path d="M2 13v-4h4" />
                       </svg>
                     </button>
                     <button

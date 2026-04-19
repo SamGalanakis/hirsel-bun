@@ -71,9 +71,12 @@ pub async fn enqueue_chunk_job(
 }
 
 async fn claim_next(db: &DbClient) -> Result<Option<ChunkJobRow>, String> {
+    // SurrealDB 3 requires the column used in ORDER BY to appear in the
+    // projection — "SELECT id FROM t ORDER BY created_at" errors with
+    // "Missing order idiom `created_at` in statement selection".
     let mut response = db
         .query(
-            "LET $jobs = (SELECT id FROM kg_chunk_job WHERE status = 'queued' \
+            "LET $jobs = (SELECT id, created_at FROM kg_chunk_job WHERE status = 'queued' \
                ORDER BY created_at ASC LIMIT 1); \
              UPDATE $jobs SET status = 'running'; \
              SELECT * FROM $jobs;",
