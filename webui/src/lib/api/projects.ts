@@ -190,3 +190,11 @@ export async function requestNodeVerify(
   );
   await parseJson<{ ok: true }>(res);
 }
+
+/** Kick the A1–A4 ambient staleness sweep for this project on demand. */
+export async function runStalenessSweep(projectId: number): Promise<void> {
+  const res = await apiFetch(`/projects/${projectId}/staleness/sweep`, {
+    method: "POST",
+  });
+  await parseJson<{ ok: true }>(res);
+}

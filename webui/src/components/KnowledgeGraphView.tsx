@@ -3,6 +3,7 @@ import * as THREE from "three";
 import {
   getKnowledgeGraph,
   requestNodeVerify,
+  runStalenessSweep,
   type KnowledgeGraphEdge,
   type KnowledgeGraphNode,
 } from "@/lib/api";
@@ -1050,6 +1051,31 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
           <button type="button" class="kg-fit-btn" onClick={fitAll} title="Fit all nodes">
             <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="kg-fit-btn"
+            title="Run ambient staleness sweep now (A1–A4)"
+            onClick={async (e) => {
+              const target = e.currentTarget;
+              const prev = target.getAttribute("title");
+              target.setAttribute("title", "sweeping…");
+              try {
+                await runStalenessSweep(props.projectId);
+                target.setAttribute("title", "swept");
+                await loadData();
+              } catch {
+                target.setAttribute("title", "sweep failed");
+              }
+              setTimeout(() => {
+                if (prev) target.setAttribute("title", prev);
+              }, 1500);
+            }}
+          >
+            <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+              <path d="M21 3v6h-6" />
             </svg>
           </button>
           <span class="kg-node-count">{nodeCount()}</span>

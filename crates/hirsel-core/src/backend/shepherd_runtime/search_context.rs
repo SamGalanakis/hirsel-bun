@@ -221,6 +221,7 @@ impl ReadOnlyGraphToolProvider {
                             "content": r.content,
                             "score": r.score,
                             "snippets": r.snippets,
+                            "staleness": r.staleness,
                         })
                     })
                     .collect();
@@ -246,6 +247,11 @@ struct HybridHit {
     content: Option<String>,
     score: f64,
     snippets: Vec<Value>,
+    /// Staleness tier at query time. Attached here (not a separate
+    /// prompt-injection block) because it only matters when the LM is
+    /// about to cite a specific hit — making it a per-hit field keeps
+    /// the signal right next to the claim it qualifies.
+    staleness: Option<crate::backend::staleness::StalenessTier>,
 }
 
 enum HybridOutcome {
@@ -438,10 +444,31 @@ async fn hybrid_search(project_id: i64, query: &str) -> Result<HybridOutcome, St
             content,
             score: accum.score,
             snippets,
+            staleness: None,
         });
     }
 
+    annotate_staleness(project_id, &mut results).await;
     Ok(HybridOutcome::Hybrid { results, mode })
+}
+
+/// Batch-classify the results and attach per-hit staleness tiers. One DB
+/// query per node; bounded by `RETRIEVAL_FINAL_LIMIT` (default 20) so
+/// cost is trivial and every search response carries the signal the LM
+/// needs to decide whether to cite.
+async fn annotate_staleness(project_id: i64, results: &mut [HybridHit]) {
+    if results.is_empty() {
+        return;
+    }
+    let pairs: Vec<(String, String)> = results
+        .iter()
+        .map(|r| (r.kind.clone(), r.node_id.clone()))
+        .collect();
+    let tiers = crate::backend::staleness::classify_many(project_id, &pairs).await;
+    for hit in results.iter_mut() {
+        let key = format!("{}:{}", hit.kind, hit.node_id);
+        hit.staleness = tiers.get(&key).copied();
+    }
 }
 
 /// BM25 fallback for projects whose chunk table is empty. Same shape as
@@ -470,7 +497,7 @@ async fn legacy_bm25_search(
         .take(0)
         .unwrap_or_default();
 
-    let results: Vec<HybridHit> = rows
+    let mut results: Vec<HybridHit> = rows
         .into_iter()
         .map(|row| HybridHit {
             kind: row
@@ -494,9 +521,11 @@ async fn legacy_bm25_search(
                 .map(str::to_string),
             score: row.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0),
             snippets: Vec::new(),
+            staleness: None,
         })
         .collect();
 
+    annotate_staleness(project_id, &mut results).await;
     Ok(HybridOutcome::Hybrid {
         results,
         mode: "legacy_bm25",
@@ -513,8 +542,10 @@ Each node has: kind, node_id, label, content, tags (array), source, metadata.
 Edges have: relation (part_of, depends_on, implements, relates_to).
 
 `search_graph_text` returns hybrid retrieval results: each hit carries a node plus
-the most relevant chunk snippets (chunk_text + context_text) drawn from its content.
-Use the snippets to decide which nodes to cite; re-read the full node via `graph_query`
+the most relevant chunk snippets (chunk_text + context_text) drawn from its content,
+and a `staleness` tier (fresh | stable | stale | hot_aging | unread). Snippets tell
+you why the hit matched; staleness tells you how much to trust it — treat `hot_aging`
+and `unread` as 'verify before citing'. Re-read the full node via `graph_query`
 when you need surrounding context. The `mode` field tells you which branches fired
 (hybrid | lexical_chunks | vector_chunks | legacy_bm25).
 

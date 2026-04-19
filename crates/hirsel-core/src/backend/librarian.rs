@@ -633,7 +633,7 @@ pub fn spawn_periodic_lint() {
 /// enqueue verify jobs. The `enqueue_verify_node` helper already applies
 /// per-node cooldown + reason aggregation, so duplicate detections over
 /// successive sweeps are harmless.
-async fn run_ambient_staleness_sweep(project_id: i64) -> Result<(), String> {
+pub async fn run_ambient_staleness_sweep(project_id: i64) -> Result<(), String> {
     use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
 
     let stale_days =
