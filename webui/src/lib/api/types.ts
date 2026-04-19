@@ -343,6 +343,13 @@ export interface WorkspaceDiffFile {
   right: WorkspaceDiffFileSide | null;
 }
 
+export type StalenessTier =
+  | "fresh"
+  | "stable"
+  | "stale"
+  | "hot_aging"
+  | "unread";
+
 export interface KnowledgeGraphNode {
   id: unknown;
   project_id: number;
@@ -358,6 +365,8 @@ export interface KnowledgeGraphNode {
   source: string;
   metadata: Record<string, unknown>;
   updated_at: string;
+  /** Derived staleness tier (populated by `get_knowledge_graph`). */
+  staleness?: StalenessTier;
 }
 
 export interface KnowledgeGraphEdge {
@@ -395,6 +404,9 @@ export interface SettingsResponse {
   tavily_configured: boolean;
   tavily_key_masked: string | null;
   tavily_source: "env" | "store" | null;
+  /** True iff an OpenRouter key is configured. Embeddings + hybrid
+   *  retrieval require it; the UI shows a boot banner when false. */
+  embeddings_ready: boolean;
 }
 
 export interface RoleModelSettings {

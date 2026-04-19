@@ -1,6 +1,11 @@
 import { type Component, For, Show, createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
 import * as THREE from "three";
-import { getKnowledgeGraph, type KnowledgeGraphNode, type KnowledgeGraphEdge } from "@/lib/api";
+import {
+  getKnowledgeGraph,
+  requestNodeVerify,
+  type KnowledgeGraphEdge,
+  type KnowledgeGraphNode,
+} from "@/lib/api";
 import { renderMarkdown } from "@/lib/markdown";
 
 let canvasComponentsLoaded: Promise<void> | null = null;
@@ -1112,6 +1117,49 @@ const KnowledgeGraphView: Component<KnowledgeGraphViewProps> = (props) => {
             <div class="kg-detail-kind-badge" style={{ "--badge-color": KIND_CSS[selected()!.kind] ?? DEFAULT_CSS }}>
               {selected()!.kind}
             </div>
+            <Show when={selected()!.raw.staleness && selected()!.raw.staleness !== "fresh"}>
+              <span
+                class="kg-detail-kind-badge"
+                style={{
+                  "--badge-color":
+                    selected()!.raw.staleness === "hot_aging"
+                      ? "oklch(0.72 0.17 30)"
+                      : selected()!.raw.staleness === "stale"
+                      ? "oklch(0.62 0.05 80)"
+                      : selected()!.raw.staleness === "unread"
+                      ? "oklch(0.55 0.02 280)"
+                      : "oklch(0.65 0.05 220)",
+                }}
+                title={`staleness: ${selected()!.raw.staleness}`}
+              >
+                {selected()!.raw.staleness?.replace("_", " ")}
+              </span>
+            </Show>
+            <button
+              type="button"
+              class="kg-detail-kind-badge"
+              style={{ "--badge-color": "oklch(0.68 0.14 195)" }}
+              title="Queue a librarian verify-node job for this node (T1)"
+              onClick={async (e) => {
+                e.stopPropagation();
+                const target = e.currentTarget;
+                const original = target.textContent ?? "";
+                target.textContent = "queuing…";
+                try {
+                  const kind = selected()!.kind;
+                  const nid = selected()!.raw.node_id;
+                  await requestNodeVerify(props.projectId, kind, nid);
+                  target.textContent = "queued";
+                } catch {
+                  target.textContent = "failed";
+                }
+                setTimeout(() => {
+                  target.textContent = original;
+                }, 1500);
+              }}
+            >
+              verify
+            </button>
             <button type="button" class="kg-detail-close" onClick={() => selectNode(null)}>
               <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M6 6l12 12" /><path d="M18 6L6 18" />

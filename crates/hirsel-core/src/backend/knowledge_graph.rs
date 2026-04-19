@@ -70,6 +70,11 @@ pub(crate) struct ApiKnowledgeGraphNode {
     pub updated_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub read_by_search_context: Option<String>,
+    /// Derived staleness tier (see `backend::staleness`). Populated by the
+    /// `get_knowledge_graph` route; `None` when staleness wasn't computed
+    /// (e.g. legacy callers).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staleness: Option<crate::backend::staleness::StalenessTier>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +108,7 @@ impl From<KnowledgeGraphNodeRow> for ApiKnowledgeGraphNode {
             source: value.source,
             metadata: surreal_btreemap_to_json_map(value.metadata.unwrap_or_default()),
             updated_at: surreal_datetime_value_to_string(value.updated_at),
+            staleness: None,
             read_by_search_context: {
                 let s = surreal_datetime_value_to_string(value.read_by_search_context);
                 if s.is_empty() {

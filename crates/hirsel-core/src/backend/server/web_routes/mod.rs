@@ -163,6 +163,11 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/api/projects/{project_id}/comments/{comment_id}/resolve",
             post(comments::resolve_comment),
         )
+        // Staleness: user-initiated verify-node trigger (T1)
+        .route(
+            "/api/projects/{project_id}/nodes/{kind}/{node_id}/verify",
+            post(projects::request_node_verify),
+        )
         // Tasks
         .route(
             "/api/projects/{project_id}/tasks",

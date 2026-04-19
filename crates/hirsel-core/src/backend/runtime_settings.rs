@@ -72,6 +72,40 @@ impl Defaults {
 
     /// Whether to log shell commands that escape the workspace.
     pub const WORKSPACE_NONWS_INSTRUMENTATION_ENABLED: bool = true;
+
+    // ── Staleness tracking ─────────────────────────────────────────
+    /// Age in days beyond which a node is considered non-fresh.
+    pub const STALENESS_STALE_DAYS: i64 = 30;
+    /// Window (days) used to measure recent read activity on a node.
+    pub const STALENESS_HOT_WINDOW_DAYS: i64 = 7;
+    /// Minimum reads within the hot window for a node to be HotAging.
+    pub const STALENESS_HOT_MIN_READS: i64 = 3;
+    /// Cooldown before the same node can be re-enqueued for a VerifyNode
+    /// job (used by the trigger debounce in 5i).
+    pub const STALENESS_VERIFY_COOLDOWN_SEC: u64 = 600;
+
+    // ── Embeddings + chunking (figments defaults) ──────────────────
+    pub const EMBEDDING_MODEL: &str = "perplexity/pplx-embed-v1-0.6b";
+    pub const EMBEDDING_DIMENSIONS: usize = 1024;
+    pub const EMBEDDING_DISTANCE: &str = "COSINE";
+    pub const EMBEDDING_CONTEXT_MODEL: &str = "google/gemini-3-flash-preview";
+    pub const CHUNK_TARGET_TOKENS: usize = 500;
+    pub const CHUNK_OVERLAP_TOKENS: usize = 80;
+    pub const CHUNK_MAX_TOKENS: usize = 900;
+    pub const CHUNK_MIN_TOKENS: usize = 40;
+    pub const CHUNK_GLOBAL_SUMMARY_THRESHOLD: usize = 4_000;
+    pub const CHUNK_GLOBAL_SUMMARY_TARGET: usize = 2_000;
+    pub const EMBED_BATCH_MAX_ITEMS: usize = 100;
+    pub const EMBED_BATCH_MAX_TOKENS: usize = 100_000;
+    pub const EMBED_MAX_CONCURRENT: usize = 2;
+
+    // ── Hybrid retrieval fusion ────────────────────────────────────
+    pub const RETRIEVAL_LEXICAL_WEIGHT: f64 = 1.0;
+    pub const RETRIEVAL_VECTOR_WEIGHT: f64 = 1.0;
+    pub const RETRIEVAL_RRF_K: f64 = 60.0;
+    pub const RETRIEVAL_CANDIDATE_LIMIT: usize = 40;
+    pub const RETRIEVAL_FINAL_LIMIT: usize = 20;
+    pub const RETRIEVAL_CHUNKS_PER_NODE: usize = 3;
 }
 
 /// Canonical setting keys. Callers reference these to avoid typos.
@@ -88,6 +122,29 @@ pub mod keys {
     pub const WORKSPACE_COPY_PRUNE_AFTER_MERGE: &str = "workspace.copy.prune_after_merge";
     pub const WORKSPACE_MERGE_STRATEGY: &str = "workspace.merge.strategy";
     pub const WORKSPACE_ORPHAN_TTL_DAYS: &str = "workspace.orphan_ttl_days";
+    pub const STALENESS_STALE_DAYS: &str = "staleness.stale_days";
+    pub const STALENESS_HOT_WINDOW_DAYS: &str = "staleness.hot_window_days";
+    pub const STALENESS_HOT_MIN_READS: &str = "staleness.hot_min_reads";
+    pub const STALENESS_VERIFY_COOLDOWN_SEC: &str = "staleness.verify_cooldown_sec";
+    pub const EMBEDDING_MODEL: &str = "embedding.model";
+    pub const EMBEDDING_DIMENSIONS: &str = "embedding.dimensions";
+    pub const EMBEDDING_DISTANCE: &str = "embedding.distance";
+    pub const EMBEDDING_CONTEXT_MODEL: &str = "embedding.context_model";
+    pub const CHUNK_TARGET_TOKENS: &str = "chunk.target_tokens";
+    pub const CHUNK_OVERLAP_TOKENS: &str = "chunk.overlap_tokens";
+    pub const CHUNK_MAX_TOKENS: &str = "chunk.max_tokens";
+    pub const CHUNK_MIN_TOKENS: &str = "chunk.min_tokens";
+    pub const CHUNK_GLOBAL_SUMMARY_THRESHOLD: &str = "chunk.global_summary_threshold";
+    pub const CHUNK_GLOBAL_SUMMARY_TARGET: &str = "chunk.global_summary_target";
+    pub const EMBED_BATCH_MAX_ITEMS: &str = "embed.batch_max_items";
+    pub const EMBED_BATCH_MAX_TOKENS: &str = "embed.batch_max_tokens";
+    pub const EMBED_MAX_CONCURRENT: &str = "embed.max_concurrent";
+    pub const RETRIEVAL_LEXICAL_WEIGHT: &str = "retrieval.lexical_weight";
+    pub const RETRIEVAL_VECTOR_WEIGHT: &str = "retrieval.vector_weight";
+    pub const RETRIEVAL_RRF_K: &str = "retrieval.rrf_k";
+    pub const RETRIEVAL_CANDIDATE_LIMIT: &str = "retrieval.candidate_limit";
+    pub const RETRIEVAL_FINAL_LIMIT: &str = "retrieval.final_limit";
+    pub const RETRIEVAL_CHUNKS_PER_NODE: &str = "retrieval.chunks_per_node";
     pub const WORKSPACE_ORPHAN_CLEANUP: &str = "workspace.orphan_cleanup";
     pub const WORKSPACE_NONWS_INSTRUMENTATION_ENABLED: &str =
         "workspace.nonws_instrumentation.enabled";

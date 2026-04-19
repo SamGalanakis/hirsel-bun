@@ -116,7 +116,18 @@ impl CommentStore {
             .create((KG_COMMENT_TABLE, id.as_str()))
             .content(record.clone())
             .await?;
-        Ok(record.into_comment()?)
+
+        // T4: if unresolved comments on this node now meet the pileup
+        // threshold, enqueue a librarian verify job. Best-effort; never
+        // blocks the insert.
+        let project_id = record.project_id;
+        let kind_owned = record.node_kind.clone();
+        let node_id_owned = record.node_id.clone();
+        tokio::spawn(async move {
+            maybe_enqueue_comment_pileup_verify(project_id, &kind_owned, &node_id_owned).await;
+        });
+
+        record.into_comment()
     }
 
     /// List recent comments on a node. `only_unresolved` filters out rows
@@ -297,4 +308,42 @@ impl CommentRecord {
             resolved_at: self.resolved_at,
         })
     }
+}
+
+/// Pileup threshold for T4 (comment-driven verify). Matches Phase 4G's
+/// worked example — 3 unresolved on a node is "people keep flagging it."
+const COMMENT_PILEUP_THRESHOLD: i64 = 3;
+
+async fn maybe_enqueue_comment_pileup_verify(project_id: i64, node_kind: &str, node_id: &str) {
+    let db = global_db().await;
+    let Ok(mut response) = db
+        .query(
+            "SELECT count() AS c FROM kg_comment \
+             WHERE project_id = $pid AND node_kind = $kind AND node_id = $nid \
+               AND resolved_at = NONE GROUP ALL;",
+        )
+        .bind(("pid", project_id))
+        .bind(("kind", node_kind.to_string()))
+        .bind(("nid", node_id.to_string()))
+        .await
+    else {
+        return;
+    };
+    #[derive(serde::Deserialize, SurrealValue)]
+    struct CountRow {
+        #[serde(default)]
+        c: i64,
+    }
+    let rows: Vec<CountRow> = response.take(0).unwrap_or_default();
+    let count = rows.into_iter().next().map(|r| r.c).unwrap_or(0);
+    if count < COMMENT_PILEUP_THRESHOLD {
+        return;
+    }
+    let _ = crate::backend::librarian::enqueue_verify_node(
+        project_id,
+        node_kind,
+        node_id,
+        &format!("comment_pileup:{count}"),
+    )
+    .await;
 }
