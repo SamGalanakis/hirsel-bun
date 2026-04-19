@@ -51,6 +51,11 @@ pub struct CanvasNode {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub highlight: Option<String>,
     pub updated_at: String,
+    /// Staleness tier derived from `kg_node.updated_at` + `kg_read`. Only
+    /// populated for knowledge-graph-backed node kinds; task/thread rows
+    /// (which live in `shepherd_thread`, not `kg_node`) stay `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub staleness: Option<crate::backend::staleness::StalenessTier>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -94,6 +99,7 @@ pub async fn get_canvas(
                     focused_task_id: None,
                     highlight: None,
                     updated_at: task.updated_at.clone(),
+                    staleness: None,
                 });
             }
         }
@@ -117,6 +123,7 @@ pub async fn get_canvas(
                     focused_task_id: thread.focused_task_id.clone(),
                     highlight: thread.highlight.clone(),
                     updated_at: thread.updated_at.clone(),
+                    staleness: None,
                 });
             }
         }
@@ -130,7 +137,21 @@ pub async fn get_canvas(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("kg query: {e}")))?;
     let kg_nodes: Vec<KnowledgeGraphNodeRow> = kg_response.take(0).unwrap_or_default();
 
+    // Batch-classify staleness for the KG-sourced nodes we're about to
+    // push. One call per node (serial DB reads) is fine at the default
+    // 500-node canvas ceiling — matches the `get_knowledge_graph` shape
+    // so both views show the same tier per node.
+    let kg_pairs: Vec<(String, String)> = kg_nodes
+        .iter()
+        .map(|kg| (kg.kind.clone(), kg.node_id.clone()))
+        .collect();
+    let staleness_map =
+        crate::backend::staleness::classify_many(project_id, &kg_pairs).await;
+
     for kg in kg_nodes {
+        let staleness = staleness_map
+            .get(&format!("{}:{}", kg.kind, kg.node_id))
+            .copied();
         nodes.push(CanvasNode {
             kind: kg.kind.clone(),
             id: kg.node_id.clone(),
@@ -148,6 +169,7 @@ pub async fn get_canvas(
             updated_at: crate::backend::knowledge_graph::surreal_datetime_value_to_string(
                 kg.updated_at.clone(),
             ),
+            staleness,
         });
     }
 

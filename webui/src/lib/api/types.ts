@@ -167,6 +167,9 @@ export interface CanvasNode {
   focused_task_id?: string | null;
   highlight?: string | null;
   updated_at: string;
+  /** Derived staleness tier for KG-backed nodes; `null`/absent for
+   *  task/thread nodes which don't live in `kg_node`. */
+  staleness?: StalenessTier | null;
 }
 
 export interface CanvasEdge {
