@@ -1,4 +1,6 @@
 pub mod commands;
+mod comment_prompt;
+mod comment_tools;
 mod focus_prompt;
 mod history;
 mod preview;
@@ -7,6 +9,8 @@ mod runtime;
 mod search_context;
 mod session;
 mod shell;
+mod spawn;
+mod spawn_tools;
 mod task_tools;
 mod tools;
 pub mod types;
@@ -24,6 +28,11 @@ pub use queries::{
     get_shepherd_history, get_thread_activity, get_thread_conversation, ShepherdScopeActivity,
 };
 pub use session::ShepherdScopeSession;
+pub use spawn::{
+    await_thread, discard_thread, inspect_thread, merge_thread, merge_thread_retry, spawn_thread,
+    spawn_thread_batch, AwaitOutcome, MergeResult, SpawnThreadRequest, SpawnedThread,
+    ThreadInspection,
+};
 pub use types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 
 pub async fn scrub_stale_startup_state() -> Result<(), String> {

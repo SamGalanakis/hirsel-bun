@@ -4,10 +4,25 @@ use lash::plugin::{PluginFactory, StaticPluginFactory};
 use lash::{PluginSpec, PromptContribution, ToolDefinition, ToolParam, ToolProvider, ToolResult};
 use serde_json::{json, Value};
 
-use crate::backend::tasks::TaskStore;
 use crate::backend::text_patch::apply_text_patch;
 use crate::backend::tool_results::edit_result_with;
-use crate::backend::ShepherdThreadStore;
+use crate::backend::{ShepherdThread, ShepherdThreadStore};
+
+/// Task-sized JSON projection of a `ShepherdThread`. Matches the historical
+/// `Task` tool surface so the LM-visible shape stays stable.
+fn task_view(thread: &ShepherdThread) -> Value {
+    json!({
+        "id": thread.id,
+        "project_id": thread.project_id,
+        "title": thread.title,
+        "status": thread.status,
+        "content": thread.content,
+        "review_json": thread.review_json,
+        "sort_order": thread.sort_order,
+        "created_at": thread.created_at,
+        "updated_at": thread.updated_at,
+    })
+}
 
 const TEXT_PATCH_INSTRUCTIONS: &str = crate::backend::text_patch::TEXT_PATCH_INSTRUCTIONS;
 
@@ -135,12 +150,14 @@ impl ToolProvider for TaskToolProvider {
 
 impl TaskToolProvider {
     async fn list_tasks(&self) -> ToolResult {
-        let store = match TaskStore::open().await {
+        let store = match ShepherdThreadStore::open().await {
             Ok(s) => s,
             Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
         };
-        match store.list_project_tasks(self.project_id).await {
-            Ok(tasks) => ToolResult::ok(json!({ "tasks": tasks })),
+        match store.list_project_task_threads(self.project_id).await {
+            Ok(tasks) => ToolResult::ok(json!({
+                "tasks": tasks.iter().map(task_view).collect::<Vec<_>>()
+            })),
             Err(e) => ToolResult::err(json!({ "error": e.to_string() })),
         }
     }
@@ -150,12 +167,15 @@ impl TaskToolProvider {
             return ToolResult::err(json!({ "error": "title is required" }));
         };
         let content = args.get("content").and_then(|v| v.as_str());
-        let store = match TaskStore::open().await {
+        let store = match ShepherdThreadStore::open().await {
             Ok(s) => s,
             Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
         };
-        match store.create_task(self.project_id, title, content).await {
-            Ok(task) => ToolResult::ok(json!({ "task": task })),
+        match store
+            .create_task_thread(self.project_id, title, content)
+            .await
+        {
+            Ok(task) => ToolResult::ok(json!({ "task": task_view(&task) })),
             Err(e) => ToolResult::err(json!({ "error": e.to_string() })),
         }
     }
@@ -166,14 +186,17 @@ impl TaskToolProvider {
         };
         let title = args.get("title").and_then(|v| v.as_str());
         let status = args.get("status").and_then(|v| v.as_str());
+        // content is Option<Option<&str>>: None = no change, Some(None) = clear, Some(Some(x)) = set
         let content = args.get("content").map(|v| v.as_str());
-        let store = match TaskStore::open().await {
+        let store = match ShepherdThreadStore::open().await {
             Ok(s) => s,
             Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
         };
-        // content is Option<Option<&str>>: None = no change, Some(None) = clear, Some(Some(x)) = set
-        match store.update_task(task_id, title, status, content).await {
-            Ok(task) => ToolResult::ok(json!({ "task": task })),
+        match store
+            .update_task_thread_fields(task_id, title, status, content)
+            .await
+        {
+            Ok(task) => ToolResult::ok(json!({ "task": task_view(&task) })),
             Err(e) => ToolResult::err(json!({ "error": e.to_string() })),
         }
     }
@@ -186,21 +209,16 @@ impl TaskToolProvider {
             return ToolResult::err(json!({ "error": "task_id is required" }));
         };
 
-        // Verify task exists
-        let task_store = match TaskStore::open().await {
-            Ok(s) => s,
-            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
-        };
-        let task = match task_store.get_task(task_id).await {
-            Ok(t) => t,
-            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
-        };
-
-        // Set focus on thread
         let thread_store = match ShepherdThreadStore::open().await {
             Ok(s) => s,
             Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
         };
+        // Verify the task-thread exists (and is actually a task-bound thread).
+        let task = match thread_store.get_thread(task_id).await {
+            Ok(t) => t,
+            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
+        };
+
         if let Err(e) = thread_store
             .set_focused_task(thread_id, Some(task_id))
             .await
@@ -271,12 +289,8 @@ impl TaskToolProvider {
             "suggested_next": suggested_next,
         });
 
-        let task_store = match TaskStore::open().await {
-            Ok(s) => s,
-            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
-        };
-        match task_store
-            .set_review(task_id, &serde_json::to_string(&review).unwrap_or_default())
+        match thread_store
+            .set_task_thread_review(task_id, &serde_json::to_string(&review).unwrap_or_default())
             .await
         {
             Ok(task) => ToolResult::ok(json!({
@@ -313,12 +327,8 @@ impl TaskToolProvider {
             }));
         };
 
-        // Get current task content
-        let task_store = match TaskStore::open().await {
-            Ok(s) => s,
-            Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
-        };
-        let task = match task_store.get_task(task_id).await {
+        // Get current task content from the task-thread we already loaded.
+        let task = match thread_store.get_thread(task_id).await {
             Ok(t) => t,
             Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
         };
@@ -329,9 +339,9 @@ impl TaskToolProvider {
             Err(error) => return ToolResult::err(json!({ "error": error })),
         };
 
-        // Save patched content
-        if let Err(e) = task_store
-            .update_task_content(task_id, &patched.new_text)
+        // Save patched content via the task-thread field update path.
+        if let Err(e) = thread_store
+            .update_task_thread_fields(task_id, None, None, Some(Some(&patched.new_text)))
             .await
         {
             return ToolResult::err(json!({ "error": e.to_string() }));

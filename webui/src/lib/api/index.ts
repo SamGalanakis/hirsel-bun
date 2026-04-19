@@ -1,4 +1,5 @@
 export * from "@/lib/api/canvas";
+export * from "@/lib/api/comments";
 export * from "@/lib/api/core";
 export * from "@/lib/api/projects";
 export * from "@/lib/api/skills";

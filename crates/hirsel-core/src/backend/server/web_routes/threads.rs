@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
 use serde::Deserialize;
+use shepherd_runtime::SpawnThreadRequest;
 
 use super::common::{
     extract_latest_plan, plan_progress_from_messages, to_api_activity, to_api_message,
@@ -138,6 +139,74 @@ pub async fn stop_thread_chat(
         focus: None,
     };
     shepherd_runtime::interrupt_scope_turn(scope)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
+pub struct SpawnThreadBody {
+    pub objective: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+    #[serde(default)]
+    pub binding_kind: Option<String>,
+    #[serde(default)]
+    pub binding_data: Option<String>,
+}
+
+pub async fn spawn_thread(
+    Path(project_id): Path<i64>,
+    Json(body): Json<SpawnThreadBody>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let request = SpawnThreadRequest {
+        objective: body.objective,
+        title: body.title,
+        capabilities: body.capabilities,
+        binding_kind: body.binding_kind,
+        binding_data: body.binding_data,
+    };
+    let spawned = shepherd_runtime::spawn_thread(project_id, body.parent_id, request)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(spawned))
+}
+
+pub async fn inspect_thread(
+    Path((project_id, thread_id)): Path<(i64, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let inspection = shepherd_runtime::inspect_thread(project_id, thread_id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(inspection))
+}
+
+pub async fn merge_thread(
+    Path((project_id, thread_id)): Path<(i64, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let outcome = shepherd_runtime::merge_thread(project_id, thread_id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(outcome))
+}
+
+pub async fn merge_thread_retry(
+    Path((project_id, thread_id)): Path<(i64, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let outcome = shepherd_runtime::merge_thread_retry(project_id, thread_id)
+        .await
+        .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
+    Ok(Json(outcome))
+}
+
+pub async fn discard_thread(
+    Path((project_id, thread_id)): Path<(i64, String)>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    shepherd_runtime::discard_thread(project_id, thread_id)
         .await
         .map_err(|error| (StatusCode::INTERNAL_SERVER_ERROR, error))?;
     Ok(Json(serde_json::json!({ "ok": true })))

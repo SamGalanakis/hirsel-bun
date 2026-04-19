@@ -69,6 +69,71 @@ export interface ShepherdThread {
   last_activity_at: string;
   highlight: string | null;
   focused_task_id: string | null;
+  parent_id?: string | null;
+  binding_kind?: string;
+  binding_data?: string | null;
+  capabilities?: string[];
+  merge_status?: string;
+  workspace_path?: string | null;
+  final_output?: string | null;
+}
+
+export interface SpawnedThread {
+  thread_id: string;
+  title: string;
+  status: string;
+  workspace_path: string | null;
+}
+
+export interface ThreadInspection {
+  thread_id: string;
+  status: string;
+  merge_status: string;
+  workspace_path: string | null;
+  final_output: string | null;
+  parent_id: string | null;
+  diff: {
+    files: Array<{
+      path: string;
+      status: string;
+      additions: number;
+      deletions: number;
+      from: string | null;
+    }>;
+    total_additions: number;
+    total_deletions: number;
+  } | null;
+}
+
+export type MergeResult =
+  | { state: "merged"; thread_id: string }
+  | { state: "conflict"; thread_id: string; files: string[] };
+
+export interface SpawnThreadRequest {
+  objective: string;
+  title?: string;
+  parent_id?: string | null;
+  capabilities?: string[];
+  binding_kind?: string;
+  binding_data?: string | null;
+}
+
+export interface CommentTarget {
+  property?: string;
+  line_start?: number;
+  line_end?: number;
+}
+
+export interface Comment {
+  id: string;
+  project_id: number;
+  node_kind: string;
+  node_id: string;
+  target: CommentTarget | null;
+  body: string;
+  author: string;
+  posted_at: string;
+  resolved_at: string | null;
 }
 
 export interface Task {

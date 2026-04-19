@@ -1,5 +1,14 @@
 import { apiFetch, parseJson } from "@/lib/api/core";
-import type { ChatMessage, ChatSendResponse, ThreadDetail, ThreadSummary } from "@/lib/api/types";
+import type {
+  ChatMessage,
+  ChatSendResponse,
+  MergeResult,
+  SpawnThreadRequest,
+  SpawnedThread,
+  ThreadDetail,
+  ThreadInspection,
+  ThreadSummary,
+} from "@/lib/api/types";
 
 export async function listThreads(projectId: number): Promise<ThreadSummary[]> {
   const res = await apiFetch(`/projects/${projectId}/threads`);
@@ -43,6 +52,49 @@ export async function sendThreadMessage(
 
 export async function stopThreadChat(projectId: number, threadId: string): Promise<void> {
   const res = await apiFetch(`/projects/${projectId}/threads/${threadId}/chat/stop`, {
+    method: "POST",
+  });
+  await parseJson<{ ok: true }>(res);
+}
+
+export async function spawnThread(
+  projectId: number,
+  request: SpawnThreadRequest,
+): Promise<SpawnedThread> {
+  const res = await apiFetch(`/projects/${projectId}/spawn-thread`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+  return parseJson<SpawnedThread>(res);
+}
+
+export async function inspectThread(
+  projectId: number,
+  threadId: string,
+): Promise<ThreadInspection> {
+  const res = await apiFetch(`/projects/${projectId}/threads/${threadId}/inspect`);
+  return parseJson<ThreadInspection>(res);
+}
+
+export async function mergeThread(projectId: number, threadId: string): Promise<MergeResult> {
+  const res = await apiFetch(`/projects/${projectId}/threads/${threadId}/merge`, {
+    method: "POST",
+  });
+  return parseJson<MergeResult>(res);
+}
+
+export async function mergeThreadRetry(
+  projectId: number,
+  threadId: string,
+): Promise<MergeResult> {
+  const res = await apiFetch(`/projects/${projectId}/threads/${threadId}/merge/retry`, {
+    method: "POST",
+  });
+  return parseJson<MergeResult>(res);
+}
+
+export async function discardThread(projectId: number, threadId: string): Promise<void> {
+  const res = await apiFetch(`/projects/${projectId}/threads/${threadId}/discard`, {
     method: "POST",
   });
   await parseJson<{ ok: true }>(res);

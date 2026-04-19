@@ -1,5 +1,6 @@
 mod auth;
 mod canvas;
+mod comments;
 mod common;
 mod projects;
 mod settings;
@@ -132,6 +133,35 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
         .route(
             "/api/projects/{project_id}/threads/{thread_id}/chat/stop",
             post(threads::stop_thread_chat),
+        )
+        .route(
+            "/api/projects/{project_id}/spawn-thread",
+            post(threads::spawn_thread),
+        )
+        .route(
+            "/api/projects/{project_id}/threads/{thread_id}/inspect",
+            get(threads::inspect_thread),
+        )
+        .route(
+            "/api/projects/{project_id}/threads/{thread_id}/merge",
+            post(threads::merge_thread),
+        )
+        .route(
+            "/api/projects/{project_id}/threads/{thread_id}/merge/retry",
+            post(threads::merge_thread_retry),
+        )
+        .route(
+            "/api/projects/{project_id}/threads/{thread_id}/discard",
+            post(threads::discard_thread),
+        )
+        // Comments
+        .route(
+            "/api/projects/{project_id}/nodes/{kind}/{node_id}/comments",
+            get(comments::list_comments).post(comments::create_comment),
+        )
+        .route(
+            "/api/projects/{project_id}/comments/{comment_id}/resolve",
+            post(comments::resolve_comment),
         )
         // Tasks
         .route(

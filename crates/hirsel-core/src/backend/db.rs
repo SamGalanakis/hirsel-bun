@@ -54,16 +54,24 @@ const SCHEMA_MIGRATIONS: &[(&str, &str)] = &[
         include_str!("../../../../database/schema/0007_canvas.surql"),
     ),
     (
-        "0008_tasks",
-        include_str!("../../../../database/schema/0008_tasks.surql"),
-    ),
-    (
         "0009_queues",
         include_str!("../../../../database/schema/0009_queues.surql"),
     ),
     (
         "0010_project_recent_focus",
         include_str!("../../../../database/schema/0010_project_recent_focus.surql"),
+    ),
+    (
+        "0011_runtime_setting",
+        include_str!("../../../../database/schema/0011_runtime_setting.surql"),
+    ),
+    (
+        "0012_kg_comment",
+        include_str!("../../../../database/schema/0012_kg_comment.surql"),
+    ),
+    (
+        "0013_kg_read",
+        include_str!("../../../../database/schema/0013_kg_read.surql"),
     ),
 ];
 
@@ -90,6 +98,118 @@ async fn apply_schema(db: &DbClient) -> Result<(), String> {
             ));
         }
     }
+    migrate_tasks_into_threads(db).await?;
+    Ok(())
+}
+
+/// One-time data migration: lift any rows from the legacy `task` table into
+/// `shepherd_thread` with `binding_kind = 'task'`, then drop the table. Safe
+/// to re-run (no-op after the first invocation).
+async fn migrate_tasks_into_threads(db: &DbClient) -> Result<(), String> {
+    // SELECT then iterate; the `task` table may not exist anymore (on fresh
+    // databases), in which case SurrealDB returns empty and we move on.
+    let mut response = match db.query("SELECT * FROM task").await {
+        Ok(response) => response,
+        Err(_) => return Ok(()),
+    };
+    let rows: Vec<serde_json::Value> = match response.take(0) {
+        Ok(rows) => rows,
+        Err(_) => return Ok(()),
+    };
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    for row in &rows {
+        let task_id = row
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if task_id.is_empty() {
+            continue;
+        }
+        let project_id = row.get("project_id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let title = row
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(untitled)")
+            .to_string();
+        let title_lower = title.to_lowercase();
+        let status = row
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("todo")
+            .to_string();
+        let content = row
+            .get("content")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let review_json = row
+            .get("review_json")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let sort_order = row.get("sort_order").and_then(|v| v.as_i64()).unwrap_or(0);
+        let created_at = row
+            .get("created_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let updated_at = row
+            .get("updated_at")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        // Build thread record via explicit UPSERT so existing thread rows with
+        // the same id (if any) are preserved deterministically.
+        let _ = db
+            .query(
+                "UPSERT type::record('shepherd_thread', $tid) CONTENT {
+                    thread_id: $tid,
+                    project_id: $pid,
+                    title: $title,
+                    title_lower: $title_lower,
+                    objective: '',
+                    summary: '',
+                    status: $status,
+                    cwd: NONE,
+                    created_at: $created_at,
+                    updated_at: $updated_at,
+                    last_activity_at: $updated_at,
+                    archived_at: NONE,
+                    highlight: NONE,
+                    focused_task_id: NONE,
+                    parent_id: NONE,
+                    binding_kind: 'task',
+                    binding_data: NONE,
+                    capabilities: [],
+                    sort_order: $sort_order,
+                    final_output: NONE,
+                    merge_status: 'none',
+                    content: $content,
+                    review_json: $review_json
+                }",
+            )
+            .bind(("tid", task_id))
+            .bind(("pid", project_id))
+            .bind(("title", title))
+            .bind(("title_lower", title_lower))
+            .bind(("status", status))
+            .bind(("created_at", created_at))
+            .bind(("updated_at", updated_at))
+            .bind(("sort_order", sort_order))
+            .bind(("content", content))
+            .bind(("review_json", review_json))
+            .await;
+    }
+
+    // Drop the legacy table so it never comes back. Ignore errors (idempotent).
+    let _ = db.query("REMOVE TABLE task").await;
+    tracing::info!(
+        migrated = rows.len(),
+        "Migrated legacy tasks into shepherd_thread"
+    );
     Ok(())
 }
 

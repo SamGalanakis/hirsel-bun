@@ -101,11 +101,13 @@ mod tests {
             },
             mcp_servers: std::collections::BTreeMap::from([(
                 "example".to_string(),
-                McpServerConfig {
-                    command: vec!["uvx".to_string(), "example-mcp".to_string()],
-                    args: vec![],
+                McpServerConfig::Stdio {
+                    command: "uvx".to_string(),
+                    args: vec!["example-mcp".to_string()],
                     env: std::collections::BTreeMap::new(),
                     cwd: None,
+                    startup_timeout_ms: 0,
+                    call_timeout_ms: 0,
                 },
             )]),
         };

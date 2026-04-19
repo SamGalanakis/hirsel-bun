@@ -57,6 +57,23 @@ fn take_queued_turn(key: &str) -> Option<QueuedTurn> {
     turn
 }
 
+/// Whether a scope is currently running a turn. Exposed so spawn/await
+/// can detect turn completion.
+pub fn is_scope_active(scope_key: &str) -> bool {
+    active_scope_turns()
+        .lock()
+        .map(|set| set.contains(scope_key))
+        .unwrap_or(false)
+}
+
+/// Whether a scope has queued turns waiting to run.
+pub fn is_scope_queue_nonempty(scope_key: &str) -> bool {
+    QUEUED_TURNS
+        .lock()
+        .map(|map| map.get(scope_key).map(|q| !q.is_empty()).unwrap_or(false))
+        .unwrap_or(false)
+}
+
 // ---------------------------------------------------------------------------
 // Public response types
 // ---------------------------------------------------------------------------

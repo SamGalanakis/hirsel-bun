@@ -60,6 +60,17 @@ pub struct ApiThread {
     pub highlight: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub focused_task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    pub binding_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binding_data: Option<String>,
+    pub capabilities: Vec<String>,
+    pub merge_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub final_output: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -91,8 +102,8 @@ pub struct ApiWorkspaceSnapshot {
     pub threads: Vec<ApiThreadSummary>,
     pub thread_detail: Option<ApiThreadDetail>,
     pub thread_history: Vec<ApiChatMessage>,
-    pub focused_task: Option<crate::backend::tasks::Task>,
-    pub tasks: Vec<crate::backend::tasks::Task>,
+    pub focused_task: Option<crate::backend::server::web_routes::tasks::ApiTaskThread>,
+    pub tasks: Vec<crate::backend::server::web_routes::tasks::ApiTaskThread>,
 }
 
 pub fn to_api_project(project: &Project) -> ApiProject {
@@ -145,6 +156,13 @@ pub fn to_api_thread(thread: &ShepherdThread) -> ApiThread {
         last_activity_at: thread.last_activity_at.clone(),
         highlight: thread.highlight.clone(),
         focused_task_id: thread.focused_task_id.clone(),
+        parent_id: thread.parent_id.clone(),
+        binding_kind: thread.binding_kind.clone(),
+        binding_data: thread.binding_data.clone(),
+        capabilities: thread.capabilities.clone(),
+        merge_status: thread.merge_status.clone(),
+        workspace_path: thread.cwd.clone(),
+        final_output: thread.final_output.clone(),
     }
 }
 
