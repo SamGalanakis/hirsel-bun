@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/cn";
 import { resetCanvasLayout, drainCompanionActions } from "@/lib/api/canvas";
 import ChatSurface from "@/components/chat/ChatSurface";
+import JobsBrowser from "@/components/JobsBrowser";
 import JobsPanel from "@/components/JobsPanel";
 import SettingsForm from "@/components/SettingsForm";
 import { matchesAction } from "@/lib/keybindings";
@@ -320,6 +321,7 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
   const [sidebarDragging, setSidebarDragging] = createSignal(false);
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   const [projectSettingsOpen, setProjectSettingsOpen] = createSignal(false);
+  const [jobsBrowserOpen, setJobsBrowserOpen] = createSignal(false);
   const [input, setInput] = createSignal("");
   // Root/shepherd panel has its own input state so it doesn't collide with an open thread focus overlay
   const [rootInput, setRootInput] = createSignal("");
@@ -566,10 +568,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
         return;
       }
       if (matchesAction(event, "close-panel")) {
-        if (settingsOpen() || projectSettingsOpen()) {
+        if (settingsOpen() || projectSettingsOpen() || jobsBrowserOpen()) {
           event.preventDefault();
           setSettingsOpen(false);
           setProjectSettingsOpen(false);
+          setJobsBrowserOpen(false);
           return;
         }
         if (focusedThreadId()) {
@@ -1322,7 +1325,15 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
             {/* Sidebar bottom rail — background-jobs inspector etc. */}
             <Show when={!sidebarCollapsed()}>
               <div class="shrink-0 border-t border-border/40 px-2 py-2">
-                <JobsPanel projectId={props.projectId} />
+                <JobsPanel
+                  projectId={props.projectId}
+                  active={jobsBrowserOpen()}
+                  onOpen={() => {
+                    setSettingsOpen(false);
+                    setProjectSettingsOpen(false);
+                    setJobsBrowserOpen(true);
+                  }}
+                />
               </div>
             </Show>
           </nav>
@@ -1382,7 +1393,16 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     {project()?.name ?? "Project"}
                   </span>
                 </Show>
-                <Show when={!settingsOpen() && !projectSettingsOpen()}>
+                <Show when={jobsBrowserOpen()}>
+                  <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-brand/80">
+                    Librarian Jobs
+                  </span>
+                  <span class="h-3 w-px bg-border/40" aria-hidden="true" />
+                  <span class="truncate text-[13px] font-medium text-foreground">
+                    {project()?.name ?? "Project"}
+                  </span>
+                </Show>
+                <Show when={!settingsOpen() && !projectSettingsOpen() && !jobsBrowserOpen()}>
                   <Show when={threadId()}>
                     <span class="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground/70">
                       Thread
@@ -1403,11 +1423,11 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                     {activeModel()}
                   </button>
                 </Show>
-                <Show when={settingsOpen() || projectSettingsOpen()}>
+                <Show when={settingsOpen() || projectSettingsOpen() || jobsBrowserOpen()}>
                   <button
                     type="button"
                     class="ml-auto flex h-8 w-8 items-center justify-center text-muted-foreground/70 transition-colors hover:text-foreground"
-                    onClick={() => { setSettingsOpen(false); setProjectSettingsOpen(false); }}
+                    onClick={() => { setSettingsOpen(false); setProjectSettingsOpen(false); setJobsBrowserOpen(false); }}
                     title="Close (Esc)"
                     aria-label="Close"
                   >
@@ -1433,9 +1453,12 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
               </div>
 
               <Show
-                when={!settingsOpen() && !projectSettingsOpen()}
+                when={!settingsOpen() && !projectSettingsOpen() && !jobsBrowserOpen()}
                 fallback={
                   <div class="flex-1 overflow-y-auto chassis-scroll">
+                    <Show when={jobsBrowserOpen()}>
+                      <JobsBrowser projectId={props.projectId} />
+                    </Show>
                     <Show when={settingsOpen()}>
                       <div class="mx-auto max-w-2xl px-8 py-8">
                         <SettingsForm onClose={() => setSettingsOpen(false)} />
