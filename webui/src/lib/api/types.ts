@@ -356,6 +356,13 @@ export interface LibrarianJobSummary {
   prompt_truncated: boolean;
   created_at: string | null;
   updated_at: string | null;
+  /** Trigger reasons parsed from the prompt (verify jobs only). */
+  reasons: string[];
+  /** `ShepherdMessageChunk[]` JSON the librarian produced while running. */
+  response_chunks_json: string | null;
+  /** Target node for verify jobs (parsed from `[verify-node:kind:id]`). */
+  target_node_kind: string | null;
+  target_node_id: string | null;
 }
 
 export type StalenessTier =

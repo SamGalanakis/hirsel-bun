@@ -81,6 +81,10 @@ const SCHEMA_MIGRATIONS: &[(&str, &str)] = &[
         "0015_kg_chunk_job",
         include_str!("../../../../database/schema/0015_kg_chunk_job.surql"),
     ),
+    (
+        "0016_librarian_job_transcript",
+        include_str!("../../../../database/schema/0016_librarian_job_transcript.surql"),
+    ),
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, SurrealValue)]

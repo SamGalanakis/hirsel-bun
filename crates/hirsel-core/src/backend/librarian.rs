@@ -453,6 +453,9 @@ struct LibrarianJobRow {
     #[serde(default)]
     #[allow(dead_code)]
     updated_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    response_chunks_json: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -576,6 +579,60 @@ pub struct LibrarianJobSummary {
     pub prompt_truncated: bool,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    /// Trigger reasons parsed from the prompt — one entry per T1–T5 /
+    /// A1–A4 fire. Lets the UI show chips like `user_request`,
+    /// `contradiction_with:task:abc`, `workspace_merge:...:src/foo.rs`.
+    pub reasons: Vec<String>,
+    /// `ShepherdMessageChunk[]` JSON captured while the librarian ran.
+    /// `None` for queued / running jobs and for older rows.
+    pub response_chunks_json: Option<String>,
+    /// Structured node target for verify jobs (parsed from the prompt's
+    /// `[verify-node:kind:node_id]` marker). `None` for sync/lint/digest.
+    pub target_node_kind: Option<String>,
+    pub target_node_id: Option<String>,
+}
+
+/// Pull the `- reason` bullets that follow the `Reasons (most recent first):`
+/// header in a verify-job prompt. Other job kinds skip this entirely.
+fn parse_reasons(prompt: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut in_block = false;
+    for line in prompt.lines() {
+        if !in_block {
+            if line.trim_start().starts_with("Reasons (most recent first):") {
+                in_block = true;
+            }
+            continue;
+        }
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("- ") {
+            let cleaned = rest.trim();
+            if !cleaned.is_empty() {
+                out.push(cleaned.to_string());
+            }
+            continue;
+        }
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Any non-bullet non-empty line ends the reasons block.
+        break;
+    }
+    out
+}
+
+/// Extract `(kind, node_id)` from the `[verify-node:kind:node_id]` marker
+/// at the top of verify-job prompts.
+fn parse_verify_target(prompt: &str) -> Option<(String, String)> {
+    let first = prompt.lines().next()?.trim();
+    let inner = first.strip_prefix("[verify-node:")?.strip_suffix(']')?;
+    let mut parts = inner.splitn(2, ':');
+    let kind = parts.next()?.to_string();
+    let node_id = parts.next()?.to_string();
+    if kind.is_empty() || node_id.is_empty() {
+        return None;
+    }
+    Some((kind, node_id))
 }
 
 /// Recent librarian jobs for a project, newest first.
@@ -599,6 +656,8 @@ pub async fn list_recent_jobs(
     Ok(rows
         .into_iter()
         .map(|row| {
+            let reasons = parse_reasons(&row.prompt);
+            let target = parse_verify_target(&row.prompt);
             let (prompt, truncated) = if row.prompt.chars().count() > prompt_char_budget {
                 let snippet: String = row.prompt.chars().take(prompt_char_budget).collect();
                 (snippet, true)
@@ -620,6 +679,10 @@ pub async fn list_recent_jobs(
                 prompt_truncated: truncated,
                 created_at: row.created_at.map(|t| t.to_rfc3339()),
                 updated_at: row.updated_at.map(|t| t.to_rfc3339()),
+                reasons,
+                response_chunks_json: row.response_chunks_json,
+                target_node_kind: target.as_ref().map(|(k, _)| k.clone()),
+                target_node_id: target.as_ref().map(|(_, n)| n.clone()),
             }
         })
         .collect())
@@ -1073,6 +1136,7 @@ async fn run_orphan_workspace_sweep() -> Result<(), String> {
 // ── Session runner ──
 
 async fn run_librarian_job(job: LibrarianJob) -> Result<String, String> {
+    let job_id = job.id.clone();
     let LibrarianJob {
         project_id,
         prompt,
@@ -1127,7 +1191,7 @@ async fn run_librarian_job(job: LibrarianJob) -> Result<String, String> {
         .await
         .map_err(|e| format!("failed to create librarian runtime: {e}"))?;
 
-    let sink = NoopEventSink;
+    let sink = CapturingEventSink::default();
     let cancel = CancellationToken::new();
     let turn_input = TurnInput {
         items: vec![InputItem::Text { text: prompt }],
@@ -1136,18 +1200,39 @@ async fn run_librarian_job(job: LibrarianJob) -> Result<String, String> {
         user_input: None,
     };
 
-    let turn = tokio::time::timeout(
+    let turn_result = tokio::time::timeout(
         Duration::from_secs(600),
         runtime.stream_turn(turn_input, &sink, cancel.clone()),
     )
-    .await
-    .map_err(|_| {
-        cancel.cancel();
-        "librarian session timed out after 600s".to_string()
-    })?
-    .map_err(|e| format!("librarian turn failed: {e}"))?;
+    .await;
+
+    // Persist whatever we captured, win or lose. Rendering needs the
+    // trace even when the job errors.
+    let chunks = sink.into_chunks().await;
+    if !chunks.is_empty() {
+        if let Ok(json) = serde_json::to_string(&chunks) {
+            let _ = persist_job_transcript(&job_id, &json).await;
+        }
+    }
+
+    let turn = turn_result
+        .map_err(|_| {
+            cancel.cancel();
+            "librarian session timed out after 600s".to_string()
+        })?
+        .map_err(|e| format!("librarian turn failed: {e}"))?;
 
     Ok(turn.assistant_output.safe_text.trim().to_string())
+}
+
+async fn persist_job_transcript(id: &RecordId, chunks_json: &str) -> Result<(), String> {
+    let db = global_db().await;
+    db.query("UPDATE $id SET response_chunks_json = $chunks")
+        .bind(("id", id.clone()))
+        .bind(("chunks", chunks_json.to_string()))
+        .await
+        .map_err(|e| format!("persist transcript: {e}"))?;
+    Ok(())
 }
 
 fn build_runtime_services(
@@ -1219,11 +1304,89 @@ async fn resolve_project_workspace(project_id: i64) -> Option<PathBuf> {
     None
 }
 
-struct NoopEventSink;
+/// Capturing sink that collects the librarian's turn into a chunk list
+/// we can persist back onto `librarian_job.response_chunks_json` and
+/// render in the UI inspector with the shared chat components.
+#[derive(Default)]
+struct CapturingEventSink {
+    inner: tokio::sync::Mutex<CapturingEventState>,
+}
+
+#[derive(Default)]
+struct CapturingEventState {
+    chunks: Vec<serde_json::Value>,
+    text_buffer: String,
+}
+
+impl CapturingEventState {
+    fn flush_text(&mut self) {
+        let trimmed = self.text_buffer.trim();
+        if !trimmed.is_empty() {
+            self.chunks.push(json!({
+                "type": "text",
+                "content": trimmed.to_string(),
+            }));
+        }
+        self.text_buffer.clear();
+    }
+}
+
+impl CapturingEventSink {
+    async fn into_chunks(self) -> Vec<serde_json::Value> {
+        let mut state = self.inner.into_inner();
+        state.flush_text();
+        state.chunks
+    }
+}
 
 #[async_trait]
-impl EventSink for NoopEventSink {
-    async fn emit(&self, _event: SessionEvent) {}
+impl EventSink for CapturingEventSink {
+    async fn emit(&self, event: SessionEvent) {
+        let mut state = self.inner.lock().await;
+        match event {
+            SessionEvent::TextDelta { content } => {
+                state.text_buffer.push_str(&content);
+            }
+            SessionEvent::ToolCall {
+                call_id,
+                name,
+                args,
+                result,
+                success,
+                ..
+            } => {
+                state.flush_text();
+                state.chunks.push(json!({
+                    "type": "tool",
+                    "id": call_id.unwrap_or_else(|| name.clone()),
+                    "title": name,
+                    "kind": serde_json::Value::Null,
+                    "status": if success { "completed" } else { "failed" },
+                    "input": serde_json::to_string(&args).ok(),
+                    "output": serde_json::to_string(&result).ok(),
+                }));
+            }
+            SessionEvent::Message { text, kind } => {
+                state.flush_text();
+                state.chunks.push(json!({
+                    "type": "notice",
+                    "tone": kind,
+                    "title": serde_json::Value::Null,
+                    "content": text,
+                }));
+            }
+            SessionEvent::Error { message, .. } => {
+                state.flush_text();
+                state.chunks.push(json!({
+                    "type": "notice",
+                    "tone": "error",
+                    "title": "Error",
+                    "content": message,
+                }));
+            }
+            _ => {}
+        }
+    }
 }
 
 // ── System prompt / prompt contributions ──
