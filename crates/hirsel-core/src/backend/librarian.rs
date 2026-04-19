@@ -410,9 +410,7 @@ async fn run_comment_summariser_sweep() -> Result<(), String> {
     )
     .await;
 
-    let store = CommentStore::open()
-        .await
-        .map_err(|e| e.to_string())?;
+    let store = CommentStore::open().await.map_err(|e| e.to_string())?;
     let counts = store
         .unresolved_counts_by_node()
         .await
@@ -464,7 +462,10 @@ fn compose_comment_summary(comments: &[crate::backend::kg_comment::Comment]) -> 
         std::collections::BTreeMap::new();
     for c in comments {
         let first_line = c.body.lines().next().unwrap_or(&c.body);
-        by_author.entry(c.author.clone()).or_default().push(first_line);
+        by_author
+            .entry(c.author.clone())
+            .or_default()
+            .push(first_line);
     }
     let mut out = format!(
         "Summary of {} unresolved comments (auto-rolled up by librarian):\n",
@@ -575,12 +576,8 @@ async fn run_orphan_workspace_sweep() -> Result<(), String> {
                         continue;
                     }
                 }
-                let _ = store
-                    .set_thread_workspace_path(thread_id, None)
-                    .await;
-                let _ = store
-                    .set_thread_merge_status(thread_id, "discarded")
-                    .await;
+                let _ = store.set_thread_workspace_path(thread_id, None).await;
+                let _ = store.set_thread_merge_status(thread_id, "discarded").await;
                 tracing::info!(
                     thread_id,
                     ?workspace_path,
@@ -591,9 +588,7 @@ async fn run_orphan_workspace_sweep() -> Result<(), String> {
                 // "prompt" mode: just flag the merge_status so the UI
                 // surfaces the orphan for user action. Actual discard
                 // happens via explicit discard_thread.
-                let _ = store
-                    .set_thread_merge_status(thread_id, "orphaned")
-                    .await;
+                let _ = store.set_thread_merge_status(thread_id, "orphaned").await;
                 tracing::info!(
                     thread_id,
                     ?workspace_path,

@@ -290,10 +290,7 @@ impl TaskToolProvider {
         });
 
         match thread_store
-            .set_task_thread_review(
-                task_id,
-                &serde_json::to_string(&review).unwrap_or_default(),
-            )
+            .set_task_thread_review(task_id, &serde_json::to_string(&review).unwrap_or_default())
             .await
         {
             Ok(task) => ToolResult::ok(json!({

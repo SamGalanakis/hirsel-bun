@@ -50,32 +50,23 @@ async fn audit_enabled() -> bool {
     .await
 }
 
-async fn audit_one(
-    project_id: Option<i64>,
-    session_id: &str,
-    args: &Value,
-) -> Result<(), String> {
+async fn audit_one(project_id: Option<i64>, session_id: &str, args: &Value) -> Result<(), String> {
     let command = args
         .get("command")
         .and_then(|v| v.as_str())
         .or_else(|| args.get("cmd").and_then(|v| v.as_str()))
         .map(|s| s.to_string())
         .or_else(|| {
-            args.get("argv")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                })
+            args.get("argv").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            })
         })
         .unwrap_or_else(|| "(unknown)".to_string());
 
-    let cwd = args
-        .get("cwd")
-        .and_then(|v| v.as_str())
-        .map(PathBuf::from);
+    let cwd = args.get("cwd").and_then(|v| v.as_str()).map(PathBuf::from);
 
     let roots = match project_id {
         Some(pid) => workspace_roots(pid).await,
@@ -132,7 +123,13 @@ async fn audit_log_path(session_id: &str) -> PathBuf {
         .join(".hirsel/audit");
     let safe_session = session_id
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     base.join(format!("{safe_session}.log"))
 }

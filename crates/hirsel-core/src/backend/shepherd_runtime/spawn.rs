@@ -17,9 +17,7 @@ use crate::backend::shepherd_chat::ShepherdChatStore;
 use crate::backend::workspace_copy;
 use crate::backend::{ShepherdThread, ShepherdThreadStore, BINDING_KIND_FREE};
 
-use super::commands::{
-    is_scope_active, is_scope_queue_nonempty, send_thread_message,
-};
+use super::commands::{is_scope_active, is_scope_queue_nonempty, send_thread_message};
 use super::types::scope_key as make_scope_key;
 use super::types::ShepherdScope;
 
@@ -85,10 +83,7 @@ pub async fn spawn_thread(
         let handle = workspace_copy::create_copy(&tmp_id, &canonical)
             .await
             .map_err(|e| format!("failed to create workspace copy: {e}"))?;
-        (
-            Some(handle.copy_dir.display().to_string()),
-            Some(handle),
-        )
+        (Some(handle.copy_dir.display().to_string()), Some(handle))
     } else {
         (None, None)
     };
@@ -275,17 +270,16 @@ pub async fn inspect_thread(
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum MergeResult {
-    Merged { thread_id: String },
+    Merged {
+        thread_id: String,
+    },
     Conflict {
         thread_id: String,
         files: Vec<String>,
     },
 }
 
-pub async fn merge_thread(
-    project_id: i64,
-    thread_id: String,
-) -> Result<MergeResult, String> {
+pub async fn merge_thread(project_id: i64, thread_id: String) -> Result<MergeResult, String> {
     let store = ShepherdThreadStore::open()
         .await
         .map_err(|e| e.to_string())?;
@@ -313,24 +307,17 @@ pub async fn merge_thread(
 
     Ok(match outcome {
         workspace_copy::MergeOutcome::Merged => MergeResult::Merged { thread_id },
-        workspace_copy::MergeOutcome::Conflict { files } => MergeResult::Conflict {
-            thread_id,
-            files,
-        },
+        workspace_copy::MergeOutcome::Conflict { files } => {
+            MergeResult::Conflict { thread_id, files }
+        }
     })
 }
 
-pub async fn merge_thread_retry(
-    project_id: i64,
-    thread_id: String,
-) -> Result<MergeResult, String> {
+pub async fn merge_thread_retry(project_id: i64, thread_id: String) -> Result<MergeResult, String> {
     merge_thread(project_id, thread_id).await
 }
 
-pub async fn discard_thread(
-    project_id: i64,
-    thread_id: String,
-) -> Result<(), String> {
+pub async fn discard_thread(project_id: i64, thread_id: String) -> Result<(), String> {
     let store = ShepherdThreadStore::open()
         .await
         .map_err(|e| e.to_string())?;
@@ -345,13 +332,9 @@ pub async fn discard_thread(
         if let Ok(copy) = rebuild_copy_handle(project_id, &thread).await {
             let _ = workspace_copy::discard(&copy).await;
         }
-        let _ = store
-            .set_thread_workspace_path(&thread_id, None)
-            .await;
+        let _ = store.set_thread_workspace_path(&thread_id, None).await;
     }
-    let _ = store
-        .set_thread_merge_status(&thread_id, "discarded")
-        .await;
+    let _ = store.set_thread_merge_status(&thread_id, "discarded").await;
     Ok(())
 }
 
@@ -373,11 +356,12 @@ async fn canonical_workspace_for(project_id: i64) -> Result<PathBuf, String> {
     {
         return Ok(PathBuf::from(cwd));
     }
-    if let Some(ws) = project
-        .workspaces
-        .iter()
-        .find(|w| w.path.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false))
-    {
+    if let Some(ws) = project.workspaces.iter().find(|w| {
+        w.path
+            .as_deref()
+            .map(|p| !p.trim().is_empty())
+            .unwrap_or(false)
+    }) {
         return Ok(PathBuf::from(ws.path.clone().unwrap_or_default()));
     }
     Err("project has no resolvable workspace path".to_string())
@@ -392,10 +376,7 @@ fn thread_scope(thread: &ShepherdThread) -> ShepherdScope {
     }
 }
 
-async fn latest_assistant_text(
-    project_id: i64,
-    scope_key: &str,
-) -> Result<Option<String>, String> {
+async fn latest_assistant_text(project_id: i64, scope_key: &str) -> Result<Option<String>, String> {
     let store = ShepherdChatStore::open().await.map_err(|e| e.to_string())?;
     let messages = store
         .get_scope_messages(Some(project_id), Some(scope_key), 32)

@@ -224,9 +224,7 @@ impl CommentStore {
         let db = self.db().await;
         let now = utc_now();
         for id in originals {
-            let mut record: CommentRecord = match db
-                .select((KG_COMMENT_TABLE, id.as_str()))
-                .await?
+            let mut record: CommentRecord = match db.select((KG_COMMENT_TABLE, id.as_str())).await?
             {
                 Some(r) => r,
                 None => continue,

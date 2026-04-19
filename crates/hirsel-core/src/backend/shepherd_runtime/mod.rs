@@ -23,16 +23,16 @@ pub use commands::{
     send_scope_message, send_shepherd_message, send_thread_message, stop_scope_activity,
     SendShepherdMessageResponse,
 };
-pub use spawn::{
-    await_thread, discard_thread, inspect_thread, merge_thread, merge_thread_retry, spawn_thread,
-    spawn_thread_batch, AwaitOutcome, MergeResult, SpawnThreadRequest, SpawnedThread,
-    ThreadInspection,
-};
 pub use queries::{
     get_project_threads, get_scope_activity, get_shepherd_activity, get_shepherd_conversation,
     get_shepherd_history, get_thread_activity, get_thread_conversation, ShepherdScopeActivity,
 };
 pub use session::ShepherdScopeSession;
+pub use spawn::{
+    await_thread, discard_thread, inspect_thread, merge_thread, merge_thread_retry, spawn_thread,
+    spawn_thread_batch, AwaitOutcome, MergeResult, SpawnThreadRequest, SpawnedThread,
+    ThreadInspection,
+};
 pub use types::{ShepherdMessageChunk, ShepherdScope, ShepherdTaskFocus};
 
 pub async fn scrub_stale_startup_state() -> Result<(), String> {

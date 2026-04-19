@@ -222,9 +222,7 @@ pub struct DiffStats {
 /// commit it was taken from.
 pub async fn inspect(copy: &WorkspaceCopy) -> Result<DiffStats, String> {
     if copy.base_commit.is_none() {
-        return Err(
-            "workspace is not a git repo; diff/merge requires git".to_string(),
-        );
+        return Err("workspace is not a git repo; diff/merge requires git".to_string());
     }
     git_stage_intent_to_add(&copy.copy_dir).await?;
     let files = git_numstat(&copy.copy_dir, "HEAD").await?;
@@ -262,9 +260,7 @@ pub async fn merge_with(
     prune_on_success: bool,
 ) -> Result<MergeOutcome, String> {
     let Some(base_commit) = copy.base_commit.clone() else {
-        return Err(
-            "workspace is not a git repo; diff/merge requires git".to_string(),
-        );
+        return Err("workspace is not a git repo; diff/merge requires git".to_string());
     };
 
     let lock = lock_for(&copy.canonical);

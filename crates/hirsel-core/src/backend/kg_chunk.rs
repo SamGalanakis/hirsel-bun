@@ -100,12 +100,13 @@ async fn chunk_subgraph_bounded(
     let db = global_db().await;
 
     // Verify root exists and fetch the initial node.
-    let root = load_node(project_id, root_kind, root_id).await?.ok_or(
-        ChunkError::RootNotFound {
-            kind: root_kind.to_string(),
-            node_id: root_id.to_string(),
-        },
-    )?;
+    let root =
+        load_node(project_id, root_kind, root_id)
+            .await?
+            .ok_or(ChunkError::RootNotFound {
+                kind: root_kind.to_string(),
+                node_id: root_id.to_string(),
+            })?;
 
     let mut queue: VecDeque<ChunkNode> = VecDeque::new();
     queue.push_back(root);

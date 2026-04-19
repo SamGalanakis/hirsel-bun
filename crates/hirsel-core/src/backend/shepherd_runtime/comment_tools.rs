@@ -126,7 +126,9 @@ impl CommentToolProvider {
         let target = match args.get("target") {
             Some(v) if !v.is_null() => match serde_json::from_value::<CommentTarget>(v.clone()) {
                 Ok(t) => Some(t),
-                Err(e) => return ToolResult::err(json!({ "error": format!("invalid target: {e}") })),
+                Err(e) => {
+                    return ToolResult::err(json!({ "error": format!("invalid target: {e}") }))
+                }
             },
             _ => None,
         };
@@ -169,7 +171,13 @@ impl CommentToolProvider {
             Err(e) => return ToolResult::err(json!({ "error": e.to_string() })),
         };
         match store
-            .list_for_node(self.project_id, kind, node_id, effective_limit, only_unresolved)
+            .list_for_node(
+                self.project_id,
+                kind,
+                node_id,
+                effective_limit,
+                only_unresolved,
+            )
             .await
         {
             Ok(comments) => ToolResult::ok(json!({
@@ -251,10 +259,9 @@ pub(super) fn comment_tool_plugin_factory(
     Arc::new(StaticPluginFactory::new(
         "graph_comments",
         PluginSpec::new()
-            .with_tool_provider(Arc::new(CommentToolProvider {
-                project_id,
-                author,
-            }) as Arc<dyn ToolProvider>)
+            .with_tool_provider(
+                Arc::new(CommentToolProvider { project_id, author }) as Arc<dyn ToolProvider>
+            )
             .with_prompt_contributor(Arc::new(|_ctx| {
                 Box::pin(async { Ok(prompt_contributions()) })
             })),

@@ -38,7 +38,14 @@ pub async fn create_comment(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let author = body.author.unwrap_or_else(|| "user".to_string());
     let comment = store
-        .add(project_id, &kind, &node_id, &body.body, &author, body.target)
+        .add(
+            project_id,
+            &kind,
+            &node_id,
+            &body.body,
+            &author,
+            body.target,
+        )
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     Ok(Json(comment))

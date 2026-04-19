@@ -67,10 +67,7 @@ async fn recent_node_pairs_for_thread(thread_id: &str, limit: usize) -> Vec<(Str
         Err(_) => return Vec::new(),
     };
     match store.recent_for_thread(thread_id, limit).await {
-        Ok(rows) => rows
-            .into_iter()
-            .map(|r| (r.node_kind, r.node_id))
-            .collect(),
+        Ok(rows) => rows.into_iter().map(|r| (r.node_kind, r.node_id)).collect(),
         Err(_) => Vec::new(),
     }
 }
