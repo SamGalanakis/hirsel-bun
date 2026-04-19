@@ -368,8 +368,11 @@ async fn enqueue_workspace_merge_verifies(project_id: i64, thread_id: &str, path
         }
         let Ok(mut response) = db
             .query(
+                // kg_node's records are keyed by `[project_id, kind, node_id]`
+                // and the table is SCHEMALESS — it has no `project_id` field,
+                // so we filter on the composite id prefix.
                 "SELECT kind, node_id FROM kg_node \
-                 WHERE project_id = $pid AND superseded_at = NONE AND content @2@ $path \
+                 WHERE id[0] = $pid AND superseded_at = NONE AND content @2@ $path \
                  LIMIT 50",
             )
             .bind(("pid", project_id))

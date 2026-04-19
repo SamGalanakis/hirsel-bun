@@ -492,11 +492,16 @@ impl LibrarianJobStore {
         prompt: &str,
     ) -> Result<RecordId, String> {
         let db = global_db().await;
+        // `CREATE ... RETURN AFTER` returns the full record so the row
+        // deserialises cleanly into `LibrarianJobRow`. Earlier versions
+        // truncated the projection to just `id`, which silently failed
+        // deserialisation and surfaced as "enqueue returned no row"
+        // even when the insert itself succeeded.
         let mut response = db
             .query(
                 "CREATE librarian_job CONTENT { \
                  project_id: $project_id, kind: $kind, prompt: $prompt, status: 'queued' \
-                 } RETURN id;",
+                 } RETURN AFTER;",
             )
             .bind(("project_id", project_id))
             .bind(("kind", kind.as_str().to_string()))
@@ -693,7 +698,7 @@ pub async fn run_ambient_staleness_sweep(project_id: i64) -> Result<(), String> 
         let reads_recent: i64 = match db
             .query(
                 "SELECT count() AS c FROM kg_read \
-                 WHERE project_id = $pid AND kind = $kind AND node_id = $nid \
+                 WHERE project_id = $pid AND node_kind = $kind AND node_id = $nid \
                    AND read_at > $cutoff GROUP ALL;",
             )
             .bind(("pid", project_id))
@@ -722,7 +727,7 @@ pub async fn run_ambient_staleness_sweep(project_id: i64) -> Result<(), String> 
         let distinct_threads: i64 = match db
             .query(
                 "SELECT count(array::distinct(thread_id)) AS c FROM kg_read \
-                 WHERE project_id = $pid AND kind = $kind AND node_id = $nid \
+                 WHERE project_id = $pid AND node_kind = $kind AND node_id = $nid \
                    AND read_at > $cutoff AND thread_id != NONE GROUP ALL;",
             )
             .bind(("pid", project_id))
