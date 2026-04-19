@@ -14,6 +14,7 @@ import {
 import { cn } from "@/lib/cn";
 import { resetCanvasLayout, drainCompanionActions } from "@/lib/api/canvas";
 import ChatSurface from "@/components/chat/ChatSurface";
+import JobsPanel from "@/components/JobsPanel";
 import SettingsForm from "@/components/SettingsForm";
 import { matchesAction } from "@/lib/keybindings";
 import {
@@ -1317,6 +1318,13 @@ const WorkspacePage: Component<WorkspacePageProps> = (props) => {
                 </For>
               </div>
             </div>
+
+            {/* Sidebar bottom rail — background-jobs inspector etc. */}
+            <Show when={!sidebarCollapsed()}>
+              <div class="shrink-0 border-t border-border/40 px-2 py-2">
+                <JobsPanel projectId={props.projectId} />
+              </div>
+            </Show>
           </nav>
 
           <Show when={!compactViewport()}>
