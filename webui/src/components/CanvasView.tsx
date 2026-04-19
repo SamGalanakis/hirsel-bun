@@ -19,7 +19,12 @@ import {
   createCanvasNode,
   updateCanvasNode,
 } from "@/lib/api/canvas";
-import { recordNodeFocus, requestNodeVerify, runStalenessSweep } from "@/lib/api/projects";
+import {
+  listLibrarianJobs,
+  recordNodeFocus,
+  requestNodeVerify,
+  runStalenessSweep,
+} from "@/lib/api/projects";
 import { dispatchTask, reviewAction } from "@/lib/api/tasks";
 import { cn } from "@/lib/cn";
 import { renderNodeMarkdown } from "@/lib/markdown";
@@ -108,6 +113,12 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
   const [expandedId, setExpandedId] = createSignal<string | null>(null);
   const [focusedKey, setFocusedKey] = createSignal<string | null>(null);
   const [trayOpen, setTrayOpen] = createSignal(false);
+  const [jobsOpen, setJobsOpen] = createSignal(false);
+  const [jobsList, setJobsList] = createSignal<
+    import("@/lib/api/types").LibrarianJobSummary[]
+  >([]);
+  const [jobsLoading, setJobsLoading] = createSignal(false);
+  const [jobsExpanded, setJobsExpanded] = createSignal<string | null>(null);
 
   const welcomeKey = () => `hirsel_canvas_welcomed_${props.projectId}`;
   const [showWelcomeBanner, setShowWelcomeBanner] = createSignal(
@@ -1461,6 +1472,89 @@ const CanvasView: Component<CanvasViewProps> = (props) => {
           >
             Sweep
           </button>
+          <div class="canvas-view-menu canvas-jobs-menu">
+            <button
+              class="canvas-toolbar-btn"
+              title="Recent librarian jobs"
+              onClick={async () => {
+                const opening = !jobsOpen();
+                setJobsOpen(opening);
+                if (opening) {
+                  setJobsLoading(true);
+                  try {
+                    setJobsList(await listLibrarianJobs(props.projectId, 50));
+                  } catch {
+                    setJobsList([]);
+                  } finally {
+                    setJobsLoading(false);
+                  }
+                }
+              }}
+              aria-expanded={jobsOpen()}
+            >
+              Jobs
+            </button>
+            <Show when={jobsOpen()}>
+              <div class="canvas-jobs-dropdown" onPointerDown={(e) => e.stopPropagation()}>
+                <div class="canvas-jobs-header">
+                  <span>Librarian jobs ({jobsList().length})</span>
+                  <button
+                    type="button"
+                    class="canvas-jobs-refresh"
+                    title="Refresh"
+                    onClick={async () => {
+                      setJobsLoading(true);
+                      try {
+                        setJobsList(await listLibrarianJobs(props.projectId, 50));
+                      } catch {
+                        setJobsList([]);
+                      } finally {
+                        setJobsLoading(false);
+                      }
+                    }}
+                  >
+                    ↻
+                  </button>
+                </div>
+                <Show when={jobsLoading() && jobsList().length === 0}>
+                  <div class="canvas-jobs-empty">Loading…</div>
+                </Show>
+                <Show when={!jobsLoading() && jobsList().length === 0}>
+                  <div class="canvas-jobs-empty">No jobs yet.</div>
+                </Show>
+                <For each={jobsList()}>
+                  {(job) => (
+                    <div
+                      class="canvas-jobs-item"
+                      data-status={job.status}
+                      onClick={() =>
+                        setJobsExpanded((prev) => (prev === job.id ? null : job.id))
+                      }
+                    >
+                      <div class="canvas-jobs-item-head">
+                        <span class="canvas-jobs-item-kind">{job.kind}</span>
+                        <span class="canvas-jobs-item-status">{job.status}</span>
+                        <span class="canvas-jobs-item-time">
+                          {job.created_at
+                            ? new Date(job.created_at).toLocaleTimeString()
+                            : "—"}
+                        </span>
+                      </div>
+                      <Show when={job.last_error}>
+                        <div class="canvas-jobs-item-error">{job.last_error}</div>
+                      </Show>
+                      <Show when={jobsExpanded() === job.id}>
+                        <pre class="canvas-jobs-item-prompt">
+                          {job.prompt}
+                          {job.prompt_truncated ? "\n…(truncated)" : ""}
+                        </pre>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
         </div>
       </div>
 

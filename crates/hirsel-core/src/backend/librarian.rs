@@ -562,6 +562,69 @@ impl LibrarianJobStore {
     }
 }
 
+/// Public snapshot of a librarian job for surfacing in the UI's
+/// background-jobs inspector. `prompt` is truncated at the API boundary
+/// so a long verify-prompt doesn't blow the response up.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LibrarianJobSummary {
+    pub id: String,
+    pub project_id: i64,
+    pub kind: String,
+    pub status: String,
+    pub last_error: Option<String>,
+    pub prompt: String,
+    pub prompt_truncated: bool,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// Recent librarian jobs for a project, newest first.
+pub async fn list_recent_jobs(
+    project_id: i64,
+    limit: usize,
+    prompt_char_budget: usize,
+) -> Result<Vec<LibrarianJobSummary>, String> {
+    let db = global_db().await;
+    let limit = limit.clamp(1, 500);
+    let mut response = db
+        .query(
+            "SELECT * FROM librarian_job WHERE project_id = $pid \
+             ORDER BY created_at DESC LIMIT $limit",
+        )
+        .bind(("pid", project_id))
+        .bind(("limit", limit as i64))
+        .await
+        .map_err(|e| format!("list librarian jobs: {e}"))?;
+    let rows: Vec<LibrarianJobRow> = response.take(0).unwrap_or_default();
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let (prompt, truncated) = if row.prompt.chars().count() > prompt_char_budget {
+                let snippet: String = row.prompt.chars().take(prompt_char_budget).collect();
+                (snippet, true)
+            } else {
+                (row.prompt, false)
+            };
+            LibrarianJobSummary {
+                id: match row.id.key {
+                    surrealdb::types::RecordIdKey::String(s) => s,
+                    surrealdb::types::RecordIdKey::Number(n) => n.to_string(),
+                    surrealdb::types::RecordIdKey::Uuid(u) => u.to_string(),
+                    other => format!("{other:?}"),
+                },
+                project_id: row.project_id,
+                kind: row.kind,
+                status: row.status,
+                last_error: row.last_error,
+                prompt,
+                prompt_truncated: truncated,
+                created_at: row.created_at.map(|t| t.to_rfc3339()),
+                updated_at: row.updated_at.map(|t| t.to_rfc3339()),
+            }
+        })
+        .collect())
+}
+
 // ── Worker loop ──
 
 /// Spawn the background librarian worker. Polls `librarian_job` and runs one

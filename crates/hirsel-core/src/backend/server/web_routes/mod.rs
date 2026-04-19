@@ -173,6 +173,11 @@ pub fn build_web_routes() -> Router<Arc<AppState>> {
             "/api/projects/{project_id}/staleness/sweep",
             post(projects::run_staleness_sweep),
         )
+        // Background jobs: inspector listing recent librarian jobs
+        .route(
+            "/api/projects/{project_id}/librarian-jobs",
+            get(projects::list_librarian_jobs),
+        )
         // Tasks
         .route(
             "/api/projects/{project_id}/tasks",
