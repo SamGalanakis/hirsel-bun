@@ -20,6 +20,7 @@ use tokio::time::sleep;
 use crate::backend::chunking::{self, ChunkingConfig, CHUNKER_VERSION};
 use crate::backend::db::{global_db, DbClient};
 use crate::backend::embeddings::{EmbeddingClient, CONTEXTUALIZER_VERSION, EMBEDDING_VERSION};
+use crate::backend::job_queue;
 use crate::backend::runtime_settings::{keys, Defaults, RuntimeSettings};
 
 const IDLE_BACKOFF: Duration = Duration::from_secs(2);
@@ -92,30 +93,6 @@ async fn claim_next(db: &DbClient) -> Result<Option<ChunkJobRow>, String> {
         .await
         .map_err(|e| format!("mark chunk job running: {e}"))?;
     Ok(Some(row))
-}
-
-async fn mark_finished(db: &DbClient, id: &RecordId) -> Result<(), String> {
-    db.query("UPDATE $id SET status = 'completed', last_error = NONE")
-        .bind(("id", id.clone()))
-        .await
-        .map_err(|e| format!("mark chunk job completed: {e}"))?;
-    Ok(())
-}
-
-async fn mark_failed(db: &DbClient, id: &RecordId, error: &str) -> Result<(), String> {
-    db.query("UPDATE $id SET status = 'failed', last_error = $error")
-        .bind(("id", id.clone()))
-        .bind(("error", error.to_string()))
-        .await
-        .map_err(|e| format!("mark chunk job failed: {e}"))?;
-    Ok(())
-}
-
-async fn requeue_running(db: &DbClient) -> Result<(), String> {
-    db.query("UPDATE kg_chunk_job SET status = 'queued' WHERE status = 'running'")
-        .await
-        .map_err(|e| format!("requeue stale chunk jobs: {e}"))?;
-    Ok(())
 }
 
 #[derive(Debug, Deserialize, SurrealValue)]
@@ -314,7 +291,7 @@ async fn process_job(
 pub fn spawn_worker() {
     tokio::spawn(async move {
         let db = global_db().await;
-        if let Err(error) = requeue_running(db).await {
+        if let Err(error) = job_queue::requeue_running(db, "kg_chunk_job").await {
             tracing::warn!(%error, "failed to requeue stale chunk jobs");
         }
 
@@ -340,7 +317,7 @@ pub fn spawn_worker() {
                     let node_id = job.node_id.clone();
                     match process_job(db, &client, &cfg, &job).await {
                         Ok(_) => {
-                            if let Err(e) = mark_finished(db, &job_id).await {
+                            if let Err(e) = job_queue::mark_finished(db, &job_id).await {
                                 tracing::warn!(%e, "failed to mark chunk job finished");
                             } else {
                                 tracing::debug!(project_id, %kind, %node_id, "chunk job completed");
@@ -348,7 +325,7 @@ pub fn spawn_worker() {
                         }
                         Err(error) => {
                             tracing::warn!(%error, project_id, %kind, %node_id, "chunk job failed");
-                            let _ = mark_failed(db, &job_id, &error).await;
+                            let _ = job_queue::mark_failed(db, &job_id, &error).await;
                             sleep(ERROR_BACKOFF).await;
                         }
                     }
