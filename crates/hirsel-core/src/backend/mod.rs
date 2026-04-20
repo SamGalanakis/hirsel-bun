@@ -12,6 +12,7 @@ pub mod db;
 pub mod documents;
 pub mod embeddings;
 pub mod error;
+pub mod job_queue;
 pub mod kg_chunk;
 pub mod kg_comment;
 pub mod kg_read;

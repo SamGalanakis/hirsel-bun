@@ -551,32 +551,17 @@ impl LibrarianJobStore {
     }
 
     async fn mark_finished(&self, id: &RecordId) -> Result<(), String> {
-        let db = global_db().await;
-        db.query("UPDATE $id SET status = 'completed', last_error = NONE")
-            .bind(("id", id.clone()))
-            .await
-            .map_err(|e| format!("failed to mark librarian job completed: {e}"))?;
-        Ok(())
+        crate::backend::job_queue::mark_finished(global_db().await, id).await
     }
 
     async fn mark_failed(&self, id: &RecordId, error: &str) -> Result<(), String> {
-        let db = global_db().await;
-        db.query("UPDATE $id SET status = 'failed', last_error = $error")
-            .bind(("id", id.clone()))
-            .bind(("error", error.to_string()))
-            .await
-            .map_err(|e| format!("failed to mark librarian job failed: {e}"))?;
-        Ok(())
+        crate::backend::job_queue::mark_failed(global_db().await, id, error).await
     }
 
     /// On startup, any `running` rows are stragglers from a previous process —
     /// re-queue them so the new worker picks them up.
     async fn requeue_running(&self) -> Result<(), String> {
-        let db = global_db().await;
-        db.query("UPDATE librarian_job SET status = 'queued' WHERE status = 'running'")
-            .await
-            .map_err(|e| format!("failed to requeue stale librarian jobs: {e}"))?;
-        Ok(())
+        crate::backend::job_queue::requeue_running(global_db().await, "librarian_job").await
     }
 }
 

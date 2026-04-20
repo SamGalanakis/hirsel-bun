@@ -18,15 +18,12 @@
     "class-variance-authority": "^0.7",
     "clsx": "^2",
     "marked": "^17.0.5",
-    "mermaid": "^11.14.0",
     "monaco-editor": "^0.52.2",
     "solid-js": "1.9.12",
-    "tailwind-merge": "^2",
-    "three": "^0.183.2"
+    "tailwind-merge": "^2"
   },
   "devDependencies": {
     "@types/node": "^24",
-    "@types/three": "^0.183.1",
     "@tailwindcss/vite": "^4.2.2",
     "tailwindcss": "4",
     "typescript": "^5.9",

@@ -1,15 +1,22 @@
 # Dependencies
 node_modules/
 
-# Build outputs
+# Build output
 build/
 dist/
-references/
+webui/dist/
+**/target/
+result
+
+# Local runtime state
 .hirsel-dev/
 .hirsel-remote-dev/
+.lash/
+.tmp/
+.profiling/
 .playwright-mcp/
 .claude
-.lash
+
 # Environment and secrets
 .env
 .env.*
@@ -17,15 +24,13 @@ references/
 .envrc
 *.pem
 *.key
-*.log
-*.env
-*.txt
-# OS files
-.DS_Store
-Thumbs.db
 
 # Logs
 *.log
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # IDE
 .idea/
@@ -33,32 +38,16 @@ Thumbs.db
 .direnv/
 *.swp
 *.swo
+*~
 
-# Profiling
-.profiling/
-
-# Python
+# Python (tooling scripts)
 __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
 
-# Rust/Cargo build output
-target/
-dist/
-node_modules/
-.DS_Store
-.env
-.env.*
-!.env.example
-*.log
-.lash/
-.hirsel-dev/
-webui/dist/
-webui/node_modules/
-**/target/
-result
+# Misc
+references/
 
-# Local temp/editor leftovers
-.tmp/
-*~
+# Lash drops its bundled prompt templates here on first run.
+crates/hirsel-core/templates/
