@@ -248,8 +248,8 @@ async fn process_job(
     let mut indexed: Vec<IndexedChunk> = Vec::with_capacity(drafts.len());
     for ((draft, context_text), (fused_text, embedding)) in drafts
         .into_iter()
-        .zip(contexts.into_iter())
-        .zip(fused.into_iter().zip(embeddings.into_iter()))
+        .zip(contexts)
+        .zip(fused.into_iter().zip(embeddings))
     {
         indexed.push(IndexedChunk {
             chunk_index: draft.chunk_index,
