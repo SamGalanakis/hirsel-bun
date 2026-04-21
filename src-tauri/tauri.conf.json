@@ -5,8 +5,8 @@
   "version": "0.3.2",
   "identifier": "app.hirsel",
   "build": {
-    "frontendDist": "../dist",
-    "beforeBuildCommand": "bun run vite:build"
+    "frontendDist": "../webui/dist",
+    "beforeBuildCommand": "cd ../webui && bun run build"
   },
   "app": {
     "windows": [
