@@ -50,10 +50,12 @@ fn default_base_dir() -> PathBuf {
         .join(".hirsel/worktrees")
 }
 
+type MergeLockTable = StdMutex<Vec<(PathBuf, Arc<Mutex<()>>)>>;
+
 /// Per-canonical-workspace lock. Held while a merge is in-flight so two
 /// concurrent `merge` calls against the same workspace serialise.
-fn merge_locks() -> &'static StdMutex<Vec<(PathBuf, Arc<Mutex<()>>)>> {
-    static MERGE_LOCKS: OnceLock<StdMutex<Vec<(PathBuf, Arc<Mutex<()>>)>>> = OnceLock::new();
+fn merge_locks() -> &'static MergeLockTable {
+    static MERGE_LOCKS: OnceLock<MergeLockTable> = OnceLock::new();
     MERGE_LOCKS.get_or_init(|| StdMutex::new(Vec::new()))
 }
 

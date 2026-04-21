@@ -145,8 +145,7 @@ pub async fn get_canvas(
         .iter()
         .map(|kg| (kg.kind.clone(), kg.node_id.clone()))
         .collect();
-    let staleness_map =
-        crate::backend::staleness::classify_many(project_id, &kg_pairs).await;
+    let staleness_map = crate::backend::staleness::classify_many(project_id, &kg_pairs).await;
 
     for kg in kg_nodes {
         let staleness = staleness_map
@@ -472,7 +471,7 @@ pub async fn update_canvas_node(
             }
             let merge_str = serde_json::Value::Object(merge).to_string();
             let _ = db
-                .query(&format!(
+                .query(format!(
                     "UPDATE type::record('kg_node', [$pid, $kind, $nid]) MERGE {merge_str}"
                 ))
                 .bind(("pid", project_id))
@@ -597,11 +596,10 @@ fn slugify_with_hash(title: &str) -> String {
     for ch in title.chars() {
         if ch.is_ascii_alphanumeric() {
             slug.push(ch.to_ascii_lowercase());
-        } else if ch.is_whitespace() || ch == '-' || ch == '_' {
-            if !slug.ends_with('-') {
+        } else if (ch.is_whitespace() || ch == '-' || ch == '_')
+            && !slug.ends_with('-') {
                 slug.push('-');
             }
-        }
     }
     while slug.ends_with('-') {
         slug.pop();

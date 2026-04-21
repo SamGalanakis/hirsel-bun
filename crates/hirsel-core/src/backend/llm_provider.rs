@@ -87,10 +87,10 @@ pub fn provider_metadata(settings: &LlmSettings) -> Provider {
     }
 }
 
-fn role_override<'a>(
-    settings: &'a LlmSettings,
+fn role_override(
+    settings: &LlmSettings,
     role: RuntimeModelRole,
-) -> Option<&'a RoleModelConfig> {
+) -> Option<&RoleModelConfig> {
     settings.role_override(role)
 }
 
