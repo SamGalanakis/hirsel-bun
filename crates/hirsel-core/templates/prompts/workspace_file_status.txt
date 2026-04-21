@@ -1,0 +1,5 @@
+<workspace-file>
+<root-id>{{ root_id }}</root-id>
+<path>{{ path }}</path>
+<status>{{ status }}</status>
+</workspace-file>

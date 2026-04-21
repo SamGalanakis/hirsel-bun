@@ -1,0 +1,11 @@
+<workspace-file>
+<root-id>{{ root_id }}</root-id>
+<path>{{ path }}</path>
+<language>{{ language }}</language>
+<line-start>{{ line_start }}</line-start>
+<line-end>{{ line_end }}</line-end>
+<truncated>{{ truncated }}</truncated>
+<content>
+{{ content }}
+</content>
+</workspace-file>
