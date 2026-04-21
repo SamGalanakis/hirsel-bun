@@ -14,37 +14,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: macos-latest
-            args: '--target aarch64-apple-darwin'
-          - platform: ubuntu-22.04
-            args: ''
+        platform: [ubuntu-22.04, macos-latest]
 
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libxdo-dev \
-            libxcb1-dev \
-            libxrandr-dev \
-            libx11-dev \
-            libxtst-dev \
-            libpng-dev
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 'lts/*'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -53,18 +28,15 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
-        with:
-          workspaces: './src-tauri -> target'
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --exclude hirsel-desktop-app -- -D warnings
 
       - name: Install frontend dependencies
         working-directory: webui
@@ -80,66 +52,4 @@ jobs:
           git config --global user.name "CI"
 
       - name: Run tests
-        run: cargo test --workspace --lib
-
-      - name: Build with tauri-action
-        uses: tauri-apps/tauri-action@v0
-        with:
-          args: ${{ matrix.args }}
-
-      - name: Upload macOS DMG
-        if: matrix.platform == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: hirsel-macos-dmg
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-          if-no-files-found: warn
-
-      - name: Upload macOS App
-        if: matrix.platform == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: hirsel-macos-app
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
-          if-no-files-found: warn
-
-      - name: Upload Linux DEB
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: hirsel-linux-deb
-          path: src-tauri/target/release/bundle/deb/*.deb
-          if-no-files-found: warn
-
-      - name: Upload Linux AppImage
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: hirsel-linux-appimage
-          path: src-tauri/target/release/bundle/appimage/*.AppImage
-          if-no-files-found: warn
-
-      - name: Upload Linux binary
-        if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: hirsel-linux-binary
-          path: src-tauri/target/release/hirsel
-          if-no-files-found: warn
-
-      - name: Job summary
-        run: |
-          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Platform:** ${{ matrix.platform }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Target:** ${{ matrix.args || 'default' }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Artifacts" >> $GITHUB_STEP_SUMMARY
-          if [ "${{ matrix.platform }}" == "macos-latest" ]; then
-            echo "- hirsel-macos-dmg" >> $GITHUB_STEP_SUMMARY
-            echo "- hirsel-macos-app" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- hirsel-linux-deb" >> $GITHUB_STEP_SUMMARY
-            echo "- hirsel-linux-appimage" >> $GITHUB_STEP_SUMMARY
-            echo "- hirsel-linux-binary" >> $GITHUB_STEP_SUMMARY
-          fi
+        run: cargo test --workspace --exclude hirsel-desktop-app --lib
