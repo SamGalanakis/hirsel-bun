@@ -78,7 +78,7 @@ async fn handle_terminal_socket(
                                     break;
                                 }
                             }
-                            Ok(ClientTerminalMessage::Resize { .. }) => {
+                            Ok(ClientTerminalMessage::Resize) => {
                                 // Resize is not supported without a PTY — silently accept.
                             }
                             Err(error) => {

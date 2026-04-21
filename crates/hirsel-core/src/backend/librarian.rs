@@ -599,7 +599,10 @@ fn parse_reasons(prompt: &str) -> Vec<String> {
     let mut in_block = false;
     for line in prompt.lines() {
         if !in_block {
-            if line.trim_start().starts_with("Reasons (most recent first):") {
+            if line
+                .trim_start()
+                .starts_with("Reasons (most recent first):")
+            {
                 in_block = true;
             }
             continue;

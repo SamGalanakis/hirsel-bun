@@ -95,7 +95,7 @@ async fn audit_one(project_id: Option<i64>, session_id: &str, args: &Value) -> R
             .as_deref()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|| "-".into()),
-        cmd = command.replace('\t', " ").replace('\n', " "),
+        cmd = command.replace(['\t', '\n'], " "),
     );
 
     let path = audit_log_path(session_id).await;

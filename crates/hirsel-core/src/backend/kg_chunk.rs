@@ -149,7 +149,7 @@ async fn chunk_subgraph_bounded(
         current_nodes.push(node.clone());
 
         // Enqueue outgoing neighbours.
-        let edges = outgoing_edges(&db, project_id, &node.kind, &node.node_id).await?;
+        let edges = outgoing_edges(db, project_id, &node.kind, &node.node_id).await?;
         for (relation, to_kind, to_id) in edges {
             let to_key = node_key(&to_kind, &to_id);
             pending_edges.push((key.clone(), relation.clone(), to_key.clone()));
