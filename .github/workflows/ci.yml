@@ -67,12 +67,12 @@ jobs:
         run: cargo clippy --workspace -- -D warnings
 
       - name: Install frontend dependencies
+        working-directory: webui
         run: bun install --frozen-lockfile
 
-      - name: Build with tauri-action
-        uses: tauri-apps/tauri-action@v0
-        with:
-          args: ${{ matrix.args }}
+      - name: Build frontend
+        working-directory: webui
+        run: bun run build
 
       - name: Configure git for tests
         run: |
@@ -81,6 +81,11 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace --lib
+
+      - name: Build with tauri-action
+        uses: tauri-apps/tauri-action@v0
+        with:
+          args: ${{ matrix.args }}
 
       - name: Upload macOS DMG
         if: matrix.platform == 'macos-latest'

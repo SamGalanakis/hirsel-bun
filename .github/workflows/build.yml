@@ -115,6 +115,7 @@ jobs:
           shared-key: ui
 
       - name: Install frontend dependencies
+        working-directory: webui
         run: bun install --frozen-lockfile
 
       - name: Build Tauri app
