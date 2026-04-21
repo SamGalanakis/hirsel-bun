@@ -596,10 +596,9 @@ fn slugify_with_hash(title: &str) -> String {
     for ch in title.chars() {
         if ch.is_ascii_alphanumeric() {
             slug.push(ch.to_ascii_lowercase());
-        } else if (ch.is_whitespace() || ch == '-' || ch == '_')
-            && !slug.ends_with('-') {
-                slug.push('-');
-            }
+        } else if (ch.is_whitespace() || ch == '-' || ch == '_') && !slug.ends_with('-') {
+            slug.push('-');
+        }
     }
     while slug.ends_with('-') {
         slug.pop();
