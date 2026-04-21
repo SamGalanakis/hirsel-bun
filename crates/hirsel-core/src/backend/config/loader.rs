@@ -145,7 +145,9 @@ url = "http://127.0.0.1:8080"
 api_key = "dev-key"
 
 [mcp_servers.example]
-command = ["uvx", "example-mcp"]
+transport = "stdio"
+command = "uvx"
+args = ["example-mcp"]
 "#,
         )
         .expect("write config");
