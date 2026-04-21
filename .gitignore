@@ -48,6 +48,3 @@ __pycache__/
 
 # Misc
 references/
-
-# Lash drops its bundled prompt templates here on first run.
-crates/hirsel-core/templates/
